@@ -45,5 +45,11 @@
 6. Jangan menyentuh modul di luar fase aktif.
 
 ## Status
-- Fase selesai: (diperbarui di akhir setiap fase)
-- Catatan teknis penting: lihat "Keputusan implementasi".
+- Fase selesai: 0–8 (MVP lengkap: TDM 5v5 vs bot, 10 AR, 7 optik, K-400, FPS/TPS, buku destruktibel,
+  death disassembly, audio sintetis spasial, HUD, menu, loadout, settings tersimpan, preset kualitas, debug tools).
+- Verifikasi otomatis: 26 test Vitest (test vector §16.1 + validator map/nav) hijau; typecheck & build produksi hijau;
+  match penuh di browser: 0 error konsol, 0 bot macet, keempat jalur terpakai; draw call match ≈ 101, tris ≈ 31k.
+- Belum diverifikasi di perangkat acuan: prosedur 16.3 (Stress Test, panel ` → "Stress Test") di laptop Iris Xe.
+- Uji otomatis tanpa pointer lock: buka http://localhost:5173/?autostart=1 (window.__ctx / window.__game tersedia).
+- Catatan teknis penting: lihat "Keputusan implementasi". Bot juga mempertimbangkan granat saat INVESTIGATE
+  (posisi terakhir target tak terlihat, 8–24 u) karena duel di layout ini umumnya selesai sebelum target "hilang" di ENGAGE.
