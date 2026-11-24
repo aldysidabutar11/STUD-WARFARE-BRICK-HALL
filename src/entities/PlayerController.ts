@@ -6,6 +6,7 @@ import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import { fallDamage, integrateVertical, moveTarget } from '../combat/Damage';
 import { bus } from '../core/EventBus';
+import { charGravity, moveFeel } from './moveFeel';
 
 const P = CFG.player, K = CFG.kcc;
 const D2R = THREE.MathUtils.degToRad;
@@ -19,6 +20,8 @@ export interface MoveIntent {
   sprint: boolean;          // ditahan
   crouch: boolean;          // keadaan jongkok yang diinginkan
   ads: boolean; cooking: boolean; wantFire: boolean;
+  /** Pengali kecepatan senjata di tangan (pisau ×XCFG.knife.speedMult; lainnya 1). */
+  speedMult: number;
 }
 
 export class PlayerController {
@@ -37,7 +40,9 @@ export class PlayerController {
   private jumpBuf = 0;
   private airCap: number = P.airMinSpeedCap;
   private peakY = 0;
-  private stepTimer = 0;
+  /** Fase langkah kontinu: naik 1 per langkah (interval §3.7); bilangan bulat = kaki menapak (suara langkah, kamera terendah). */
+  stepPhase = 0.5;
+  prevStepPhase = 0.5;
   private crouchQueued: boolean | null = null;
   private desired = { x: 0, y: 0, z: 0 };
   private standShape = new RAPIER.Capsule(STAND_HH, P.capsuleRadius);
@@ -67,6 +72,7 @@ export class PlayerController {
     physics.world.propagateModifiedBodyPositionsToColliders();
     this.pos.set(x, y, z); this.prevPos.copy(this.pos);
     this.vel.set(0, 0, 0); this.velY = 0; this.peakY = y; this.grounded = true;
+    this.stepPhase = this.prevStepPhase = 0.5; // langkah pertama ±setengah interval setelah mulai jalan
     this.setCrouch(false, true);
   }
 
@@ -94,7 +100,9 @@ export class PlayerController {
 
   fixedUpdate(dt: number, it: MoveIntent, adsActive: boolean) {
     this.prevPos.copy(this.pos);
+    this.prevStepPhase = this.stepPhase;
     if (!this.enabled) return;
+    const T = moveFeel.tempo; // tempo gerak (lihat CFG.player.moveSpeedScale)
     // ── jongkok (di udara di-buffer sampai mendarat)
     if (it.crouch !== this.crouched) {
       if (this.grounded) this.setCrouch(it.crouch); else this.crouchQueued = it.crouch;
@@ -110,18 +118,18 @@ export class PlayerController {
 
     // ── kecepatan target (kode §3.4) → vektor dunia
     const hasInput = it.ix !== 0 || it.iz !== 0;
-    moveTarget({ ix: it.ix, iz: it.iz, sprinting: this.sprinting, crouched: this.crouched, ads: adsActive }, this.tv);
+    moveTarget({ ix: it.ix, iz: it.iz, sprinting: this.sprinting, crouched: this.crouched, ads: adsActive }, this.tv, T * it.speedMult);
     const sy = Math.sin(it.yaw), cy = Math.cos(it.yaw);
     // right = (cos yaw, 0, −sin yaw), forward = (−sin yaw, 0, −cos yaw)
     const tx = hasInput ? cy * this.tv.vx - sy * this.tv.vz : 0;
     const tz = hasInput ? -sy * this.tv.vx - cy * this.tv.vz : 0;
 
-    // ── akselerasi: darat 80 menuju target, 90 tanpa input; udara 12 (tanpa gesekan, cap kecepatan)
+    // ── akselerasi: darat 80 menuju target, 90 tanpa input; udara 12·T² (tanpa gesekan, cap kecepatan)
     if (this.grounded) {
       const a = hasInput ? P.accelGround : P.decelGround;
       this.approach(tx, tz, a * dt);
     } else if (hasInput) {
-      this.approach(tx, tz, P.accelAir * dt);
+      this.approach(tx, tz, P.accelAir * T * T * dt);
       const sp = this.speedH;
       if (sp > this.airCap) { this.vel.x *= this.airCap / sp; this.vel.z *= this.airCap / sp; }
     }
@@ -133,9 +141,9 @@ export class PlayerController {
     if (this.jumpBuf > 0 && this.coyote > 0) {
       if (this.crouched) this.setCrouch(false);
       if (!this.crouched) {
-        this.velY = P.jumpVelocity; jumped = true; this.grounded = false;
+        this.velY = P.jumpVelocity * T; jumped = true; this.grounded = false; // puncak tetap 1.383 (g karakter ×T²)
         this.coyote = 0; this.jumpBuf = 0;
-        this.airCap = Math.max(this.speedH, P.airMinSpeedCap);
+        this.airCap = Math.max(this.speedH, P.airMinSpeedCap * T);
         this.peakY = this.pos.y;
       }
     }
@@ -148,7 +156,7 @@ export class PlayerController {
       const n = this.groundNormal();
       if (n && n.y < 0.999 && n.y > 0.5) dy += -(n.x * this.vel.x + n.z * this.vel.z) * dt / n.y;
     } else {
-      const s = integrateVertical(this.velY, dt);
+      const s = integrateVertical(this.velY, dt, charGravity(T));
       dy = s.dy; this.velY = s.velY;
     }
 
@@ -169,24 +177,28 @@ export class PlayerController {
     if (!wasGrounded && this.grounded) this.land();
     if (wasGrounded && !this.grounded && !jumped) this.peakY = this.pos.y;
 
-    // ── langkah kaki (interval §3.7)
+    // ── langkah kaki (interval §3.7): fase kontinu, suara tiap melewati bilangan bulat; diam/di udara = fase berhenti
     if (this.grounded && this.speedH > 1.0) {
       const fi = P.footstepInterval;
       const interval = this.crouched ? fi.crouch : this.sprinting ? fi.sprint : adsActive ? fi.ads : fi.normal;
-      this.stepTimer += dt;
-      if (this.stepTimer >= interval) {
-        this.stepTimer = 0;
+      const before = Math.floor(this.stepPhase);
+      this.stepPhase += dt / interval;
+      if (Math.floor(this.stepPhase) > before) {
         bus.emit('footstep', { entityId: this.entityId, material: physics.surfaceBelow(this.pos.x, this.pos.y, this.pos.z),
           position: this.pos, loud: this.sprinting, land: false });
       }
-    } else this.stepTimer = 0.2;
+    }
 
     // keluar map (jaga-jaga)
     if (this.pos.y < -30) this.onFallDamage?.(999);
   }
 
+  /** Tinggi jatuh pendaratan terakhir (u) — dipakai hentakan kamera. */
+  lastLandH = 0;
+
   private land() {
     const H = this.peakY - this.pos.y;
+    this.lastLandH = H;
     const dmg = fallDamage(H);
     if (dmg > 0) this.onFallDamage?.(dmg);
     if (H > 0.6) bus.emit('footstep', { entityId: this.entityId, material: physics.surfaceBelow(this.pos.x, this.pos.y, this.pos.z),

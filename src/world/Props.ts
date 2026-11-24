@@ -7,11 +7,13 @@ import { XCFG } from '../config/extraConfig';
 import { makeRng } from '../core/Rng';
 import { BOOK_PILES, FLOOR_AREA, groundObstacles } from './MapData';
 import type { ShelfInfo } from './BrickHallBuilder';
+import { BodyLerp } from '../core/BodyLerp';
 
 const BOOK_COLORS = [0xc4281c, 0x0d69ac, 0xf5cd30, 0x287f47, 0x6b327c, 0xda8541, 0x74869d, 0xf2f3f3];
 const LEVEL_BASE = [0.3, 1.55, 2.80];
 
-interface Book { body: RAPIER.RigidBody; p0: THREE.Vector3; q0: THREE.Quaternion }
+/** live = sedang bergerak (matriks instance diinterpolasi per frame); berhenti diperbarui setelah body tidur. */
+interface Book { body: RAPIER.RigidBody; p0: THREE.Vector3; q0: THREE.Quaternion; lerp: BodyLerp; live: boolean }
 interface Paper { p0: THREE.Vector3; yaw0: number; pos: THREE.Vector3; vel: THREE.Vector3; yaw: number; tilt: number; spin: number; flying: boolean }
 
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1);
@@ -33,6 +35,9 @@ export class Props {
     const total = shelves.length * 15 + XCFG.props.piles * XCFG.props.perPile;
     this.mesh = new THREE.InstancedMesh(geo, mat, total);
     this.mesh.castShadow = shadows; this.mesh.receiveShadow = shadows;
+    // depth material bayangan sendiri: three.js memakai SATU depth material bersama untuk semua pembuat bayangan, dan
+    // berganti instanced ↔ biasa memaksa program shadernya dihitung ulang (2× per frame, terukur ±0.8 MB/s sampah)
+    if (shadows) this.mesh.customDepthMaterial = new THREE.MeshDepthMaterial();
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     const color = new THREE.Color();
 
@@ -47,7 +52,7 @@ export class Props {
         .setCollisionGroups(GROUPS.PROP), body);
       this.mass = body.mass();
       this.byCollider.set(c.handle, i);
-      this.books.push({ body, p0: pos.clone(), q0: quat.clone() });
+      this.books.push({ body, p0: pos.clone(), q0: quat.clone(), lerp: new BodyLerp().snapTo(pos, quat), live: false });
       _m.compose(pos, quat, _s); this.mesh.setMatrixAt(i, _m);
       this.mesh.setColorAt(i, color.setHex(col));
     };
@@ -112,18 +117,22 @@ export class Props {
     this.papersMesh.setMatrixAt(i, _m);
   }
 
-  /** Setiap fixed step: hanya buku yang tidak tidur yang memperbarui matriks InstancedMesh. */
+  /** Setiap fixed step (setelah world.step): buku yang tidak tidur menyimpan pose untuk interpolasi; yang baru tertidur
+   *  ditulis sekali di pose akhir lalu tidak disentuh lagi. Matriks buku bergerak ditulis per frame di update(alpha). */
   fixedUpdate(dt: number) {
     let dirty = false, awake = 0;
     for (let i = 0; i < this.books.length; i++) {
-      const b = this.books[i].body;
-      if (b.isSleeping()) continue;
+      const bk = this.books[i], b = bk.body;
+      if (b.isSleeping()) {
+        if (bk.live) { bk.live = false; _m.compose(bk.lerp.pos, bk.lerp.quat, _s); this.mesh.setMatrixAt(i, _m); dirty = true; }
+        continue;
+      }
       awake++;
-      const t = b.translation(), r = b.rotation();
-      _p.set(t.x, t.y, t.z); _q.set(r.x, r.y, r.z, r.w);
-      if (_p.y < -20) { b.setTranslation({ x: _p.x, y: 1, z: _p.z }, true); b.setLinvel({ x: 0, y: 0, z: 0 }, true); }
-      _m.compose(_p, _q, _s); this.mesh.setMatrixAt(i, _m);
-      dirty = true;
+      bk.lerp.step(b); bk.live = true;
+      if (bk.lerp.pos.y < -20) {
+        b.setTranslation({ x: bk.lerp.pos.x, y: 1, z: bk.lerp.pos.z }, true); b.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        bk.lerp.snap(b);
+      }
     }
     this.awakeCount = awake;
     if (dirty) this.mesh.instanceMatrix.needsUpdate = true;
@@ -140,6 +149,18 @@ export class Props {
       this.writePaper(i); pdirty = true;
     }
     if (pdirty) this.papersMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Per frame: buku yang sedang bergerak digambar di antara dua step fisika (alpha). */
+  update(alpha: number) {
+    let dirty = false;
+    for (let i = 0; i < this.books.length; i++) {
+      const bk = this.books[i];
+      if (!bk.live) continue;
+      bk.lerp.sample(alpha, _p, _q); _m.compose(_p, _q, _s); this.mesh.setMatrixAt(i, _m);
+      dirty = true;
+    }
+    if (dirty) this.mesh.instanceMatrix.needsUpdate = true;
   }
 
   /** Peluru mengenai buku: impuls arah × m × 4 + (0, m × 1, 0) di titik hit (§10.2). */
@@ -182,6 +203,7 @@ export class Props {
       bk.body.setRotation({ x: bk.q0.x, y: bk.q0.y, z: bk.q0.z, w: bk.q0.w }, false);
       bk.body.setLinvel({ x: 0, y: 0, z: 0 }, false); bk.body.setAngvel({ x: 0, y: 0, z: 0 }, false);
       bk.body.sleep();
+      bk.lerp.snapTo(bk.p0, bk.q0); bk.live = false;
       _m.compose(bk.p0, bk.q0, _s); this.mesh.setMatrixAt(i, _m);
     }
     this.mesh.instanceMatrix.needsUpdate = true;

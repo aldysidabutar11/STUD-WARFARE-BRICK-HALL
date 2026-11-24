@@ -10,16 +10,23 @@ const NODE_T: [string, number, number, 0 | 10][] = [
   ['{H}_SPAWN', 0, -47, 10], ['{H}_DOORIN_{X}', -7, -44.6, 10], ['{H}_DOOR_{X}', -7, -42, 10],
   ['{H}_FRONT', 0, -40.5, 10], ['{H}_LOOK', 0, -36.5, 10], ['{H}_BRMOUTH_{X}', -8, -37, 10],
   ['{H}_BR0_{X}', -8, -33, 10], ['{H}_BR1_{X}', -8, -25, 10], ['{H}_BR2_{X}', -8, -12, 10],
-  ['{H}_ROT_{X}', -8, -5, 10], ['C_ROT_{X}', -6.5, 0, 10], ['{H}_ROTC', 0, -4, 10],
+  ['{H}_ROT_{X}', -8, -5, 10], ['C_ROT_{X}', -4.5, 0, 10], ['{H}_ROTC', 0, -4, 10],
   ['{H}_DOOROUT_{X}', -10.8, -42, 10], ['{H}_YARD_{X}', -12, -38.5, 10], ['{H}_WING_{X}', -24, -45, 10],
   ['{H}_LANDIN_{X}', -19.5, -36.3, 10], ['{H}_CORNER_{X}', -24, -37.5, 10], ['{H}_INNER_{X}', -28.1, -37.5, 10],
   ['{H}_LAND_{X}', -19.5, -33.9, 10], ['{H}_WALK_{X}', -24.05, -20, 10], ['{H}_HALL_{X}', -28.1, -20, 10],
   ['{H}_WALKB_{X}', -24.05, -10, 10], ['C_WALK_{X}', -24.05, 0, 10], ['C_HALL_{X}', -28.1, 0, 10],
   ['{H}_F_STAIR_{X}', -19.5, -17, 0], ['{H}_F_SIDE_{X}', -19.5, -7, 0], ['C_F_SIDE_{X}', -19.5, 0, 0],
   ['{H}_F_TABLE_{X}', -9.5, -6, 0], ['C_F_TABLE_{X}', -11, 0, 0], ['{H}_F_MID_{X}', -10.5, -16, 0],
-  ['{H}_F_SHELFA_{X}', -10.5, -25, 0], ['{H}_F_END_{X}', -10.5, -31.5, 0], ['{H}_F_END', 0, -31.5, 0],
-  ['{H}_F_VOID', 0, -20, 0], ['{H}_F_PILLAR_{X}', -4.5, -21.5, 0], ['{H}_F_CEN_{X}', -4, -10, 0],
+  ['{H}_F_SHELFA_{X}', -10.5, -25, 0], ['{H}_F_END_{X}', -10.5, -31.5, 0], ['{H}_F_END', 0, -33.2, 0],
+  ['{H}_F_PILLAR_{X}', -4.5, -21.5, 0], ['{H}_F_CEN_{X}', -4, -10, 0],
   ['{H}_F_DESK', 0, -5, 0], ['C_F_GAP_{X}', -4, 0, 0],
+  // v2: ruang spawn bawah (lantai 1) → pintu aula (X ±4…7) & lorong ke arsip; arsip zig-zag di bawah balkon;
+  //     lorong tengah kini dibelah rak tinggi (F_VOID dihapus → jalur lewat F_SOUTH)
+  ['{H}_GSPAWN', 0, -46.5, 0], ['{H}_GDOOR_{X}', -5.5, -44.6, 0], ['{H}_GEXIT_{X}', -5.5, -38.5, 0], ['{H}_F_EXIT_{X}', -5.5, -33, 0],
+  ['{H}_GWEST_{X}', -11, -45.5, 0], ['{H}_GCORNER_{X}', -28.5, -45.5, 0], ['{H}_GNORTH_{X}', -28.5, -38.5, 0], ['{H}_GARC_{X}', -28.5, -33, 0],
+  ['{H}_ARC1_{X}', -24.4, -30.5, 0], ['{H}_ARC2_{X}', -24.4, -25, 0], ['{H}_ARC3_{X}', -28.2, -20.2, 0], ['{H}_ARC4_{X}', -26.3, -16, 0],
+  ['{H}_ARCDOOR_{X}', -24.6, -13.5, 0], ['{H}_F_ARCDOOR_{X}', -19.8, -13.5, 0], ['{H}_ARC5_{X}', -26.3, -10.5, 0],
+  ['{H}_ARC6_{X}', -24.4, -5, 0], ['C_ARC_{X}', -26.3, 0, 0], ['{H}_F_SOUTH_{X}', -3.3, -32.6, 0],
 ];
 
 const EDGE_T: [string, string, EdgeKind][] = [
@@ -38,10 +45,21 @@ const EDGE_T: [string, string, EdgeKind][] = [
   ['{H}_F_STAIR_{X}', '{H}_F_SIDE_{X}', 'walk'], ['{H}_F_STAIR_{X}', '{H}_F_MID_{X}', 'walk'],
   ['{H}_F_SIDE_{X}', 'C_F_SIDE_{X}', 'walk'], ['{H}_F_SIDE_{X}', '{H}_F_TABLE_{X}', 'walk'],
   ['{H}_F_MID_{X}', '{H}_F_TABLE_{X}', 'walk'], ['{H}_F_MID_{X}', '{H}_F_SHELFA_{X}', 'walk'],
-  ['{H}_F_SHELFA_{X}', '{H}_F_END_{X}', 'walk'], ['{H}_F_END_{X}', '{H}_F_END', 'walk'], ['{H}_F_END', '{H}_F_VOID', 'walk'],
-  ['{H}_F_VOID', '{H}_F_PILLAR_{X}', 'walk'], ['{H}_F_PILLAR_{X}', '{H}_F_CEN_{X}', 'walk'],
+  ['{H}_F_SHELFA_{X}', '{H}_F_END_{X}', 'walk'], ['{H}_F_END_{X}', '{H}_F_END', 'walk'],
+  ['{H}_F_END', '{H}_F_SOUTH_{X}', 'walk'], ['{H}_F_SOUTH_{X}', '{H}_F_PILLAR_{X}', 'walk'], ['{H}_F_PILLAR_{X}', '{H}_F_CEN_{X}', 'walk'],
   ['{H}_F_CEN_{X}', '{H}_F_DESK', 'walk'], ['{H}_F_CEN_{X}', 'C_F_GAP_{X}', 'walk'],
   ['{H}_F_TABLE_{X}', 'C_F_TABLE_{X}', 'walk'], ['C_F_TABLE_{X}', 'C_F_GAP_{X}', 'walk'],
+  // v2: ruang spawn bawah
+  ['{H}_GSPAWN', '{H}_GDOOR_{X}', 'walk'], ['{H}_GDOOR_{X}', '{H}_GEXIT_{X}', 'door'], ['{H}_GEXIT_{X}', '{H}_F_EXIT_{X}', 'walk'],
+  ['{H}_F_EXIT_{X}', '{H}_F_SOUTH_{X}', 'walk'], ['{H}_F_EXIT_{X}', '{H}_F_END_{X}', 'walk'],
+  ['{H}_GSPAWN', '{H}_GWEST_{X}', 'walk'], ['{H}_GWEST_{X}', '{H}_GCORNER_{X}', 'walk'], ['{H}_GCORNER_{X}', '{H}_GNORTH_{X}', 'walk'],
+  ['{H}_GNORTH_{X}', '{H}_GARC_{X}', 'door'],
+  // v2: arsip (zig-zag melewati lemari) + pintu ke aula
+  ['{H}_GARC_{X}', '{H}_ARC1_{X}', 'walk'], ['{H}_ARC1_{X}', '{H}_ARC2_{X}', 'walk'], ['{H}_ARC2_{X}', '{H}_ARC3_{X}', 'walk'],
+  ['{H}_ARC3_{X}', '{H}_ARC4_{X}', 'walk'], ['{H}_ARC4_{X}', '{H}_ARCDOOR_{X}', 'walk'], ['{H}_ARC4_{X}', '{H}_ARC5_{X}', 'walk'],
+  ['{H}_ARCDOOR_{X}', '{H}_ARC5_{X}', 'walk'], ['{H}_ARCDOOR_{X}', '{H}_F_ARCDOOR_{X}', 'door'],
+  ['{H}_ARC5_{X}', '{H}_ARC6_{X}', 'walk'], ['{H}_ARC6_{X}', 'C_ARC_{X}', 'walk'], ['C_ARC_{X}', 'C_F_SIDE_{X}', 'door'],
+  ['{H}_F_ARCDOOR_{X}', '{H}_F_STAIR_{X}', 'walk'], ['{H}_F_ARCDOOR_{X}', '{H}_F_SIDE_{X}', 'walk'], ['{H}_F_ARCDOOR_{X}', '{H}_F_MID_{X}', 'walk'],
 ];
 
 // Drop-down satu arah (opsional, bot Sulit): lompat pagar → atas rak (Y 4.0) → lantai.
@@ -51,7 +69,9 @@ const DROP_T: [string, string, string][] = [
 ];
 
 const COVER_T = ['{H}_F_SHELFA_{X}', '{H}_F_PILLAR_{X}', '{H}_F_MID_{X}', '{H}_F_TABLE_{X}', 'C_F_GAP_{X}', 'C_F_TABLE_{X}',
-  '{H}_F_END_{X}', '{H}_YARD_{X}', '{H}_DOOR_{X}', '{H}_HALL_{X}', 'C_HALL_{X}', '{H}_WING_{X}', '{H}_ROTC', 'C_ROT_{X}', '{H}_BRMOUTH_{X}'];
+  '{H}_F_END_{X}', '{H}_YARD_{X}', '{H}_DOOR_{X}', '{H}_HALL_{X}', 'C_HALL_{X}', '{H}_WING_{X}', '{H}_ROTC', 'C_ROT_{X}', '{H}_BRMOUTH_{X}',
+  // v2
+  '{H}_LOOK', '{H}_F_SOUTH_{X}', '{H}_GEXIT_{X}', '{H}_ARC2_{X}', '{H}_ARC4_{X}', '{H}_ARC6_{X}', '{H}_ARCDOOR_{X}', '{H}_F_ARCDOOR_{X}'];
 
 function expandName(t: string, h: 'S' | 'N', x: 'W' | 'E') { return t.replace('{H}', h).replace('{X}', x); }
 
@@ -115,11 +135,13 @@ export class NavGraph {
 
   /** Node terdekat (lebih suka level yang sama dengan posisi Y). */
   nearest(x: number, y: number, z: number): number {
+    // jarak kuadrat (tanpa Math.hypot — terukur ±1.3 MB/s sampah dari panggilan bot); penalti lantai lain 1e6 > (diagonal map)²
+    // sehingga urutan hasil identik dengan jarak + 1000
     let best = 0, bd = Infinity;
     const lvl = y > 5 ? 10 : 0;
     for (let i = 0; i < this.nodes.length; i++) {
-      const n = this.nodes[i];
-      const d = Math.hypot(n.x - x, n.z - z) + (n.level === lvl ? 0 : 1000);
+      const n = this.nodes[i], dx = n.x - x, dz = n.z - z;
+      const d = dx * dx + dz * dz + (n.level === lvl ? 0 : 1e6);
       if (d < bd) { bd = d; best = i; }
     }
     return best;

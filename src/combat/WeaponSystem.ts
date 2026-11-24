@@ -2,6 +2,7 @@
 import { CFG } from '../config/gameConfig';
 import { SCOPES, WEAPONS, type FireMode, type ScopeDef, type ScopeId, type WeaponDef, type WeaponId } from '../config/weaponsData';
 import { bus } from '../core/EventBus';
+import type { Slot } from './Slots';
 
 const C = CFG.combat;
 const burstSize = (m: FireMode) => (m === 'BURST2' ? 2 : m === 'BURST3' ? 3 : 1);
@@ -19,8 +20,13 @@ export class WeaponSystem {
   modeIdx = 0;
   ammo = 30;
   reserve = 120;
-  slot: 'ar' | 'grenade' = 'ar';
+  slot: Slot = 'ar';
+  /** Slot sebelum yang sekarang (tombol "senjata sebelumnya"). */
+  prevSlot: Slot | null = 'knife';
+  /** false setelah senjata utama dibuang (slot 1 kosong sampai mengambil senjata tim / respawn). */
+  hasPrimary = true;
   equipT = 0;            // sisa waktu equip (s)
+  equipTotal = 0;        // durasi equip terakhir (animasi angkat)
   reloadT = -1;          // waktu reload berjalan (s); −1 = tidak reload
   private committed = false;
   private nextShot = 0;
@@ -38,23 +44,27 @@ export class WeaponSystem {
   get mode(): FireMode { return this.def.modes[this.modeIdx]; }
   get reloading() { return this.reloadT >= 0; }
   get reloadProgress() { return this.reloadT >= 0 ? Math.min(1, this.reloadT / this.def.reloadTime) : -1; }
+  /** Sisa animasi angkat senjata 1..0 (0 = siap). */
+  get equipFrac() { return this.equipTotal > 0 ? this.equipT / this.equipTotal : 0; }
 
   setLoadout(w: WeaponId, s: ScopeId) {
     this.def = WEAPONS[w]; this.scope = SCOPES[s]; this.modeIdx = 0;
   }
 
-  /** Spawn: amunisi penuh (30 + 120), kembali ke AR. */
+  /** Spawn: amunisi penuh (30 + 120), kembali ke AR (senjata utama dipegang lagi; Q → pisau). */
   refill() {
     this.ammo = this.def.magSize; this.reserve = this.def.reserveAmmo;
-    this.reloadT = -1; this.committed = false; this.slot = 'ar'; this.equipT = 0;
+    this.reloadT = -1; this.committed = false; this.slot = 'ar'; this.equipT = 0; this.equipTotal = 0;
+    this.hasPrimary = true; this.prevSlot = 'knife';
     this.nextShot = 0; this.shotsThisPull = 0; this.burstInProgress = false; this.adsActive = false;
   }
 
-  /** Ganti ke granat / AR. Sebelum titik komit: reload batal tanpa transfer. */
-  switchTo(slot: 'ar' | 'grenade', equipTime: number) {
+  /** Ganti slot (senapan / pisau / granat). Sebelum titik komit: reload batal tanpa transfer. */
+  switchTo(slot: Slot, equipTime: number) {
     if (slot === this.slot) return;
     this.cancelReload();
-    this.slot = slot; this.equipT = equipTime;
+    this.prevSlot = this.slot;
+    this.slot = slot; this.equipT = equipTime; this.equipTotal = equipTime;
     this.burstInProgress = false; this.adsActive = false;
   }
 

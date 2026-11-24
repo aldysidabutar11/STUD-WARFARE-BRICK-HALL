@@ -3,12 +3,17 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RAPIER, physics } from '../physics/Physics';
 import { GROUPS } from '../physics/groups';
-import type { Preset } from '../config/gameConfig';
+import type { Preset, PresetName } from '../config/gameConfig';
+import { XCFG } from '../config/extraConfig';
+import { gfxOf, isHigh } from '../config/presets';
 import {
-  BOXES, CARPETS, CORRIDOR_LAMPS, SKYLIGHTS, STAIRS, STAIR_RISE, STAIR_RUN, STAIR_STEPS, WINDOWS, type Box, type Style,
+  BOXES, CARPETS, CORRIDOR_LAMPS, INTERIOR_FLOORS, SKYLIGHTS, STAIRS, STAIR_RISE, STAIR_RUN, STAIR_STEPS, WINDOWS, type Box, type Style,
 } from './MapData';
 import * as TX from './StudTextureGen';
 import { MeshBuckets, type SlotMats } from './BoxBuilder';
+import { buildDecor } from './Decor';
+import * as SM from './SurfaceMaps';
+import { LightField, bakedMaterial } from './LightBake';
 
 export interface ShelfInfo { index: number; id: string; cx: number; cz: number; alongX: boolean }
 export interface BuiltMap {
@@ -18,14 +23,23 @@ export interface BuiltMap {
   hemi: THREE.HemisphereLight;
   triangles: number;
   colliders: number;
+  /** Medan cahaya hasil bake (light probe karakter). */
+  light: LightField;
+  /** Debu melayang di berkas cahaya skylight (MEDIUM+), uniform uTime diperbarui Game. */
+  dust: THREE.Points | null;
+  shafts: THREE.Mesh | null;
 }
 
 const COL = {
   deck: 0x7c5c46, darkwood: 0x4a2c17, panel: 0x6b4226, plaster: 0xd8cbb3, shelf: 0x7a4a26,
   table: 0xa87b4f, crate: 0xa8763e, carpet: 0x1f3a73, carpetEdge: 0xe8dcc0,
+  // v2: identitas sisi tim + ruang dalam
+  carpetRed: 0x7a1f1c, carpetGold: 0x8a6a2a, panelBlue: 0x35507e, panelRed: 0x7e3a33,
+  arcFloor: 0x4a3324, baseFloor: 0x5e4330, arcWood: 0x3b2416,
 };
 
-export function buildBrickHall(scene: THREE.Scene, preset: Preset, aniso: number, highQuality: boolean): BuiltMap {
+export function buildBrickHall(scene: THREE.Scene, preset: Preset, presetName: PresetName, aniso: number): BuiltMap {
+  const gfx = gfxOf(presetName), highQuality = isHigh(presetName), RG = XCFG.gfx.rough;
   const world = physics.world;
   const group = new THREE.Group();
   group.name = 'BrickHall';
@@ -34,8 +48,15 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, aniso: number
   // ── material: warna lewat vertex color → semua balok berwarna cukup atas/sisi/bawah (+ dinding buku, polos)
   const stud = TX.studTexture(aniso), inlet = TX.inletTexture(aniso), side = TX.sideTexture(aniso);
   const books = TX.bookwallTexture(aniso), tiles = TX.tileTexture(aniso);
-  const V = (map: THREE.Texture | null) => new THREE.MeshLambertMaterial({ color: 0xffffff, map, vertexColors: true });
-  const topM = V(stud), sideM = V(side), botM = V(inlet), plainM = V(null), bookM = V(books);
+  // MEDIUM+: PBR (kekasaran per permukaan) + normal map prosedural; LOW: Lambert (paling ringan)
+  const nm = gfx.normalMaps;
+  const V = (map: THREE.Texture | null, rough: number, normal: (a: number) => THREE.Texture) => gfx.pbr
+    ? new THREE.MeshStandardMaterial({ color: 0xffffff, map, vertexColors: true, roughness: rough, metalness: 0, normalMap: nm ? normal(aniso) : null })
+    : new THREE.MeshLambertMaterial({ color: 0xffffff, map, vertexColors: true });
+  const topM = V(stud, RG.top, SM.studNormal), sideM = V(side, RG.side, SM.sideNormal), botM = V(inlet, RG.bottom, SM.inletNormal);
+  const plainM = V(null, RG.plain, SM.fabricNormal), bookM = V(books, RG.book, SM.bookNormal);
+  // logam dekorasi (kuningan, besi, baja, tembaga, emas) memantulkan lingkungan
+  const metalM = gfx.pbr ? new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: RG.metal, metalness: 0.85 }) : plainM;
   const set = (c: number): SlotMats => ({ top: [topM, c], side: [sideM, c], bottom: [botM, c] });
   const STY: Record<Exclude<Style, 'hidden'>, SlotMats> = {
     plaster: set(COL.plaster),
@@ -50,11 +71,20 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, aniso: number
     tower: { top: [topM, COL.darkwood], side: [bookM, 0xffffff], bottom: [botM, COL.darkwood] },
     rail: set(COL.darkwood),
     shelf: set(COL.shelf),
+    // v2: rak tinggi / lemari arsip bersisi buku, dinding arsip (sisi aula = dinding buku), panel tim (dipilih per sisi di bawah)
+    stack: { top: [topM, COL.arcWood], side: [bookM, 0xe8e0d0], bottom: [botM, COL.arcWood] },
+    arcwall: { top: [topM, COL.deck], side: [bookM, 0xd8cfc0], bottom: [botM, COL.deck] },
+    teampanel: set(COL.panelBlue),
   };
+  const TEAM_PANEL = { blue: set(COL.panelBlue), red: set(COL.panelRed) };
   const carpetSlots: SlotMats = { top: [plainM, COL.carpet], side: [plainM, COL.carpetEdge], bottom: [plainM, COL.carpet] };
+  const carpetOf = (tone?: 'blue' | 'red' | 'gold'): SlotMats => {
+    const c = tone === 'red' ? COL.carpetRed : tone === 'gold' ? COL.carpetGold : COL.carpet;
+    return { top: [plainM, c], side: [plainM, COL.carpetEdge], bottom: [plainM, c] };
+  };
   const edgeSlots: SlotMats = { top: [plainM, COL.carpetEdge], side: [plainM, COL.carpetEdge], bottom: [plainM, COL.carpetEdge] };
 
-  const solid = new MeshBuckets();
+  const solid = new MeshBuckets(XCFG.gfx.bake.subdiv);
   let colliders = 0;
 
   const cuboid = (min: ArrayLike<number>, max: ArrayLike<number>) => {
@@ -77,12 +107,19 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, aniso: number
     if (b.cat === 'rail') { cuboid(b.min, b.max); emitRail(solid, b, STY.rail); continue; }
     if (b.cat === 'shelf') { shelves.push(emitShelf(solid, b, STY.shelf, shelves.length, (mn, mx) => cuboid(mn, mx))); continue; }
     cuboid(b.min, b.max);
-    solid.addBox(b.min, b.max, STY[b.style], { bottom: b.min[1] <= 0.001, top: b.max[1] >= 28 });
+    const sty = b.style === 'teampanel' ? TEAM_PANEL[(b.min[2] + b.max[2]) / 2 < 0 ? 'blue' : 'red'] : STY[b.style];
+    solid.addBox(b.min, b.max, sty, { bottom: b.min[1] <= 0.001, top: b.max[1] >= 28 });
   }
 
-  // ── karpet (tanpa studs) + pinggiran
+  // ── v2: lantai kayu ruang dalam (arsip, lantai dasar markas) — di luar pelat ubin aula
+  for (const f of INTERIOR_FLOORS) {
+    const c = f.x[1] - f.x[0] < 20 ? COL.arcFloor : COL.baseFloor; // arsip (lebar 8) lebih gelap dari lantai markas
+    solid.addBox([f.x[0], -0.05, f.z[0]], [f.x[1], 0.001, f.z[1]], { top: [topM, c], side: [sideM, c], bottom: [botM, c] }, { bottom: true, sides: true });
+  }
+
+  // ── karpet (tanpa studs) + pinggiran — v2: warna sisi tim
   for (const c of CARPETS) {
-    solid.addBox([c.x[0] + 0.15, c.y, c.z[0] + 0.15], [c.x[1] - 0.15, c.y + 0.03, c.z[1] - 0.15], carpetSlots, { bottom: true });
+    solid.addBox([c.x[0] + 0.15, c.y, c.z[0] + 0.15], [c.x[1] - 0.15, c.y + 0.03, c.z[1] - 0.15], carpetOf(c.tone), { bottom: true });
     solid.addBox([c.x[0], c.y, c.z[0]], [c.x[1], c.y + 0.025, c.z[0] + 0.15], edgeSlots, { bottom: true });
     solid.addBox([c.x[0], c.y, c.z[1] - 0.15], [c.x[1], c.y + 0.025, c.z[1]], edgeSlots, { bottom: true });
     solid.addBox([c.x[0], c.y, c.z[0] + 0.15], [c.x[0] + 0.15, c.y + 0.025, c.z[1] - 0.15], edgeSlots, { bottom: true });
@@ -103,7 +140,7 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, aniso: number
       const y = STAIR_RISE * (i + 1);
       solid.addBox([s.x[0], 0, Math.min(za, zb)], [s.x[1], y, Math.max(za, zb)], STY.deck, { bottom: true });
       const cx = (s.x[0] + s.x[1]) / 2;
-      solid.addBox([cx - 1.5, y, Math.min(za, zb)], [cx + 1.5, y + 0.03, Math.max(za, zb)], carpetSlots, { bottom: true });
+      solid.addBox([cx - 1.5, y, Math.min(za, zb)], [cx + 1.5, y + 0.03, Math.max(za, zb)], s.zFoot < 0 ? carpetSlots : carpetOf('red'), { bottom: true });
     }
     // handrail miring di sisi terbuka: Y 1.2 di kaki → 11.2 di puncak
     const len = Math.hypot(10, s.zTop - s.zFoot);
@@ -134,18 +171,22 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, aniso: number
   }
 
   // ── lantai ubin: satu plane bertekstur repeat (E-12), 1 tekstur = 2×2 unit
-  const floorGeo = new THREE.PlaneGeometry(44, 70);
+  //    (dipecah 2×2 u agar cahaya bake bergradasi; MEDIUM+: ubin mengkilap memantulkan lingkungan + nat cekung)
+  const floorGeo = new THREE.PlaneGeometry(44, 70, 22, 35);
   const uv = floorGeo.attributes.uv as THREE.BufferAttribute;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 22, uv.getY(i) * 35);
-  floorGeo.rotateX(-Math.PI / 2);
-  const floor = new THREE.Mesh(floorGeo, new THREE.MeshLambertMaterial({ map: tiles }));
-  floor.position.y = 0.002; floor.receiveShadow = shadows;
-  group.add(floor);
+  floorGeo.rotateX(-Math.PI / 2); floorGeo.translate(0, 0.002, 0);
+  const floorMat = gfx.pbr
+    ? new THREE.MeshStandardMaterial({ map: tiles, roughness: RG.tile, metalness: 0, normalMap: nm ? SM.tileNormal(aniso) : null })
+    : new THREE.MeshLambertMaterial({ map: tiles });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.receiveShadow = shadows;
 
   // ── skylight: kisi 0.3 + kaca tipis; jendela emissive; lampu dinding lorong
   const nonShadow = new MeshBuckets();
   const glassMat = new THREE.MeshLambertMaterial({ color: 0xa8d8ff, transparent: true, opacity: 0.35, depthWrite: false });
-  const emisMat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true, emissive: 0xffffff, emissiveIntensity: 0.8 });
+  const emisMat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true, emissive: 0xffffff,
+    emissiveIntensity: gfx.pbr ? XCFG.gfx.light.window : 0.8 });   // tone mapping ACES: jendela tidak silau putih
   const glass: SlotMats = { top: [glassMat, 0xffffff], side: [glassMat, 0xffffff], bottom: [glassMat, 0xffffff] };
   const win: SlotMats = { top: [emisMat, 0xffe7b0], side: [emisMat, 0xffe7b0], bottom: [emisMat, 0xffe7b0] };
   const lamp: SlotMats = { top: [emisMat, 0xffc97a], side: [emisMat, 0xffc97a], bottom: [emisMat, 0xffc97a] };
@@ -165,27 +206,47 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, aniso: number
     const x0 = l.x < 0 ? -30 : 29.7;
     nonShadow.addBox([x0, l.y - 0.2, l.z - 0.4], [x0 + 0.3, l.y + 0.2, l.z + 0.4], lamp);
   }
+  // v2: dekorasi & identitas (spanduk tim, lampu gantung, menara jam, ikon puncak rak tinggi, balok atap, galeri rak dinding,
+  //     lampu arsip & ruang spawn bawah) — balok ber-vertex-color di bucket yang sama (tanpa draw call tambahan)
+  // nyala dekorasi = warna vertex penuh tanpa pencahayaan (lentera biru/merah tidak memucat seperti emissive putih)
+  const glowM = new THREE.MeshBasicMaterial({ vertexColors: true });
+  const decor = buildDecor({ solid, glow: nonShadow, plainM, sideM, bookM, topM, metalM, emisMat: glowM, preset, cuboid: (mn, mx) => { cuboid(mn, mx); } });
+  for (const o of decor.objects) group.add(o);
   for (const m of nonShadow.build(false)) group.add(m);
-  for (const m of solid.build(shadows)) group.add(m);
+  // bake cahaya (AO + langit + pantul) ke semua balok statis & lantai ubin → material salinan yang memodulasi cahaya tidak langsung
+  const light = new LightField();
+  const bakedMats = new Map<THREE.Material, THREE.Material>();
+  const bake = (m: THREE.Mesh) => {
+    light.bakeGeometry(m.geometry);
+    const orig = m.material as THREE.Material;
+    let bm = bakedMats.get(orig);
+    if (!bm) { bm = bakedMaterial(orig); bakedMats.set(orig, bm); }
+    m.material = bm;
+    group.add(m);
+  };
+  for (const m of solid.build(shadows)) bake(m);
+  bake(floor);
 
-  // HIGH: light shaft palsu (balok aditif opacity 0.05) miring searah matahari
-  if (highQuality) {
-    const shaftMat = new THREE.MeshBasicMaterial({ color: 0xffe0b5, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false });
-    const shift = 28 / Math.tan(Math.atan2(55, 40)); // ±20.3 unit ke −X di lantai
+  // berkas cahaya skylight (MEDIUM+): volume miring searah matahari, pudar di ujung & tepi (lihat SHAFT_SHADER)
+  let shafts: THREE.Mesh | null = null, dust: THREE.Points | null = null;
+  const shift = 28 / Math.tan(Math.atan2(55, 40)); // ±20.3 unit ke −X di lantai
+  if (gfx.shafts) {
     const geos: THREE.BufferGeometry[] = [];
     for (const s of SKYLIGHTS) {
-      const g = new THREE.BoxGeometry(s.size, 28, s.size); g.translate(0, 14, 0);
+      const g = new THREE.BoxGeometry(s.size, 28, s.size, 1, 6, 1); g.translate(0, 14, 0);
       const p = g.attributes.position as THREE.BufferAttribute;
       for (let i = 0; i < p.count; i++) p.setX(i, p.getX(i) + s.x + (p.getY(i) / 28 - 1) * shift);
       g.translate(0, 0, s.z); geos.push(g);
     }
-    const shafts = new THREE.Mesh(mergeGeometries(geos), shaftMat);
-    shafts.renderOrder = 2;
+    shafts = new THREE.Mesh(mergeGeometries(geos), shaftMaterial());
+    shafts.renderOrder = 2; shafts.frustumCulled = false;
     group.add(shafts);
   }
+  if (gfx.dust) { dust = dustPoints(shift); group.add(dust); }
 
   // ── pencahayaan (GDD §4.7)
-  const sun = new THREE.DirectionalLight(0xffe0b5, preset.sunIntensity);
+  const L = XCFG.gfx.light;
+  const sun = new THREE.DirectionalLight(0xffe0b5, preset.sunIntensity * (gfx.pbr ? L.sunMul : 1));
   sun.position.set(40, 55, 0);
   sun.target.position.set(0, 0, 0);
   sun.castShadow = shadows;
@@ -196,11 +257,11 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, aniso: number
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
     if (highQuality) sun.shadow.radius = 3;
   }
-  const hemi = new THREE.HemisphereLight(0xfff1dd, 0x4a2e1c, 1.3);
+  const hemi = new THREE.HemisphereLight(0xfff1dd, 0x4a2e1c, 1.3 * (gfx.pbr ? L.hemi : 1));
   group.add(sun, sun.target, hemi);
 
   scene.add(group);
-  return { group, shelves, sun, hemi, triangles: solid.triangles + nonShadow.triangles, colliders };
+  return { group, shelves, sun, hemi, triangles: solid.triangles + nonShadow.triangles, colliders, light, dust, shafts };
 }
 
 /** Plafon visual berlubang 6 skylight (collider tetap pejal). */
@@ -249,4 +310,69 @@ function emitShelf(b: MeshBuckets, s: Box, mats: SlotMats, index: number,
     addCollider(mn, mx);
   }
   return { index, id: s.id, cx, cz, alongX };
+}
+
+/** Berkas cahaya: aditif, kuat saat dilihat tegak lurus (tepi lembut), pudar di dekat plafon & lantai, sedikit berdenyut. */
+function shaftMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color(0xffd9a0) }, uOpacity: { value: XCFG.gfx.shaft.opacity }, uTime: { value: 0 } },
+    vertexShader: /* glsl */ `
+      varying float vH; varying vec3 vN; varying vec3 vV; varying vec3 vW;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0); vW = wp.xyz; vH = wp.y / 28.0;
+        vec4 mv = viewMatrix * wp; vV = -mv.xyz; vN = normalize(normalMatrix * normal);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor; uniform float uOpacity; uniform float uTime;
+      varying float vH; varying vec3 vN; varying vec3 vV; varying vec3 vW;
+      void main() {
+        float face = pow(abs(dot(normalize(vN), normalize(vV))), 1.6);
+        float fade = smoothstep(0.0, 0.3, vH) * (1.0 - smoothstep(0.9, 1.0, vH));
+        float flick = 0.85 + 0.15 * sin(vW.y * 0.6 + vW.z * 0.4 + uTime * 0.7);
+        float a = uOpacity * face * fade * flick;
+        gl_FragColor = vec4(uColor * a, a);
+      }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+}
+
+/** Debu halus melayang di dalam berkas cahaya (1 draw call, gerak dihitung di shader dari uTime). */
+function dustPoints(shift: number): THREE.Points {
+  const D = XCFG.gfx.dust, n = D.count, pos = new Float32Array(n * 3), ph = new Float32Array(n);
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  for (let i = 0; i < n; i++) {
+    const s = SKYLIGHTS[i % SKYLIGHTS.length], y = 1 + rnd() * 25;
+    pos[i * 3] = s.x + (rnd() - 0.5) * s.size * 0.9 + (y / 28 - 1) * shift;
+    pos[i * 3 + 1] = y;
+    pos[i * 3 + 2] = s.z + (rnd() - 0.5) * s.size * 0.9;
+    ph[i] = rnd() * 100;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1));
+  const m = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uSize: { value: D.size }, uScale: { value: 600 }, uOpacity: { value: D.opacity } },
+    vertexShader: /* glsl */ `
+      attribute float aPhase; uniform float uTime, uSize, uScale; varying float vA;
+      void main() {
+        vec3 p = position + vec3(sin(uTime * 0.11 + aPhase) * 0.7, sin(uTime * 0.05 + aPhase * 1.7) * 0.9, cos(uTime * 0.09 + aPhase * 0.6) * 0.7);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_PointSize = clamp(uSize * uScale / -mv.z, 1.0, 6.0);
+        vA = 0.5 + 0.5 * sin(uTime * 0.8 + aPhase * 3.0);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform float uOpacity; varying float vA;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.0, d) * uOpacity * vA;
+        gl_FragColor = vec4(vec3(1.0, 0.9, 0.72) * a, a);
+      }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  const pts = new THREE.Points(g, m);
+  pts.frustumCulled = false;
+  return pts;
 }

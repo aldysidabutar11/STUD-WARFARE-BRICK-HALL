@@ -9,16 +9,24 @@ import { bus } from '../core/EventBus';
 import { ctx } from '../game/ctx';
 import type { Entity } from '../entities/Entity';
 import { surfaceAt } from '../world/MapData';
+import { returnSlot, type Slot } from './Slots';
+import { BodyLerp } from '../core/BodyLerp';
 
 const GR = CFG.grenade, GT = XCFG.grenadeThrow;
 const D2R = THREE.MathUtils.degToRad;
 const EARLY_GROUPS = ((G.GRENADE << 16) | (G.STATIC | G.PROP)) >>> 0; // 0.15 s pertama: abaikan kapsul pelempar
 
-interface Live { body: RAPIER.RigidBody; collider: RAPIER.Collider; mesh: THREE.Group; fuse: number; owner: number; prev: THREE.Vector3; early: number }
+interface Live { body: RAPIER.RigidBody; collider: RAPIER.Collider; mesh: THREE.Group; fuse: number; owner: number; prev: THREE.Vector3; early: number;
+  lerp: BodyLerp }
+
+/** Waktu angkat per slot: senapan 0.55 s (GDD §5.1), pisau XCFG.knife, granat 0.35 s (GDD §8). */
+export function equipTimeFor(slot: Slot): number {
+  return slot === 'ar' ? CFG.combat.equipTime : slot === 'knife' ? XCFG.knife.equipTime : CFG.grenade.equipTime;
+}
 
 export interface GrenadeInput {
-  equip: boolean;          // G / 4 / scroll
-  toAr: boolean;           // tombol 1 / scroll
+  equip: boolean;          // tombol granat (3) / scroll / Q
+  toSlot: 'ar' | 'knife' | null; // keluar dari granat (READY) ke senapan / pisau
   lPress: boolean; lHeld: boolean; lRelease: boolean;
   rPress: boolean; rHeld: boolean; rRelease: boolean;
 }
@@ -48,6 +56,11 @@ export class GrenadeManager {
 
   get count() { return this.live.length; }
 
+  /** Iterasi granat hidup (posisi, sisa sumbu, pemilik) — dipakai indikator bahaya HUD & radar. */
+  forEachLive(cb: (x: number, y: number, z: number, fuse: number, owner: number) => void) {
+    for (const g of this.live) { const t = g.body.translation(); cb(t.x, t.y, t.z, g.fuse, g.owner); }
+  }
+
   /** State machine per entitas (pemain: input mouse; bot: input virtual yang sama). */
   handle(e: Entity, inp: GrenadeInput, dt: number) {
     const w = e.weapon;
@@ -60,7 +73,7 @@ export class GrenadeManager {
         if (e.grenadeT <= 0) e.grenadeState = 'READY';
         break;
       case 'READY':
-        if (inp.toAr || inp.equip) { e.grenadeState = 'NONE'; w.switchTo('ar', CFG.combat.equipTime); break; }
+        if (inp.toSlot) { e.grenadeState = 'NONE'; w.switchTo(inp.toSlot, equipTimeFor(inp.toSlot)); break; }
         if (inp.lPress || inp.rPress) {
           e.grenadeState = 'COOKING'; e.cookT = 0; e.throwOver = inp.lPress;
           bus.emit('pin', { entityId: e.id });
@@ -69,7 +82,7 @@ export class GrenadeManager {
       case 'COOKING':
         e.cookT += dt;
         if (e.cookT >= GR.fuse) { // meledak di tangan
-          e.grenades--; e.grenadeState = 'NONE'; w.switchTo('ar', CFG.combat.equipAfterThrow);
+          e.grenades--; e.grenadeState = 'NONE'; w.switchTo(returnSlot(w.prevSlot, w.hasPrimary), CFG.combat.equipAfterThrow);
           this.handPos(e, _hand); this.explode(_hand, e.id);
         } else if ((e.throwOver && inp.lRelease) || (!e.throwOver && inp.rRelease) || (e.throwOver ? !inp.lHeld : !inp.rHeld)) {
           this.throw(e, e.throwOver, GR.fuse - e.cookT);
@@ -79,7 +92,7 @@ export class GrenadeManager {
         break;
       case 'THROWN':
         e.grenadeT -= dt;
-        if (e.grenadeT <= 0) { e.grenadeState = 'NONE'; w.switchTo('ar', 0.0001); }
+        if (e.grenadeT <= 0) { e.grenadeState = 'NONE'; w.switchTo(returnSlot(w.prevSlot, w.hasPrimary), 0.0001); }
         break;
     }
     if (e.throwAnimT >= 0) { e.throwAnimT += dt; if (e.throwAnimT > 0.5) e.throwAnimT = -1; }
@@ -123,7 +136,7 @@ export class GrenadeManager {
       .setDensity(GR.density).setCollisionGroups(EARLY_GROUPS), body);
     const mesh = this.pool.find(m => !m.visible) ?? this.pool[0];
     mesh.visible = true; mesh.position.copy(_a);
-    this.live.push({ body, collider, mesh, fuse: fuseLeft, owner: e.id, prev: _b.clone(), early: 0.15 });
+    this.live.push({ body, collider, mesh, fuse: fuseLeft, owner: e.id, prev: _b.clone(), early: 0.15, lerp: new BodyLerp().snap(body) });
   }
 
   fixedUpdate(dt: number) {
@@ -151,12 +164,11 @@ export class GrenadeManager {
     }
   }
 
-  update() {
-    for (const g of this.live) {
-      const t = g.body.translation(), r = g.body.rotation();
-      g.mesh.position.set(t.x, t.y, t.z); g.mesh.quaternion.set(r.x, r.y, r.z, r.w);
-    }
-  }
+  /** Setelah world.step(): simpan pose fisika untuk interpolasi render. */
+  postStep() { for (const g of this.live) g.lerp.step(g.body); }
+
+  /** Per frame: mesh di antara dua step fisika (alpha) -> granat terbang mulus di layar > 60 Hz. */
+  update(alpha: number) { for (const g of this.live) g.lerp.apply(g.mesh, alpha); }
 
   private remove(i: number) {
     const g = this.live[i];

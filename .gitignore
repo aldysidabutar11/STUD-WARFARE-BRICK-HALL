@@ -3,3 +3,8 @@ dist/
 *.log
 .vite/
 .playwright-mcp/
+
+# dokumen desain privat & gambar acuan karakter — hanya lokal, tidak dipublikasikan
+Stud_Warfare_Brick_Hall_GDD_v2.pdf
+stud_warfare_brick_hall_gdd_v2_0.md
+Karakter/

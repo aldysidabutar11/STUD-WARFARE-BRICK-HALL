@@ -1,23 +1,48 @@
 // src/game/MatchManager.ts — aturan TDM & state match (GDD §1.3, §12)
+// + mode Eliminasi berbasis ronde dan Latihan menembak (pasca-MVP "mode Elimination").
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import { bus, type MatchStateName } from '../core/EventBus';
+import { newStats } from '../entities/Entity';
 import { ctx } from './ctx';
 
 export type Winner = 'blue' | 'red' | 'draw';
+export type GameMode = 'tdm' | 'elim' | 'practice';
+export interface MatchOptions { mode: GameMode; scoreLimit: number; timeLimit: number; roundsToWin: number }
+
+/**
+ * Hasil ronde Eliminasi: tim yang habis kalah; bila waktu habis → jumlah hidup terbanyak, lalu total HP; sama → seri.
+ * Mengembalikan null bila ronde belum selesai.
+ */
+export function elimRoundResult(aliveBlue: number, aliveRed: number, hpBlue: number, hpRed: number, timeUp: boolean): Winner | null {
+  if (aliveBlue === 0 && aliveRed === 0) return 'draw';
+  if (aliveBlue === 0) return 'red';
+  if (aliveRed === 0) return 'blue';
+  if (!timeUp) return null;
+  if (aliveBlue !== aliveRed) return aliveBlue > aliveRed ? 'blue' : 'red';
+  if (hpBlue !== hpRed) return hpBlue > hpRed ? 'blue' : 'red';
+  return 'draw';
+}
 
 export class MatchManager {
   state: MatchStateName = 'MENU';
+  opts: MatchOptions = { mode: 'tdm', scoreLimit: CFG.match.scoreLimit, timeLimit: CFG.match.timeLimit, roundsToWin: XCFG.elim.roundsToWin };
   timeLeft: number = CFG.match.timeLimit;
   countdown: number = CFG.match.countdown;
   endT = 0;
   winner: Winner = 'draw';
-  onEnded: (() => void) | null = null;
+  round = 0;
+  roundWinner: Winner | null = null;
+  private roundEndT = 0;
   onResults: (() => void) | null = null;
+  /** Dipanggil setiap awal ronde (TDM/Latihan: sekali di awal match). */
+  onRoundStart: ((round: number) => void) | null = null;
 
   constructor() {
     bus.on('kill', () => this.checkScore());
   }
+
+  get mode(): GameMode { return this.opts.mode; }
 
   set(s: MatchStateName) {
     this.state = s;
@@ -25,39 +50,75 @@ export class MatchManager {
   }
 
   /** Mulai match baru: skor & statistik direset, semua karakter di ruang spawn, hitung mundur 3 s. */
-  start() {
-    this.timeLeft = CFG.match.timeLimit;
-    this.countdown = CFG.match.countdown;
+  start(opts: MatchOptions) {
+    this.opts = { ...opts };
+    this.round = 0;
     ctx.teams.reset();
-    for (const e of ctx.entities) {
-      e.stats = { kills: 0, deaths: 0, score: 0, shots: 0, hits: 0, hsHits: 0, hsKills: 0, damage: 0 };
-      e.alive = false; e.respawnT = 0;
-    }
-    ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear();
-    for (const e of ctx.entities) ctx.spawns.spawn(e);
-    this.set('COUNTDOWN');
+    for (const e of ctx.entities) { e.stats = newStats(); e.streak = 0; e.respawnT = 0; e.dmgBy.clear(); }
+    this.beginRound();
   }
 
-  get locked() { return this.state === 'COUNTDOWN' || this.state === 'ENDED' || this.state === 'RESULTS'; }
+  private beginRound() {
+    this.round++;
+    this.timeLeft = this.opts.mode === 'elim' ? XCFG.elim.roundTime : this.opts.timeLimit;
+    this.countdown = CFG.match.countdown;
+    this.roundWinner = null;
+    ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear();
+    for (const e of ctx.entities) ctx.spawns.spawn(e);
+    this.onRoundStart?.(this.round);
+    this.set(this.opts.mode === 'practice' ? 'PLAYING' : 'COUNTDOWN');
+  }
 
-  /** dt = waktu riil (slow-motion tidak memperlambat timer akhir). */
+  get locked() { return this.state === 'COUNTDOWN' || this.state === 'ROUND_END' || this.state === 'ENDED' || this.state === 'RESULTS'; }
+
+  /** dt = waktu game; realDt = waktu riil (slow-motion tidak memperlambat timer akhir). */
   update(dt: number, realDt: number) {
-    if (this.state === 'COUNTDOWN') {
-      this.countdown -= dt;
-      if (this.countdown <= 0) this.set('PLAYING');
-    } else if (this.state === 'PLAYING') {
-      this.timeLeft = Math.max(0, this.timeLeft - dt);
-      if (this.timeLeft <= 0) this.end();
-    } else if (this.state === 'ENDED') {
-      this.endT += realDt;
-      if (this.endT >= XCFG.match.endSlowMoTime + 1.5) { this.set('RESULTS'); this.onResults?.(); }
+    switch (this.state) {
+      case 'COUNTDOWN':
+        this.countdown -= dt;
+        if (this.countdown <= 0) this.set('PLAYING');
+        break;
+      case 'PLAYING':
+        if (this.opts.mode === 'practice') break;
+        this.timeLeft = Math.max(0, this.timeLeft - dt);
+        if (this.opts.mode === 'elim') this.checkRound(this.timeLeft <= 0);
+        else if (this.timeLeft <= 0) this.end();
+        break;
+      case 'ROUND_END': {
+        this.roundEndT += realDt;
+        if (this.roundEndT < XCFG.elim.roundEnd) break;
+        const s = ctx.teams.scores, n = this.opts.roundsToWin;
+        if (s.blue >= n || s.red >= n) this.end(); else this.beginRound();
+        break;
+      }
+      case 'ENDED':
+        this.endT += realDt;
+        if (this.endT >= XCFG.match.endSlowMoTime + 1.5) { this.set('RESULTS'); this.onResults?.(); }
+        break;
+      default: break;
     }
   }
 
   private checkScore() {
     if (this.state !== 'PLAYING') return;
-    const s = ctx.teams.scores;
-    if (s.blue >= CFG.match.scoreLimit || s.red >= CFG.match.scoreLimit) this.end();
+    if (this.opts.mode === 'tdm') {
+      const s = ctx.teams.scores;
+      if (s.blue >= this.opts.scoreLimit || s.red >= this.opts.scoreLimit) this.end();
+    } else if (this.opts.mode === 'elim') this.checkRound(false);
+  }
+
+  private checkRound(timeUp: boolean) {
+    let ab = 0, ar = 0, hb = 0, hr = 0;
+    for (const e of ctx.entities) {
+      if (!e.alive) continue;
+      if (e.team === 'blue') { ab++; hb += e.hp; } else { ar++; hr += e.hp; }
+    }
+    const w = elimRoundResult(ab, ar, hb, hr, timeUp);
+    if (!w) return;
+    this.roundWinner = w;
+    if (w !== 'draw') ctx.teams.scores[w]++;
+    this.roundEndT = 0;
+    this.set('ROUND_END');
   }
 
   end() {
@@ -65,6 +126,5 @@ export class MatchManager {
     this.winner = s.blue > s.red ? 'blue' : s.red > s.blue ? 'red' : 'draw';
     this.endT = 0;
     this.set('ENDED');
-    this.onEnded?.();
   }
 }

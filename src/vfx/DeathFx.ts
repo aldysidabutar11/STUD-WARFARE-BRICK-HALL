@@ -5,6 +5,7 @@ import { GROUPS } from '../physics/groups';
 import { XCFG } from '../config/extraConfig';
 import { PART_KEYS, type PartKey } from '../entities/BlockyCharacter';
 import type { Entity } from '../entities/Entity';
+import { BodyLerp } from '../core/BodyLerp';
 
 const DX = XCFG.death;
 const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _c = new THREE.Vector3();
@@ -12,18 +13,20 @@ const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vect
 interface Corpse {
   bodies: RAPIER.RigidBody[];
   meshes: THREE.Mesh[];
+  lerps: BodyLerp[];   // pose fisika 2 step terakhir -> mesh diinterpolasi per frame
   t: number; active: boolean;
 }
 
 export class DeathFx {
   private corpses = new Map<number, Corpse>();
+  readonly root = new THREE.Group();
 
-  constructor(private scene: THREE.Scene) {}
+  constructor(scene: THREE.Scene) { scene.add(this.root); }
 
   private ensure(e: Entity): Corpse {
     let c = this.corpses.get(e.id);
     if (c) return c;
-    c = { bodies: [], meshes: [], t: 0, active: false };
+    c = { bodies: [], meshes: [], lerps: [], t: 0, active: false };
     for (const k of PART_KEYS) {
       const src = e.char.parts[k];
       const g = src.geometry as THREE.BoxGeometry;
@@ -32,10 +35,12 @@ export class DeathFx {
         .setLinearDamping(0.3).setAngularDamping(0.5).setEnabled(false));
       physics.world.createCollider(RAPIER.ColliderDesc.cuboid(p.width / 2, p.height / 2, p.depth / 2).setDensity(1.0)
         .setFriction(0.8).setRestitution(0.25).setCollisionGroups(GROUPS.DEBRIS), body);
-      const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: e.char.colors[k] }));
-      mesh.castShadow = src.castShadow; mesh.visible = false;
-      this.scene.add(mesh);
-      c.bodies.push(body); c.meshes.push(mesh);
+      // collider = hitbox GDD; tampilan = geometri + atlas karakter (diperbarui tiap spawn, varian bisa berganti)
+      const vis = e.char.visuals[k];
+      const mesh = new THREE.Mesh(vis.geometry, e.char.debrisMaterial);
+      mesh.castShadow = vis.castShadow; mesh.visible = false;
+      this.root.add(mesh);
+      c.bodies.push(body); c.meshes.push(mesh); c.lerps.push(new BodyLerp());
     }
     this.corpses.set(e.id, c);
     return c;
@@ -58,7 +63,9 @@ export class DeathFx {
       b.setLinvel({ x: out.x, y: out.y + 1.0, z: out.z }, true);
       b.setAngvel({ x: (Math.random() * 2 - 1) * DX.omega, y: (Math.random() * 2 - 1) * DX.omega, z: (Math.random() * 2 - 1) * DX.omega }, true);
       const m = c.meshes[i]; m.visible = true; m.scale.setScalar(1);
+      m.geometry = e.char.visuals[k].geometry; m.material = e.char.debrisMaterial;
       m.position.copy(_p); m.quaternion.copy(_q);
+      c.lerps[i].snapTo(_p, _q);
     });
     c.t = 0; c.active = true;
   }
@@ -84,11 +91,7 @@ export class DeathFx {
       if (!c.active) continue;
       c.t += dt;
       const shrink = c.t < DX.shrinkStart ? 1 : Math.max(0, 1 - (c.t - DX.shrinkStart) / (DX.shrinkEnd - DX.shrinkStart));
-      for (let i = 0; i < c.bodies.length; i++) {
-        const b = c.bodies[i], m = c.meshes[i];
-        const t = b.translation(), r = b.rotation();
-        m.position.set(t.x, t.y, t.z); m.quaternion.set(r.x, r.y, r.z, r.w); m.scale.setScalar(shrink);
-      }
+      for (let i = 0; i < c.bodies.length; i++) { c.lerps[i].step(c.bodies[i]); c.meshes[i].scale.setScalar(shrink); }
       if (c.t >= DX.shrinkEnd) {
         c.active = false;
         for (let i = 0; i < c.bodies.length; i++) {
@@ -96,6 +99,14 @@ export class DeathFx {
           c.meshes[i].visible = false;
         }
       }
+    }
+  }
+
+  /** Per frame: balok tubuh di antara dua step fisika (alpha) -> terlempar mulus di layar > 60 Hz. */
+  update(alpha: number) {
+    for (const c of this.corpses.values()) {
+      if (!c.active) continue;
+      for (let i = 0; i < c.meshes.length; i++) c.lerps[i].apply(c.meshes[i], alpha);
     }
   }
 

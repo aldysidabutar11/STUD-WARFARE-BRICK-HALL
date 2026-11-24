@@ -39,11 +39,23 @@ describe('MapData', () => {
     }).map(b => b.id);
     expect(bad).toEqual([]);
   });
-  it('spawn slots have capsule clearance', () => {
-    for (const team of ['blue', 'red'] as const) for (const [x, , z] of SPAWN_SLOTS[team]) {
-      expect(clearance(10, x, z).m).toBeGreaterThanOrEqual(CAPSULE);
-      expect(supported(x, z)).toBe(true);
+  it('spawn slots (lantai 1 & 2) have capsule clearance', () => {
+    for (const team of ['blue', 'red'] as const) {
+      for (const [x, , z] of SPAWN_SLOTS[team].upper) {
+        expect(clearance(10, x, z).m).toBeGreaterThanOrEqual(CAPSULE);
+        expect(supported(x, z)).toBe(true);
+      }
+      for (const [x, y, z] of SPAWN_SLOTS[team].ground) {
+        expect(y).toBe(0);
+        expect(clearance(0, x, z).m).toBeGreaterThanOrEqual(CAPSULE);
+      }
     }
+  });
+  it('ruang spawn bawah & arsip beratap (pelat lantai 2 di atasnya)', () => {
+    const roofed = (x: number, z: number) => BOXES.some(b => b.min[1] >= 9 && b.min[1] <= 9.5 && b.max[1] === 10
+      && x >= b.min[0] && x <= b.max[0] && z >= b.min[2] && z <= b.max[2]);
+    for (const [x, , z] of [...SPAWN_SLOTS.blue.ground, ...SPAWN_SLOTS.red.ground]) expect(roofed(x, z)).toBe(true);
+    for (const z of [-30, -10, 0, 10, 30]) { expect(roofed(-26, z)).toBe(true); expect(roofed(26, z)).toBe(true); }
   });
   it('stairs are 35° ramps', () => {
     for (const s of STAIRS) expect(Math.atan2(10, Math.abs(s.zTop - s.zFoot)) * 180 / Math.PI).toBeCloseTo(34.96, 1);
@@ -53,13 +65,13 @@ describe('MapData', () => {
 describe('NavGraph', () => {
   const g = new NavGraph();
   it('counts', () => {
-    expect(g.nodes.length).toBe(126);
+    expect(g.nodes.length).toBe(192);   // v2: +ruang spawn bawah, lorong, arsip (126 − F_VOID + 68)
     expect(g.dropCount).toBe(8);
-    expect(g.walkEdgeCount).toBeGreaterThan(150);
+    expect(g.walkEdgeCount).toBeGreaterThan(230);
   });
-  it('every node reachable from both spawns (without drops)', () => {
+  it('every node reachable from all four spawn rooms (without drops)', () => {
     const path: number[] = [];
-    for (const s of ['S_SPAWN', 'N_SPAWN']) for (let i = 0; i < g.nodes.length; i++)
+    for (const s of ['S_SPAWN', 'N_SPAWN', 'S_GSPAWN', 'N_GSPAWN']) for (let i = 0; i < g.nodes.length; i++)
       expect(g.findPath(g.id(s), i, false, path), `${s} -> ${g.nodes[i].id}`).toBe(true);
   });
   it('node clearance >= capsule radius and level-10 nodes are supported', () => {

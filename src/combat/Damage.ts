@@ -71,32 +71,39 @@ export function timeToKill(w: WeaponDef, part: HitPart, d: number, mode: FireMod
 
 export interface MoveInput { ix: number; iz: number; sprinting: boolean; crouched: boolean; ads: boolean }
 
-/** Kecepatan target lokal (vx kanan, vz maju) — kode §3.4 (normalisasi eliptis). */
-export function moveTarget(m: MoveInput, out = { vx: 0, vz: 0 }) {
+/**
+ * Kecepatan target lokal (vx kanan, vz maju) — kode §3.4 (normalisasi eliptis).
+ * scale = CFG.player.moveSpeedScale (tempo); test vector §16.1 memakai tabel dasar (scale 1).
+ */
+export function moveTarget(m: MoveInput, out = { vx: 0, vz: 0 }, scale: number = CFG.player.moveSpeedScale) {
   const s = CFG.player.speed;
   const len = Math.hypot(m.ix, m.iz) || 1, nx = m.ix / len, nz = m.iz / len;
   let vx = nx * s.strafe;
   let vz = nz > 0 ? nz * (m.sprinting ? s.sprint : s.forward) : nz * s.back;
-  const mult = (m.crouched ? s.crouchCap / s.forward : 1) * (m.ads ? s.adsMult : 1) * CFG.player.moveSpeedScale;
+  const mult = (m.crouched ? s.crouchCap / s.forward : 1) * (m.ads ? s.adsMult : 1) * scale;
   vx *= mult; vz *= mult;
   out.vx = vx; out.vz = vz;
   return out;
 }
 
-/** Integrasi vertikal parabola eksak per langkah tetap (dipakai PlayerController). */
+/** Integrasi vertikal parabola eksak per langkah tetap (dipakai PlayerController; g karakter = g dunia·tempo²). */
 export function integrateVertical(velY: number, dt: number, g: number = CFG.world.gravity) {
   return { dy: velY * dt + 0.5 * g * dt * dt, velY: velY + g * dt };
 }
 
-/** Simulasi lompat fixed-step (test vector §16.1 jumpApex). */
-export function simulateJumpApex(): number {
-  let y = 0, v: number = CFG.player.jumpVelocity, apex = 0;
-  const dt = CFG.world.fixedStep;
+/**
+ * Simulasi lompat fixed-step (test vector §16.1 jumpApex). tempo T: v = 7.8·T, g = −22·T² → puncak tetap 1.383,
+ * durasi udara 0.71/T. Mengembalikan puncak; `out` (opsional) menerima durasi udara.
+ */
+export function simulateJumpApex(tempo = 1, out?: { airTime: number }): number {
+  let y = 0, v: number = CFG.player.jumpVelocity * tempo, apex = 0, t = 0;
+  const dt = CFG.world.fixedStep, g = CFG.world.gravity * tempo * tempo;
   for (let i = 0; i < 240; i++) {
-    const s = integrateVertical(v, dt);
-    y += s.dy; v = s.velY;
+    const s = integrateVertical(v, dt, g);
+    y += s.dy; v = s.velY; t += dt;
     if (y > apex) apex = y;
     if (y < 0) break;
   }
+  if (out) out.airTime = t;
   return apex;
 }

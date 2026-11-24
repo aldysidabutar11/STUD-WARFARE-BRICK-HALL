@@ -5,7 +5,7 @@ import { XCFG } from '../config/extraConfig';
 import { physics } from '../physics/Physics';
 import { bus } from '../core/EventBus';
 import { ctx } from '../game/ctx';
-import { WEAPONS } from '../config/weaponsData';
+import { WEAPONS, type WeaponId } from '../config/weaponsData';
 import * as R from './Recipes';
 
 const XA = XCFG.audio;
@@ -23,6 +23,11 @@ export class SpatialSynthAudio {
   private voices: Voice[] = [];
   private vol: { master: number; sfx: number; ui: number } = { master: CFG.audio.master, sfx: CFG.audio.sfx, ui: CFG.audio.ui };
   private listenerPos = new THREE.Vector3();
+  // keadaan listener yang terakhir dikirim ke Web Audio (lihat XCFG.audio.listener)
+  private sentPos = new THREE.Vector3(1e9, 0, 0);
+  private sentFwd = new THREE.Vector3();
+  private sentUp = new THREE.Vector3();
+  private sentT = -1;
 
   constructor() { this.subscribe(); }
 
@@ -122,21 +127,27 @@ export class SpatialSynthAudio {
     for (let i = this.voices.length - 1; i >= 0; i--) if (this.voices[i].end < now) this.kill(i);
   }
 
-  /** Listener disinkronkan ke posisi & orientasi kamera setiap frame. */
+  /** Listener mengikuti posisi & orientasi kamera: maks. 30x/detik dan hanya bila kamera bergerak/berputar (XA.listener). */
   updateListener(cam: THREE.Camera) {
     const ac = this.ac;
     if (!ac) return;
-    const l = ac.listener;
-    this.listenerPos.copy(cam.position);
+    const l = ac.listener, LS = XA.listener;
+    this.listenerPos.copy(cam.position);             // okklusi tetap memakai posisi terbaru setiap frame
     cam.getWorldDirection(_fwd); _up.set(0, 1, 0).applyQuaternion(cam.quaternion);
-    if (l.positionX) {
-      const t = ac.currentTime;
-      l.positionX.setValueAtTime(cam.position.x, t); l.positionY.setValueAtTime(cam.position.y, t); l.positionZ.setValueAtTime(cam.position.z, t);
-      l.forwardX.setValueAtTime(_fwd.x, t); l.forwardY.setValueAtTime(_fwd.y, t); l.forwardZ.setValueAtTime(_fwd.z, t);
-      l.upX.setValueAtTime(_up.x, t); l.upY.setValueAtTime(_up.y, t); l.upZ.setValueAtTime(_up.z, t);
-    } else {
-      (l as unknown as { setPosition(x: number, y: number, z: number): void }).setPosition(cam.position.x, cam.position.y, cam.position.z);
-      (l as unknown as { setOrientation(...a: number[]): void }).setOrientation(_fwd.x, _fwd.y, _fwd.z, _up.x, _up.y, _up.z);
+    const t = ac.currentTime;
+    const changed = this.sentPos.distanceToSquared(cam.position) > LS.moveSq || this.sentFwd.dot(_fwd) < LS.turnDot
+      || this.sentUp.dot(_up) < LS.turnDot;
+    // konteks suspended: currentTime berhenti → event menumpuk di timeline AudioParam (makin mahal tiap panggilan)
+    if (changed && ac.state === 'running' && (t - this.sentT >= LS.interval || t < this.sentT)) {
+      this.sentT = t; this.sentPos.copy(cam.position); this.sentFwd.copy(_fwd); this.sentUp.copy(_up);
+      if (l.positionX) {
+        l.positionX.setValueAtTime(cam.position.x, t); l.positionY.setValueAtTime(cam.position.y, t); l.positionZ.setValueAtTime(cam.position.z, t);
+        l.forwardX.setValueAtTime(_fwd.x, t); l.forwardY.setValueAtTime(_fwd.y, t); l.forwardZ.setValueAtTime(_fwd.z, t);
+        l.upX.setValueAtTime(_up.x, t); l.upY.setValueAtTime(_up.y, t); l.upZ.setValueAtTime(_up.z, t);
+      } else {
+        (l as unknown as { setPosition(x: number, y: number, z: number): void }).setPosition(cam.position.x, cam.position.y, cam.position.z);
+        (l as unknown as { setOrientation(...a: number[]): void }).setOrientation(_fwd.x, _fwd.y, _fwd.z, _up.x, _up.y, _up.z);
+      }
     }
     // suara > 0.5 s dicek ulang setiap 100 ms
     const now = ac.currentTime;
@@ -182,6 +193,24 @@ export class SpatialSynthAudio {
     });
     bus.on('impact', (e) => { if (Math.random() < 0.5) this.play(R.impactTick(e.material), 'impact', e.position, P.impact, 0.5); });
     bus.on('spawn', (e) => { if (isPlayer(e.entityId)) this.play(R.spawnChime, 'ui', null, P.ui); });
+    bus.on('melee', (e) => {
+      const own = isPlayer(e.entityId), knife = e.kind !== 'butt';
+      const rec = e.phase === 'swing' ? (knife ? (e.kind === 'stab' ? R.stabWhoosh : R.slashWhoosh) : R.whoosh)
+        : knife ? (e.phase === 'hit' ? R.knifeHit : R.knifeWall) : R.meleeThud;
+      this.play(rec, own ? 'own' : 'impact', own ? null : e.position, own ? P.own : P.impact, e.phase === 'wall' && !knife ? 0.6 : 1);
+    });
+    bus.on('weapon:drop', (e) => this.play(R.weaponDrop, 'impact', e.position, P.impact, 0.8));
+    bus.on('weapon:pickup', (e) => { if (isPlayer(e.entityId)) this.play(R.weaponPickup, 'own', null, P.own); });
+  }
+
+  /** Suara UI non-spasial (medali, assist, hitung mundur, jingle). */
+  playUi(recipe: R.Recipe, gain = 1) { this.play(recipe, 'ui', null, XA.priority.ui, gain); }
+  playOwn(recipe: R.Recipe, gain = 1) { this.play(recipe, 'own', null, XA.priority.own, gain); }
+  /** Tembakan tanpa event bus (replay killcam): pos null = suara "milik sendiri". */
+  playGunshot(weaponId: WeaponId, pos: THREE.Vector3 | null) {
+    const w = WEAPONS[weaponId];
+    const rec = R.gunshot(w.caliber, w.audioPitch * (0.97 + Math.random() * 0.06));
+    if (pos) this.play(rec, 'shot', pos, XA.priority.enemyShot, 1.0); else this.play(rec, 'own', null, XA.priority.own, 0.55);
   }
 
   click() { this.play(R.uiClick, 'ui', null, XA.priority.ui); }

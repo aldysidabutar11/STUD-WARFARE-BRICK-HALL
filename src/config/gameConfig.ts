@@ -5,7 +5,10 @@ export const CFG = {
     hp: 100, healthRegen: false, respawnDelay: 4.0, spawnProtection: 2.0,
     capsuleRadius: 0.8, standHeight: 5.0, crouchHeight: 3.7, eyeStand: 4.4, eyeCrouch: 3.1, eyeForward: 0.2,
     speed: { forward: 6.0, back: 4.5, strafe: 5.4, sprint: 8.5, crouchCap: 3.2, adsMult: 0.65 },
-    moveSpeedScale: 1.0, accelGround: 80, decelGround: 90, accelAir: 12, airMinSpeedCap: 3.0,
+    // moveSpeedScale = "tempo" gerak (GDD §3.4: "bila terasa lambat, uji 1.25–1.5"; disetujui pengguna 2026-11-24, GDD 1.0).
+    // Dipakai sebagai skala waktu: kecepatan ×T, gravitasi karakter ×T², lompat ×T, akselerasi udara ×T² (PlayerController)
+    // → lintasan lompat/jatuh tetap persis GDD (puncak 1.383, pagar 1.2, rak A/B), hanya lebih cepat.
+    moveSpeedScale: 1.35, accelGround: 80, decelGround: 90, accelAir: 12, airMinSpeedCap: 3.0,
     jumpVelocity: 7.8, coyoteTime: 0.10, jumpBuffer: 0.10,
     fallSafeHeight: 7.5, fallDamagePerUnit: 8, crouchTransition: 0.15, sprintToFire: 0.12,
     footstepInterval: { normal: 0.38, sprint: 0.30, ads: 0.50, crouch: 0.60 },
@@ -48,5 +51,9 @@ export const CFG = {
   audio: { voiceLimit: 24, master: 0.8, sfx: 1.0, ui: 0.7 },
 } as const;
 
-export type PresetName = keyof typeof CFG.render.presets;
-export type Preset = (typeof CFG.render.presets)[PresetName];
+/** Preset render §15 (LOW/MEDIUM/HIGH) + ULTRA pasca-MVP (nilai di XCFG.gfx.ultra; lihat config/presets.ts). */
+export type PresetName = keyof typeof CFG.render.presets | 'ULTRA';
+export interface Preset {
+  maxPixelRatio: number; maxInternalPixels: number; antialias: boolean; shadowMap: number; anisotropy: number;
+  decals: number; debris: number; sunIntensity: number;
+}

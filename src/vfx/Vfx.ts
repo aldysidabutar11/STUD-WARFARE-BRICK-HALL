@@ -10,7 +10,7 @@ import { weaponModel } from '../combat/WeaponModels';
 
 const X = XCFG.vfx;
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3();
-const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Color();
+const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Color(), _c2 = new THREE.Color();
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const Z_AXIS = new THREE.Vector3(0, 0, 1), Y_AXIS = new THREE.Vector3(0, 1, 0);
 
@@ -74,6 +74,11 @@ export class Vfx {
   private booms: Timed[] = [];
   private light: THREE.PointLight | null = null;
   private lightT = 0;
+  // kepulan debu benturan peluru (Points, atribut per titik diperbarui CPU saat aktif)
+  private puffs: THREE.Points;
+  private puffLife: Float32Array;
+  private puffVel: Float32Array;
+  private puffNext = 0;
 
   constructor(private scene: THREE.Scene, private preset: Preset, high: boolean) {
     const lam = (c: number) => new THREE.MeshLambertMaterial({ color: c });
@@ -111,6 +116,34 @@ export class Vfx {
       m.visible = false; scene.add(m);
       this.smokes.push({ obj: m, life: 0, max: XCFG.explosion.smokeLife, kind: 'smoke' });
     }
+    // kepulan debu benturan: 1 draw call, ukuran & kepekatan per titik
+    const PF = XCFG.gfx.puff, pg = new THREE.BufferGeometry();
+    pg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PF.pool * 3).fill(-999), 3));
+    pg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(PF.pool * 3), 3));
+    pg.setAttribute('aT', new THREE.BufferAttribute(new Float32Array(PF.pool).fill(1), 1));
+    this.puffLife = new Float32Array(PF.pool); this.puffVel = new Float32Array(PF.pool * 3);
+    this.puffs = new THREE.Points(pg, new THREE.ShaderMaterial({
+      uniforms: { uS0: { value: PF.size0 }, uS1: { value: PF.size1 }, uA: { value: PF.alpha }, uScale: { value: 700 } },
+      vertexShader: /* glsl */ `
+        attribute float aT; attribute vec3 color; uniform float uS0, uS1, uScale; varying float vT; varying vec3 vC;
+        void main() {
+          vT = aT; vC = color;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = mix(uS0, uS1, sqrt(aT)) * uScale / max(0.5, -mv.z);
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform float uA; varying float vT; varying vec3 vC;
+        void main() {
+          if (vT >= 1.0) discard;
+          float d = length(gl_PointCoord - 0.5);
+          float a = smoothstep(0.5, 0.1, d) * uA * (1.0 - vT) * (1.0 - vT);
+          gl_FragColor = vec4(vC, a);
+        }`,
+      transparent: true, depthWrite: false,
+    }));
+    this.puffs.frustumCulled = false;
+    scene.add(this.puffs);
     for (let i = 0; i < 3; i++) {
       const m = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true,
         blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -125,7 +158,25 @@ export class Vfx {
     f.obj.quaternion.setFromUnitVectors(Z_AXIS, _a.copy(dir).negate());
     f.obj.rotateZ(Math.random() * Math.PI);
     f.obj.visible = true; f.life = Math.max(X.muzzleTime, 1 / 60);
+    this.flashLight(pos);
+  }
+
+  /** Kilat cahaya moncong ke sekitar (HIGH+) — juga untuk tembakan FPS pemain (viewmodel tidak punya lampu dunia). */
+  flashLight(pos: THREE.Vector3) {
     if (this.light) { this.light.position.copy(pos); this.light.intensity = X.muzzleLightIntensity; this.lightT = X.muzzleTime; }
+  }
+
+  /** Kepulan debu lembut di titik benturan, warna mengikuti permukaan. */
+  puff(point: THREE.Vector3, normal: THREE.Vector3, color: number) {
+    const P = XCFG.gfx.puff, i = this.puffNext;
+    this.puffNext = (this.puffNext + 1) % P.pool;
+    const g = this.puffs.geometry, pos = g.attributes.position as THREE.BufferAttribute, col = g.attributes.color as THREE.BufferAttribute;
+    pos.setXYZ(i, point.x + normal.x * 0.12, point.y + normal.y * 0.12, point.z + normal.z * 0.12);
+    _c.setHex(color, THREE.SRGBColorSpace).lerp(_c2.setRGB(0.62, 0.58, 0.52), 0.55);
+    col.setXYZ(i, _c.r, _c.g, _c.b);
+    this.puffVel[i * 3] = normal.x * 0.9; this.puffVel[i * 3 + 1] = normal.y * 0.9 + P.rise; this.puffVel[i * 3 + 2] = normal.z * 0.9;
+    this.puffLife[i] = P.life;
+    pos.needsUpdate = true; col.needsUpdate = true;
   }
 
   tracer(from: THREE.Vector3, to: THREE.Vector3) {
@@ -199,8 +250,23 @@ export class Vfx {
     if (this.light) { this.light.position.copy(c); this.light.intensity = 12; this.light.distance = 24; this.lightT = 0.12; }
   }
 
+  /** Skala ukuran titik (piksel per unit pada jarak 1) — dari tinggi buffer & FOV kamera. */
+  setViewScale(s: number) { (this.puffs.material as THREE.ShaderMaterial).uniforms.uScale.value = s; }
+
   update(dt: number) {
     this.chipPool.update(dt); this.debris.update(dt); this.shells.update(dt, true);
+    // kepulan debu: mengembang, naik pelan, memudar
+    const PF = XCFG.gfx.puff, pg = this.puffs.geometry;
+    let pdirty = false;
+    for (let i = 0; i < PF.pool; i++) {
+      if (this.puffLife[i] <= 0) continue;
+      this.puffLife[i] -= dt; pdirty = true;
+      const pos = pg.attributes.position as THREE.BufferAttribute, k = Math.exp(-3 * dt);
+      pos.setXYZ(i, pos.getX(i) + this.puffVel[i * 3] * dt, pos.getY(i) + this.puffVel[i * 3 + 1] * dt, pos.getZ(i) + this.puffVel[i * 3 + 2] * dt);
+      this.puffVel[i * 3] *= k; this.puffVel[i * 3 + 2] *= k;
+      (pg.attributes.aT as THREE.BufferAttribute).setX(i, this.puffLife[i] <= 0 ? 1 : 1 - this.puffLife[i] / PF.life);
+    }
+    if (pdirty) { pg.attributes.position.needsUpdate = true; pg.attributes.aT.needsUpdate = true; }
     let tdirty = false;
     for (let i = 0; i < this.tracerLife.length; i++) {
       if (this.tracerLife[i] <= 0) continue;

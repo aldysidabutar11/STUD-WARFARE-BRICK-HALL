@@ -36,6 +36,9 @@ export class MeshBuckets {
   private buckets = new Map<THREE.Material, Bucket>();
   triangles = 0;
 
+  /** maxCell > 0: muka yang lebih panjang dari maxCell dipecah jadi kisi (cahaya bake per verteks bergradasi halus). */
+  constructor(readonly maxCell = 0) {}
+
   private bucket(m: THREE.Material): Bucket {
     let b = this.buckets.get(m);
     if (!b) { b = { pos: [], nrm: [], uv: [], col: [], idx: [] }; this.buckets.set(m, b); }
@@ -47,11 +50,21 @@ export class MeshBuckets {
     const b = this.bucket(f[0]);
     const base = b.pos.length / 3;
     _c.setHex(f[1], THREE.SRGBColorSpace);
-    for (let i = 0; i < 12; i++) b.pos.push(p[i]);
-    for (let i = 0; i < 4; i++) { b.nrm.push(n[0], n[1], n[2]); b.col.push(_c.r, _c.g, _c.b); }
-    for (let i = 0; i < 8; i++) b.uv.push(uv[i]);
-    b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
-    this.triangles += 2;
+    // kisi nu × nv sepanjang sisi p0→p1 dan p0→p3 (UV linier terhadap posisi → tekstur identik dengan quad utuh)
+    const l1 = Math.hypot(p[3] - p[0], p[4] - p[1], p[5] - p[2]), l3 = Math.hypot(p[9] - p[0], p[10] - p[1], p[11] - p[2]);
+    const nu = this.maxCell > 0 ? Math.max(1, Math.ceil(l1 / this.maxCell - 1e-6)) : 1;
+    const nv = this.maxCell > 0 ? Math.max(1, Math.ceil(l3 / this.maxCell - 1e-6)) : 1;
+    for (let j = 0; j <= nv; j++) for (let i = 0; i <= nu; i++) {
+      const a = i / nu, c = j / nv;
+      for (let k = 0; k < 3; k++) b.pos.push(p[k] + (p[3 + k] - p[k]) * a + (p[9 + k] - p[k]) * c);
+      b.uv.push(uv[0] + (uv[2] - uv[0]) * a + (uv[6] - uv[0]) * c, uv[1] + (uv[3] - uv[1]) * a + (uv[7] - uv[1]) * c);
+      b.nrm.push(n[0], n[1], n[2]); b.col.push(_c.r, _c.g, _c.b);
+    }
+    for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) {
+      const v0 = base + j * (nu + 1) + i, v1 = v0 + 1, v3 = v0 + nu + 1, v2 = v3 + 1;
+      b.idx.push(v0, v1, v2, v0, v2, v3);
+    }
+    this.triangles += 2 * nu * nv;
   }
 
   addBox(min: ArrayLike<number>, max: ArrayLike<number>, s: SlotMats, skip: { bottom?: boolean; top?: boolean; sides?: boolean } = {}) {

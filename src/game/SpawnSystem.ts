@@ -2,18 +2,34 @@
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
-import { SPAWN_SLOTS } from '../world/MapData';
+import { SPAWN_SLOTS, type SpawnFloor } from '../world/MapData';
 import { physics } from '../physics/Physics';
 import { bus } from '../core/EventBus';
 import { ctx } from './ctx';
 import type { Entity } from '../entities/Entity';
 
 const _eye = new THREE.Vector3();
+const FLOORS: SpawnFloor[] = ['upper', 'ground'];
 
 export class SpawnSystem {
-  /** Lewati slot terisi (karakter dalam 1.6 u); pilih slot dengan jarak minimum terbesar ke musuh yang punya LOS. */
+  /**
+   * v2 (permintaan pengguna): lantai spawn (1 = ruang spawn bawah, 2 = ruang spawn atas) dipilih ACAK tiap respawn.
+   * Di lantai itu: lewati slot terisi (karakter dalam 1.6 u), pilih slot dengan jarak minimum terbesar ke musuh ber-LOS
+   * (§12). Bila semua slot lantai itu terisi → lantai lainnya. Mengembalikan indeks global (0–4 atas, 5–9 bawah).
+   */
   pickSlot(e: Entity): number {
-    const slots = SPAWN_SLOTS[e.team];
+    const first = Math.random() < 0.5 ? 0 : 1;
+    for (const f of [first, 1 - first]) {
+      const i = this.bestOn(e, SPAWN_SLOTS[e.team][FLOORS[f]]);
+      if (i >= 0) return f * 5 + i;
+    }
+    return first * 5 + Math.floor(Math.random() * 5);
+  }
+
+  /** Posisi slot dari indeks global. */
+  slotPos(e: Entity, gi: number): [number, number, number] { return SPAWN_SLOTS[e.team][FLOORS[gi >= 5 ? 1 : 0]][gi % 5]; }
+
+  private bestOn(e: Entity, slots: [number, number, number][]): number {
     let best = -1, bestVal = -Infinity;
     const order = slots.map((_, i) => i).sort(() => Math.random() - 0.5); // seri diacak
     for (const i of order) {
@@ -29,12 +45,12 @@ export class SpawnSystem {
       }
       if (minD > bestVal) { bestVal = minD; best = i; }
     }
-    return best >= 0 ? best : Math.floor(Math.random() * slots.length);
+    return best;
   }
 
   spawn(e: Entity) {
     const i = e.dummyAt ? 0 : this.pickSlot(e);
-    const [x, y, z] = e.dummyAt ? [e.dummyAt.x, e.dummyAt.y, e.dummyAt.z] : SPAWN_SLOTS[e.team][i];
+    const [x, y, z] = e.dummyAt ? [e.dummyAt.x, e.dummyAt.y, e.dummyAt.z] : this.slotPos(e, i);
     if (e.pendingLoadout) { e.applyLoadout(e.pendingLoadout); e.pendingLoadout = null; }
     e.ctrl.setEnabled(true);
     e.ctrl.teleport(x, y + 0.05, z);
@@ -43,6 +59,7 @@ export class SpawnSystem {
     e.protectT = CFG.player.spawnProtection;
     e.char.protectT = e.protectT;
     e.grenades = CFG.grenade.perLife; e.grenadeState = 'NONE'; e.cookT = 0; e.throwAnimT = -1;
+    e.meleeT = -1; e.meleeCd = 0; e.meleeKind = 'butt'; e.streak = 0; e.dmgBy.clear();
     e.weapon.refill();
     e.recoil.reset();
     e.char.setVisible(true);

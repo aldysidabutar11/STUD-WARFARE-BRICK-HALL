@@ -4,16 +4,23 @@ import type { WeaponId } from '../config/weaponsData';
 
 export type HitPart = 'head' | 'upper' | 'lower' | 'limb';
 export type SurfaceMaterial = 'wood' | 'tile' | 'carpet';
-export type MatchStateName = 'MENU' | 'LOADOUT' | 'COUNTDOWN' | 'PLAYING' | 'ENDED' | 'RESULTS';
-export type KillWeapon = WeaponId | 'k400' | 'fall';
+export type MatchStateName = 'MENU' | 'LOADOUT' | 'COUNTDOWN' | 'PLAYING' | 'ROUND_END' | 'ENDED' | 'RESULTS';
+export type KillWeapon = WeaponId | 'k400' | 'fall' | 'melee' | 'knife';
+/** Jenis serangan jarak dekat: pukul popor (F) atau pisau (tebas/tusuk). */
+export type MeleeKind = 'butt' | 'slash' | 'stab';
 
 export interface GameEvents {
-  shot: { shooterId: number; weaponId: WeaponId; origin: THREE.Vector3; dir: THREE.Vector3 };
+  /** end = titik kena (dunia/tubuh) atau ujung jangkauan — dipakai tracer killcam. */
+  shot: { shooterId: number; weaponId: WeaponId; origin: THREE.Vector3; dir: THREE.Vector3; end: THREE.Vector3 };
   hit: { attackerId: number; victimId: number; part: HitPart; damage: number; headshot: boolean; dist: number;
     fromX: number; fromZ: number };
   kill: { killerId: number; victimId: number; weaponId: KillWeapon; headshot: boolean };
+  assist: { entityId: number; victimId: number };
   death: { entityId: number; impulse: THREE.Vector3; grenade: boolean };
   spawn: { entityId: number; slot: number };
+  melee: { entityId: number; phase: 'swing' | 'hit' | 'wall'; position: THREE.Vector3; kind: MeleeKind };
+  'weapon:drop': { entityId: number; position: THREE.Vector3 };
+  'weapon:pickup': { entityId: number; weaponId: WeaponId };
   'grenade:explode': { position: THREE.Vector3; ownerId: number };
   'grenade:bounce': { position: THREE.Vector3; speed: number; material: SurfaceMaterial };
   footstep: { entityId: number; material: SurfaceMaterial; position: THREE.Vector3; loud: boolean; land?: boolean };

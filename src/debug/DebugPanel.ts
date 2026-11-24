@@ -3,6 +3,16 @@ import * as THREE from 'three';
 import { physics } from '../physics/Physics';
 import { bus } from '../core/EventBus';
 import { ctx } from '../game/ctx';
+import { moveFeel, resetMoveFeel } from '../entities/moveFeel';
+
+/** Slider "Rasa gerak" (uji coba langsung; tidak disimpan — nilai final dipindah ke config). */
+const FEEL_SLIDERS: [keyof typeof moveFeel, string, number, number, number][] = [
+  ['tempo', 'Tempo gerak', 1.0, 1.6, 0.05],
+  ['bob', 'Ayunan kepala', 0, 2, 0.1],
+  ['tilt', 'Miring strafe', 0, 2, 0.1],
+  ['sprintFov', 'FOV sprint', 0, 2, 0.1],
+  ['inertia', 'Inersia senjata', 0, 2, 0.1],
+];
 
 export interface DebugApi {
   spawnDummies(): void; resetProps(): void; startStress(): void; setSlowmo(on: boolean): void; setNoclip(on: boolean): void;
@@ -25,8 +35,25 @@ export class DebugPanel {
     this.el.innerHTML = `<b>DEBUG</b><br>${chk('colliders', 'Wireframe collider')}${chk('showNav', 'Overlay graf nav')}${chk('botLabels', 'Label state bot')}` +
       `${chk('dmgNumbers', 'Angka damage melayang')}${chk('noclip', 'Kamera noclip')}${chk('god', 'God mode')}${chk('slowmo', 'Slow-mo 0.25×')}` +
       `<button data-a="dummy">Spawn dummy jembatan 10/40/70 u</button><br><button data-a="props">Reset props</button><br>` +
-      `<button data-a="stress">Stress Test (60 s)</button><div class="st" style="margin-top:6px;white-space:pre-wrap;max-width:260px"></div>`;
+      `<button data-a="stress">Stress Test (60 s)</button><div class="st" style="margin-top:6px;white-space:pre-wrap;max-width:260px"></div>` +
+      `<div style="margin-top:8px;border-top:1px solid #555;padding-top:6px"><b>RASA GERAK</b> <small>(uji coba, tidak disimpan)</small>` +
+      FEEL_SLIDERS.map(([k, label, min, max, step]) =>
+        `<label style="display:flex;align-items:center;gap:6px"><span style="flex:0 0 112px">${label}</span>` +
+        `<input type="range" data-f="${k}" min="${min}" max="${max}" step="${step}" style="flex:1;accent-color:#f5cd30">` +
+        `<span data-fv="${k}" style="flex:0 0 38px;text-align:right"></span></label>`).join('') +
+      `<button data-a="feelreset">Reset rasa gerak</button></div>`;
     document.body.appendChild(this.el);
+    const syncFeel = () => this.el.querySelectorAll<HTMLInputElement>('input[data-f]').forEach(r => {
+      const k = r.dataset.f as keyof typeof moveFeel;
+      r.value = String(moveFeel[k]);
+      (this.el.querySelector(`[data-fv="${k}"]`) as HTMLElement).textContent = moveFeel[k].toFixed(2) + (k === 'tempo' ? '' : '×');
+    });
+    this.el.querySelectorAll<HTMLInputElement>('input[data-f]').forEach(r => r.addEventListener('input', () => {
+      moveFeel[r.dataset.f as keyof typeof moveFeel] = parseFloat(r.value);
+      syncFeel();
+    }));
+    this.el.querySelector('[data-a="feelreset"]')!.addEventListener('click', () => { resetMoveFeel(); syncFeel(); });
+    syncFeel();
     this.el.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => c.addEventListener('change', () => {
       const k = c.dataset.k as keyof typeof ctx.debug;
       ctx.debug[k] = c.checked;

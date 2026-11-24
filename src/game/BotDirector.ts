@@ -4,7 +4,7 @@ import { XCFG } from '../config/extraConfig';
 import type { Team } from '../entities/BlockyCharacter';
 import type { Entity } from '../entities/Entity';
 
-export type Lane = 'bridge' | 'west' | 'east' | 'floor';
+export type Lane = 'bridge' | 'west' | 'east' | 'floor' | 'archive';
 
 /** Rute jalur sebagai daftar template node ({H} = sisi sendiri, {E} = sisi lawan, {X} = W/E). */
 export function laneRoute(lane: Lane, own: 'S' | 'N'): string[] {
@@ -19,6 +19,8 @@ export function laneRoute(lane: Lane, own: 'S' | 'N'): string[] {
       return [`${own}_CORNER_${side}`, `${own}_${walk}_${side}`, `C_${walk}_${side}`, `${E}_${walk}_${side}`, inner ? `${E}_INNER_${side}` : `${E}_CORNER_${side}`];
     }
     case 'floor': return ['{H}_LAND_{X}', '{H}_F_STAIR_{X}', '{H}_F_MID_{X}', 'C_F_TABLE_{X}', '{E}_F_MID_{X}', '{E}_F_STAIR_{X}', '{E}_LAND_{X}'].map(r);
+    // v2: jalur apit beratap lewat arsip (lantai 1, di bawah balkon), keluar lewat pintu aula di sisi lawan
+    case 'archive': return ['{H}_ARC2_{X}', '{H}_ARC4_{X}', 'C_ARC_{X}', '{E}_ARC5_{X}', '{E}_ARCDOOR_{X}', '{E}_F_ARCDOOR_{X}', '{E}_F_MID_{X}'].map(r);
   }
 }
 
@@ -29,12 +31,12 @@ export class BotDirector {
 
   constructor(readonly team: Team) {}
 
-  /** Bobot: JEMBATAN 35%, BARAT 20%, TIMUR 20%, LANTAI 25%; maksimal 2 bot per jalur per tim. */
+  /** Bobot jalur di XCFG.bots.lanes (v2 + ARSIP); maksimal 2 bot per jalur per tim. */
   assign(bot: Entity): Lane {
     this.assigned.delete(bot.id);
     const W = XCFG.bots.lanes, max = XCFG.bots.lanePerTeamMax;
     const count = (l: Lane) => [...this.assigned.values()].filter(x => x === l).length;
-    const lanes: [Lane, number][] = ([['bridge', W.bridge], ['west', W.west], ['east', W.east], ['floor', W.floor]] as [Lane, number][])
+    const lanes: [Lane, number][] = ([['bridge', W.bridge], ['west', W.west], ['east', W.east], ['floor', W.floor], ['archive', W.archive]] as [Lane, number][])
       .filter(([l]) => count(l) < max);
     const pool = lanes.length ? lanes : ([['bridge', 1]] as [Lane, number][]);
     const total = pool.reduce((a, [, w]) => a + w, 0);
@@ -45,6 +47,9 @@ export class BotDirector {
   }
 
   release(bot: Entity) { this.assigned.delete(bot.id); }
+
+  /** Waktu terakhir musuh terlihat oleh bot tim ini (−99 bila belum). */
+  lastSeen(enemyId: number) { return this.reports.get(enemyId)?.t ?? -99; }
 
   report(enemy: Entity, t: number) {
     const r = this.reports.get(enemy.id);

@@ -12,6 +12,8 @@ import type { GrenadeInput } from '../combat/GrenadeK400';
 import type { NavEdge } from '../world/NavGraph';
 import { BOXES } from '../world/MapData';
 import { WEAPONS } from '../config/weaponsData';
+import { canMelee } from '../combat/Melee';
+import { moveFeel } from './moveFeel';
 
 const B = XCFG.bots;
 const D2R = THREE.MathUtils.degToRad, R2D = THREE.MathUtils.radToDeg;
@@ -65,7 +67,9 @@ export class TacticalBot {
   private gPlan = { yaw: 0, pitch: 0, cook: 0 };
   readonly trigger: TriggerInput = { pressed: false, held: false, reload: false, modeSwitch: false, ads: false, sprinting: false };
   private unsubs: (() => void)[] = [];
-  readonly gIn: GrenadeInput = { equip: false, toAr: false, lPress: false, lHeld: false, lRelease: false, rPress: false, rHeld: false, rRelease: false };
+  /** Permintaan pukulan popor (dieksekusi Game lewat startMelee — aturan sama dengan pemain). */
+  wantMelee = false;
+  readonly gIn: GrenadeInput = { equip: false, toSlot: null, lPress: false, lHeld: false, lRelease: false, rPress: false, rHeld: false, rRelease: false };
 
   constructor(readonly e: Entity, readonly difficulty: Difficulty, readonly index: number) {
     this.diff = B.difficulty[difficulty];
@@ -102,7 +106,7 @@ export class TacticalBot {
     this.set('SPAWN');
     this.trackYaw = this.e.yaw; this.trackPitch = 0; this.recoilYaw = 0;
     this.target = null; this.visible = false; this.path.length = 0; this.drop = null; this.goal = -1;
-    this.burstLeft = 0; this.burstPause = 0; this.grenadeCd = 0; this.gStep = 0;
+    this.burstLeft = 0; this.burstPause = 0; this.grenadeCd = 0; this.gStep = 0; this.wantMelee = false;
     this.stuckRef.copy(this.e.pos); this.stuckT = 0;
   }
 
@@ -170,6 +174,9 @@ export class TacticalBot {
           if (this.wantGrenade()) { this.startGrenade(); break; }
           this.investigate.copy(this.lastKnown); this.goTo(this.investigate); this.set('INVESTIGATE'); break;
         }
+        // jarak sangat dekat: pukul popor (selalu bila magasin kosong/reload, selain itu peluang botChance per think)
+        if (this.visible && Math.hypot(t.pos.x - e.pos.x, t.pos.z - e.pos.z) < XCFG.melee.botRange && Math.abs(t.pos.y - e.pos.y) < 2.5 && canMelee(e)
+          && (e.weapon.ammo === 0 || e.weapon.reloading || Math.random() < XCFG.melee.botChance)) { this.wantMelee = true; break; }
         if (e.hp < B.coverHp && this.findCover()) { this.set('TAKE_COVER'); break; }
         if (e.weapon.ammo === 0) { e.weapon.startReload(); this.set('RELOAD'); break; }
         break;
@@ -294,7 +301,8 @@ export class TacticalBot {
       }
       case 'run':
         out.copy(d.dir);
-        if (dist <= d.jumpDist && e.ctrl.speedH > (d.sprint ? 7.5 : 5.0)) { d.phase = 'air'; return { sprint: d.sprint, jump: true }; }
+        // ambang kecepatan ×tempo (lintasan lompat sama di ruang untuk tempo berapa pun — lihat moveFeel)
+        if (dist <= d.jumpDist && e.ctrl.speedH > (d.sprint ? 7.5 : 5.0) * moveFeel.tempo) { d.phase = 'air'; return { sprint: d.sprint, jump: true }; }
         if (dist < d.jumpDist - 3) d.phase = 'air'; // gagal: lanjutkan saja
         return { sprint: d.sprint, jump: false };
       case 'air':
@@ -487,7 +495,7 @@ export class TacticalBot {
 
     if (this.state === 'THROW_GRENADE') { tr.held = false; tr.ads = false; this.runGrenade(dt); return; }
     this.gIn.equip = false; this.gIn.lPress = false; this.gIn.lHeld = false; this.gIn.lRelease = false;
-    if (e.grenadeState !== 'NONE' && e.grenadeState !== 'THROWN') this.gIn.toAr = true; else this.gIn.toAr = false;
+    this.gIn.toSlot = e.grenadeState !== 'NONE' && e.grenadeState !== 'THROWN' ? 'ar' : null;
 
     // syarat tembak: reaksi lewat, deviasi < 2.5° (hip) / 1.2° (ADS), LOS
     tr.ads = !!engage && dist > B.adsDist;

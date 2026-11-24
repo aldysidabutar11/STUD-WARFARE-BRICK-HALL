@@ -21,10 +21,18 @@ export const XCFG = {
     hipsY: 1.8, chestY: 0.8, upperY: 0.6, neckY: 1.2, headY: 0.6,
     shoulderX: 1.5, shoulderY: 1.2, armY: -1.0, hipX: 0.5, legY: -0.9, lowerY: 0.4,
     weaponMount: [0, -0.9, -0.1],
+    // Tampilan karakter = desain pengguna (Karakter/*.png, hanya acuan; dibangun prosedural di CharacterArt.ts).
+    // Biru = pasukan taktis, Merah = gerilyawan; masing-masing varian pria/wanita. (Dulu: skema warna klasik §3.1.)
     colors: {
-      skin: 0xf5cd30,
-      torso: { blue: 0x0d69ac, red: 0xc4281c },
-      legs: { blue: 0x1f3a73, red: 0x635f62 },
+      skin: 0xe8b58e, finger: 0xdcb48a, glove: 0x1d1e21,
+      blue: { shirt: 0x3458a6, gear: 0x222428, pants: 0x1f2023, mask: 0x18191b, lens: 0xf0a23a, helmet: 0x26282c,
+        headset: 0x3b4137, hair: 0x2c211b },
+      // Biru wanita (acuan Karakter/ROBLOX-WANITA-BLUE-TIM.png): loreng biru, baret & lis marun, rambut hitam, tato cokelat muda
+      blueF: { camo: 0x5f86c2, camoLight: 0xa6c3e6, camoDark: 0x3a5c98, camoNavy: 0x1e3260, maroon: 0x7c1d2c, beret: 0x8a2433,
+        hair: 0x16141a, knit: 0x27375f, strap: 0x1b1c1f, pocketDark: 0x2b2d31, pocketTan: 0xa89070, gold: 0xd4a640,
+        lips: 0xc47c74, iris: 0x5b3522 },
+      red: { tankM: 0x3a3e3b, tankF: 0x8e9190, jeans: 0x3e5f8d, bandana: 0xb3302b, cap: 0x5f6a39, boot: 0x5c3b27,
+        wrap: 0x5a5644, strap: 0x4a4e2c, brass: 0xd3a24a, hairM: 0x3a2a20, hairF: 0x7d3b22 },
     },
   },
   // §3.7 animasi prosedural
@@ -92,7 +100,8 @@ export const XCFG = {
     coverHp: 35, coverSafe: 2, coverMaxCost: 25,
     burstPause: [0.25, 0.45], burstPauseFar: 0.2, burstPauseFarDist: 40,
     errReroll: 0.4, errSlerp: 8, fireDevHip: 2.5, fireDevAds: 1.2,
-    lanes: { bridge: 0.35, west: 0.20, east: 0.20, floor: 0.25 }, lanePerTeamMax: 2,
+    // v2 (rombak map): + jalur arsip (lantai 1 beratap); bobot GDD lama: jembatan .35, barat .20, timur .20, lantai .25
+    lanes: { bridge: 0.30, west: 0.15, east: 0.15, floor: 0.20, archive: 0.20 }, lanePerTeamMax: 2,
     grenadeMin: 8, grenadeMax: 24, grenadeAllyClear: 8, grenadeCooldown: 6,
     arriveRadius: 1.2, separation: 2.0, stuckDist: 0.5, stuckJump: 1.5, stuckRepath: 3.0, stairCost: 1.2,
     thinkEveryFixedSteps: 6,
@@ -103,6 +112,9 @@ export const XCFG = {
     tinnitusBypass: 20000,
     priority: { own: 5, ui: 4, explosion: 3, enemyShot: 2, impact: 1, footstep: 0 },
     occlusion: { lowpass: 1200, gain: 0.6, recheck: 0.1, longSound: 0.5 },
+    // listener 3D diperbarui maks. 30x/detik, hanya bila kamera bergerak/berputar dan konteks audio berjalan
+    // (9 setValueAtTime tiap frame: ±0.7% waktu CPU main thread; saat konteks suspended event menumpuk → jauh lebih mahal)
+    listener: { interval: 1 / 30, moveSq: 1e-4, turnDot: 0.99995 },
     panner: {
       shot:      { model: 'HRTF', dist: 'inverse', ref: 5, max: 80, rolloff: 1.0 },
       explosion: { model: 'HRTF', dist: 'inverse', ref: 8, max: 120, rolloff: 0.8 },
@@ -111,9 +123,105 @@ export const XCFG = {
     },
   },
   // §13 HUD
-  hud: { crosshairLen: 8, crosshairWidth: 2, crosshairBaseGap: 3, hpBar: [220, 10], killFeedMax: 5, killFeedTime: 5,
+  // crosshair kustom (pasca-MVP): mekar tembakan per peluru / maks (px) & pulih (px/s), jarak garis luar mode Hybrid
+  hud: { crosshairLen: 8, crosshairWidth: 2, crosshairBaseGap: 3, xhFireKick: 5, xhFireMax: 16, xhFireRecover: 32, xhSplitGap: 3,
+    hpBar: [220, 10], killFeedMax: 5, killFeedTime: 5,
     lensDiameter: 0.84 },
   menu: { orbitRadius: 48, orbitHeight: 26, orbitSpeed: 0.06 },
+
+  // ── fitur pasca-MVP / pembanding game FPS lain (BUKAN dari GDD; angka desain baru, mudah disetel di sini)
+  melee: { damage: 55, backDamage: 100, range: 3.4, hitDelay: 0.12, duration: 0.45, cooldown: 0.35, coneDeg: 9, backDot: 0.5,
+    botRange: 3.6, botChance: 0.6 },
+  // slot 2 = pisau (permintaan pengguna): lari ×1.10, tebas (klik kiri) & tusuk (klik kanan); jangkauan/kerucut/aturan
+  // "dari belakang" sama dengan melee. Jeda serangan = duration (tahan klik = serangan berulang).
+  knife: {
+    equipTime: 0.30, speedMult: 1.10,
+    slash: { damage: 45, backDamage: 90, hitDelay: 0.10, duration: 0.45 },
+    stab: { damage: 70, backDamage: 100, hitDelay: 0.24, duration: 1.0 },
+    // tampilan (bukan gameplay): skala pisau FPS/TPS, siku FPS (titik putar ayunan), jejak kilatan, hentakan kamera
+    vmScale: 0.36, tpsScale: 1.4, slashResetTime: 1.0,
+    trail: { life: 0.11, alpha: 0.6, samples: 14 },
+    punch: { omega: 16, zeta: 0.42, slashYaw: 1.8, slashRoll: 3.0, slashPitch: -0.8, stabPitch: -1.6, stabFov: -4, hitPitch: -1.2, hitShake: 0.6 },
+  },
+  // G = buang senjata utama; hanya tim sendiri yang bisa mengambil/menukar (E). Benda fisik grup DEBRIS (tidak menahan peluru/karakter).
+  drop: { throwSpeed: 5.0, throwUp: 2.5, inheritVel: 0.5, pickupRange: 2.8, pickupDyMin: -1.5, pickupDyMax: 4.5,
+    lifetime: 60, max: 6, density: 1.2, friction: 0.8, restitution: 0.15, linDamp: 0.3, angDamp: 0.8, toastTime: 1.6 },
+  elim: { roundTime: 120, roundEnd: 3.5, roundsToWin: 5 },
+  practice: { dummyRespawn: 2.0, moverRange: 5.0 },
+  killcam: { hz: 30, history: 6, deathCam: 0.9, preDeath: 2.8, postDeath: 0.3, noReplayHold: 2.2, unitToMeter: 0.36 },
+  radar: { size: 184, range: 42, pxPerUnit: 5, shotReveal: 1.6, spotReveal: 1.2, levelDiff: 5 },
+  nameplate: { allyRange: 90, enemyLinger: 0.45, height: 6.2, heightCrouch: 4.9 },
+  announce: { multiWindow: 4.0, assistWindow: 10, assistScore: 50, killCreditWindow: 5, medalTime: 1.8, popupTime: 1.5 },
+  pad: { deadzone: 0.15, lookDegPerSec: 210, curve: 2.0, trigger: 0.35, aimSlow: 0.55 },
+  // pindah aplikasi / kunci mouse ulang (laporan pengguna: kursor "kebawa" & senjata menembak sendiri setelah alt-tab):
+  // abaikan gerak mouse sesaat setelah terkunci + lonjakan absurd, klik baru wajib setelah jeda aman, trigger controller harus
+  // kembali < padRearm dulu, controller aktif hanya lewat tombol (bukan stik/derau), tunggu kunci terkonfirmasi ≤ lockWaitMs.
+  input: { lockSettleMs: 120, spikePx: 800, fireGuardMs: 150, padRearm: 0.2, padTriggerActivate: 0.6, lockWaitMs: 400 },
+  heartbeat: { hp: 30, interval: 0.85 },
+  // hentakan kamera saat mendarat: pegas teredam (omega rad/s, zeta), puncak turun = base + perUnit·tinggi jatuh
+  landKick: { min: 0.6, base: 0.10, perUnit: 0.03, max: 0.45, omega: 14, zeta: 0.6 },
+  // "Rasa gerak" (pengguna: "gerak karakter terlalu kaku") — lapisan visual di atas gerak GDD; semua ×pengaturan Gerak kamera
+  feel: {
+    // kamera FPS: ayunan kepala sinkron langkah (turun saat kaki menapak), miring saat strafe, FOV melebar saat sprint
+    bob: { walkY: 0.085, sprintY: 0.13, x: 0.045, rollDeg: 0.35, adsMult: 0.2, rate: 9 },
+    strafeRollDeg: 1.2, rollRate: 8, sprintFovDeg: 6, fovRate: 6,
+    // viewmodel: inersia (pegas) terhadap kecepatan lokal, ayun vertikal di udara, pegas mendarat, napas saat diam
+    vm: { lagX: 0.0028, lagZ: 0.0014, lagYawDeg: 1.2, rollDeg: 4, tiltPerLagZ: 1.6, omega: 12, zeta: 0.65,
+      vyMult: 0.0035, vyMax: 0.035, adsMult: 0.12,
+      land: { base: 0.012, perUnit: 0.006, max: 0.06, omega: 13, zeta: 0.5 },
+      breatheY: 0.0025, breatheX: 0.0015, breatheHz: 0.22 },
+    // rig karakter: transisi pose halus, kaki menghadap arah gerak, putar di tempat dengan kaki melangkah, hentakan mendarat
+    anim: { blendRate: 12, leanRate: 10, lowReadyRate: 14, airRate: 12,
+      // setengah belakang (mundur-serong): masuk bila arah gerak > 90°+20°, keluar bila < 90°+7° → strafe murni selalu "depan"
+      strideYawMult: 0.6, strideYawMaxDeg: 55, strideYawRate: 10, strideBackEnter: 0.35, strideBackExit: 0.12,
+      turnThreshDeg: 50, turnRateDeg: 420, turnStep: 0.45, sprintArmSwingDeg: 10,
+      landDip: 0.28, landOmega: 15, landZeta: 0.5 },
+  },
+  // ── grafik realistis (permintaan pengguna: "lebih realistis, detail & pencahayaan lebih real"; gaya blocky GDD tetap).
+  //    Fitur per preset: LOW minimal · MEDIUM (Iris Xe, target 60 fps) material PBR + pantulan + bake + kabut + debu ·
+  //    HIGH + bloom/grading + lampu moncong · ULTRA + SSAO + bayangan 4096. Saklar per efek di Pengaturan → Grafik.
+  gfx: {
+    profiles: {
+      LOW:    { pbr: false, normalMaps: false, env: false, fog: true, post: false, bloom: false, ssao: false, dust: false, shafts: false },
+      MEDIUM: { pbr: true,  normalMaps: true,  env: true,  fog: true, post: false, bloom: false, ssao: false, dust: true,  shafts: true,  muzzleLight: false },
+      HIGH:   { pbr: true,  normalMaps: true,  env: true,  fog: true, post: true,  bloom: true,  ssao: false, dust: true,  shafts: true,  muzzleLight: true },
+      ULTRA:  { pbr: true,  normalMaps: true,  env: true,  fog: true, post: true,  bloom: true,  ssao: true,  dust: true,  shafts: true,  muzzleLight: true },
+    },
+    /** Preset render ULTRA (di luar §15 GDD): resolusi & bayangan lebih tinggi untuk GPU kuat. */
+    ultra: { maxPixelRatio: 2.0, maxInternalPixels: 5_200_000, antialias: true, shadowMap: 4096, anisotropy: 16, decals: 200, debris: 48, sunIntensity: 2.6 },
+    exposure: 1.4,
+    fog: { color: 0x2a1f17, density: 0.0042 },
+    // cahaya (pengali terhadap nilai GDD §4.7 / §15) — tone mapping ACES menekan highlight → matahari & langit dinaikkan sedikit
+    light: { sunMul: 1.35, hemi: 1.32, envIntensity: 0.6, vmHemi: 1.5, vmDir: 1.3, window: 0.55 },
+    // bake cahaya (world/LightBake.ts): sel okupansi 0.5 u, sel cahaya 1 u, subdivisi muka besar ≤ subdiv u
+    bake: { aoCell: 0.5, cell: 1.0, subdiv: 2.0, skyLambda: 16, bounceLambda: 5, windowSky: 0.65, aoStrength: 0.85,
+      ambMin: 0.42, bounceColor: 0xffa860, bounceStrength: 0.6, aoDirect: 0.35, probeMin: 0.45 },
+    // kekasaran material PBR (0 = cermin, 1 = doff)
+    rough: { top: 0.62, side: 0.82, bottom: 0.9, book: 0.78, plain: 0.95, tile: 0.28, metal: 0.32, wood: 0.5, weapon: 0.45 },
+    bloom: { strength: 0.42, radius: 0.5, threshold: 0.85 },
+    grade: { vignette: 0.32, saturation: 1.07, contrast: 1.05, warmth: 0.025 },
+    dust: { count: 560, size: 0.055, opacity: 0.55 },
+    shaft: { opacity: 0.11 },
+    // kepulan debu saat peluru mengenai permukaan (1 draw call Points)
+    puff: { pool: 32, life: 0.55, size0: 0.35, size1: 1.5, alpha: 0.45, rise: 0.6 },
+  },
+  // ── kehalusan frame (laporan pengguna "FPS 60–80 tapi tidak terasa 60–80"; perubahan §2.3 disetujui pengguna).
+  //    Resolusi dinamis GDD memakai ambang layar 60 Hz (17.5 / 13 ms): di layar 90 Hz game diam di 60–80 FPS dengan frame
+  //    berselang-seling 1–2 vsync (judder). Kini target = interval vsync × batas FPS. Nilai GDD tetap dipakai: CFG.render.dynRes
+  //    (min 0.6, max 1.0, langkah 0.1, jeda 2 s) dan waktu baik 4 s dari kode §2.3.
+  pacing: {
+    fpsCaps: [1, 2, 3],   // pembagi refresh: ikut layar / ½ / ⅓ — selalu rata (60 di layar 90 Hz pasti berselang-seling 1–2 vsync)
+    lateDown: 0.05,       // turun bila > 5% frame (±1 s terakhir) telat ≥ 1 vsync ...
+    gpuBusy: 0.5,         // ... dan GPU memang berat (p90 > 50% target); telat karena lonjakan CPU tidak diobati dengan resolusi
+    gpuOver: 0.95,        // atau p90 GPU sendiri > 95% target (pasti segera telat)
+    lateGood: 0.01,       // waktu "baik" untuk naik: ≤ 1% frame telat
+    goodTime: 4,          // detik (GDD §2.3)
+    // naik hanya bila prediksi CPU (p50) + GPU (p90, ∝ jumlah piksel) di skala berikutnya ≤ target: di Chrome kerja JS lalu GPU
+    // praktis berurutan dalam satu interval vsync (terukur Iris Xe HIGH: CPU 4–5 ms + GPU 7–8.5 ms → telat di 90 Hz)
+    budget: 1.0,
+    failWindow: 6,        // turun lagi ≤ 6 s setelah naik = level itu terlalu berat → diblok sementara (backoff berlipat)
+    backoff: { start: 15, max: 120, reset: 30 },
+  },
 } as const;
 
 export type BotDifficultyDef = (typeof XCFG.bots.difficulty)[Difficulty];

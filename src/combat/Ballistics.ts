@@ -94,7 +94,7 @@ export function castShot(origin: THREE.Vector3, dir: THREE.Vector3, tMin: number
 }
 
 const pFire = new THREE.Vector3(), vCam = new THREE.Vector3(), vShot = new THREE.Vector3(), pTarget = new THREE.Vector3();
-const tmp = new THREE.Vector3(), muzzle = new THREE.Vector3(), recoilOut = { dPitch: 0, dYaw: 0 };
+const tmp = new THREE.Vector3(), muzzle = new THREE.Vector3(), endV = new THREE.Vector3(), recoilOut = { dPitch: 0, dYaw: 0 };
 const SURFACE_COLOR = { tile: 0x9a9a9a, carpet: 0x1f3a73, wood: 0x7c5c46 } as const;
 
 /** Satu peluru: spread → raycast → damage → recoil → event 'shot' + VFX. */
@@ -121,7 +121,7 @@ export function fireOne(e: Entity) {
   const hit = castShot(pFire, vShot, 0, e);
   e.stats.shots++;
   e.protectT = 0; // perlindungan spawn berakhir saat menembak
-  const end = hit ? hit.point : tmp.copy(pFire).addScaledVector(vShot, CFG.combat.maxRange);
+  const end = hit ? hit.point : endV.copy(pFire).addScaledVector(vShot, CFG.combat.maxRange); // vektor sendiri (tmp dipakai ulang di bawah)
 
   // efek visual & audio
   const fpsView = e.isPlayer && rig.isFpsView;
@@ -130,14 +130,15 @@ export function fireOne(e: Entity) {
     rig.right(tmp); muzzle.copy(rig.position).addScaledVector(tmp, 0.22);
     rig.up(tmp); muzzle.addScaledVector(tmp, -0.18);
     rig.forward(tmp); muzzle.addScaledVector(tmp, 0.7);
+    ctx.vfx.flashLight(muzzle);
   } else {
     e.muzzleWorld(muzzle);
     ctx.vfx.muzzleFlash(muzzle, vShot);
   }
   const every = e.isPlayer ? CFG.combat.tracerEvery.player : CFG.combat.tracerEvery.bot;
-  if (w.shotsFired % every === 0) ctx.vfx.tracer(muzzle, hit ? hit.point : end);
+  if (w.shotsFired % every === 0) ctx.vfx.tracer(muzzle, end);
   ctx.vfx.shell(e, fpsView);
-  bus.emit('shot', { shooterId: e.id, weaponId: w.def.id, origin: pFire, dir: vShot });
+  bus.emit('shot', { shooterId: e.id, weaponId: w.def.id, origin: pFire, dir: vShot, end });
 
   if (hit) {
     if (hit.kind === 'body' && hit.victim && hit.part) {
@@ -152,6 +153,7 @@ export function fireOne(e: Entity) {
       const mat = surfaceAt(hit.point.x, hit.point.y, hit.point.z);
       ctx.vfx.decal(hit.point, hit.normal);
       ctx.vfx.chips(hit.point, hit.normal, SURFACE_COLOR[mat], 4);
+      ctx.vfx.puff(hit.point, hit.normal, SURFACE_COLOR[mat]);
       bus.emit('impact', { position: hit.point, normal: hit.normal, material: mat });
     }
   }

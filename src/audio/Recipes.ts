@@ -144,3 +144,97 @@ export const impactTick = (mat: SurfaceMaterial | 'book' | 'body'): Recipe => (s
   noiseSrc(s, t0, 0.03).connect(filt(s, 'bandpass', f, 2)).connect(env(s, out, t0, 0.35, 0.001, 0.03));
   return 0.04;
 };
+
+// ── tambahan pasca-MVP (umpan balik ala FPS lain) — tetap 100% sintesis
+/** Detak jantung HP rendah: dua dentum sine 62→44 Hz. */
+export const heartbeat: Recipe = (s, out, t0) => {
+  for (const [dt, a] of [[0, 0.9], [0.17, 0.6]] as const) osc(s, 'sine', 62, 44, t0 + dt, 0.13).connect(env(s, out, t0 + dt, a, 0.008, 0.13));
+  return 0.34;
+};
+/** Medali multi-kill/streak: arpeggio square naik, nada dasar naik per tingkat. */
+export const medal = (tier: number): Recipe => (s, out, t0) => {
+  const base = 520 * Math.pow(2, Math.min(tier, 6) * 2 / 12);
+  [0, 4, 7, 12].forEach((st, i) => {
+    const f = base * Math.pow(2, st / 12), t = t0 + i * 0.055;
+    osc(s, 'square', f, f, t, 0.09).connect(filt(s, 'lowpass', 3200)).connect(env(s, out, t, 0.14, 0.003, 0.09));
+  });
+  return 0.34;
+};
+export const assistTick: Recipe = (s, out, t0) => {
+  osc(s, 'sine', 990, 990, t0, 0.05).connect(env(s, out, t0, 0.25, 0.002, 0.05));
+  osc(s, 'sine', 1320, 1320, t0 + 0.05, 0.05).connect(env(s, out, t0 + 0.05, 0.2, 0.002, 0.05));
+  return 0.12;
+};
+/** Ayunan melee: noise bandpass menyapu 500→2200 Hz. */
+export const whoosh: Recipe = (s, out, t0) => {
+  const bp = filt(s, 'bandpass', 500, 1.2);
+  bp.frequency.setValueAtTime(500, t0); bp.frequency.exponentialRampToValueAtTime(2200, t0 + 0.16);
+  noiseSrc(s, t0, 0.18).connect(bp).connect(env(s, out, t0, 0.45, 0.03, 0.15));
+  return 0.2;
+};
+/** Pukulan kena: dentum sine 150→60 Hz + klak noise lowpass. */
+export const meleeThud: Recipe = (s, out, t0) => {
+  osc(s, 'sine', 150, 60, t0, 0.1).connect(env(s, out, t0, 0.9, 0.002, 0.12));
+  noiseSrc(s, t0, 0.05).connect(filt(s, 'lowpass', 900)).connect(env(s, out, t0, 0.6, 0.001, 0.05));
+  return 0.15;
+};
+/** Bip hitung mundur (final = nada "mulai" lebih tinggi & panjang). */
+export const countBeep = (final: boolean): Recipe => (s, out, t0) => {
+  const f = final ? 1320 : 880, d = final ? 0.35 : 0.12;
+  osc(s, 'triangle', f, f, t0, d).connect(env(s, out, t0, 0.3, 0.004, d));
+  return d + 0.02;
+};
+/** Jingle akhir match/ronde: mayor naik (menang) atau minor turun (kalah); seri = dua nada datar. */
+export const stinger = (kind: 'win' | 'lose' | 'draw'): Recipe => (s, out, t0) => {
+  const seq = kind === 'win' ? [0, 4, 7, 12] : kind === 'lose' ? [7, 3, 0, -5] : [0, 0, 5, 5];
+  seq.forEach((st, i) => {
+    const f = 440 * Math.pow(2, st / 12), t = t0 + i * 0.13, d = i === seq.length - 1 ? 0.5 : 0.14;
+    osc(s, 'triangle', f, f, t, d).connect(env(s, out, t, 0.28, 0.006, d));
+    osc(s, 'sine', f * 2, f * 2, t, d).connect(env(s, out, t, 0.08, 0.006, d));
+  });
+  return 0.13 * seq.length + 0.5;
+};
+
+// ── pisau & buang/ambil senjata (fitur slot 2 / tombol G-E)
+/** Tebasan pisau: desis tipis cepat 1500→5000 Hz. */
+export const slashWhoosh: Recipe = (s, out, t0) => {
+  const bp = filt(s, 'bandpass', 1500, 1.6);
+  bp.frequency.setValueAtTime(1500, t0); bp.frequency.exponentialRampToValueAtTime(5000, t0 + 0.12);
+  noiseSrc(s, t0, 0.14).connect(bp).connect(env(s, out, t0, 0.35, 0.015, 0.11));
+  return 0.16;
+};
+/** Tusukan pisau: desis pendek 700→2400 Hz. */
+export const stabWhoosh: Recipe = (s, out, t0) => {
+  const bp = filt(s, 'bandpass', 700, 1.4);
+  bp.frequency.setValueAtTime(700, t0); bp.frequency.exponentialRampToValueAtTime(2400, t0 + 0.09);
+  noiseSrc(s, t0, 0.1).connect(bp).connect(env(s, out, t0, 0.4, 0.01, 0.08));
+  return 0.12;
+};
+/** Pisau kena tubuh: "shk" noise highpass + dentum lembut. */
+export const knifeHit: Recipe = (s, out, t0) => {
+  noiseSrc(s, t0, 0.06).connect(filt(s, 'highpass', 2500)).connect(env(s, out, t0, 0.5, 0.001, 0.06));
+  osc(s, 'sine', 220, 90, t0, 0.07).connect(env(s, out, t0, 0.5, 0.002, 0.08));
+  return 0.1;
+};
+/** Pisau kena dinding: dentang logam pendek. */
+export const knifeWall: Recipe = (s, out, t0) => {
+  osc(s, 'triangle', 2600, 2350, t0, 0.06).connect(env(s, out, t0, 0.25, 0.001, 0.06));
+  noiseSrc(s, t0, 0.03).connect(filt(s, 'bandpass', 3500, 2)).connect(env(s, out, t0, 0.3, 0.001, 0.03));
+  return 0.08;
+};
+/** Senjata dibuang: dua klak jatuh. */
+export const weaponDrop: Recipe = (s, out, t0) => {
+  for (const [dt, g] of [[0, 0.5], [0.09, 0.3]] as const) {
+    noiseSrc(s, t0 + dt, 0.05).connect(filt(s, 'bandpass', 1200, 1.5)).connect(env(s, out, t0 + dt, g, 0.001, 0.05));
+    osc(s, 'square', 340, 260, t0 + dt, 0.04).connect(env(s, out, t0 + dt, g * 0.25, 0.001, 0.04));
+  }
+  return 0.18;
+};
+/** Ambil senjata: dua klik kokang. */
+export const weaponPickup: Recipe = (s, out, t0) => {
+  for (const [dt, f] of [[0, 1800], [0.08, 1300]] as const) {
+    osc(s, 'square', f, f, t0 + dt, 0.012).connect(env(s, out, t0 + dt, 0.25, 0.001, 0.012));
+    noiseSrc(s, t0 + dt, 0.03).connect(filt(s, 'bandpass', 2500, 1.2)).connect(env(s, out, t0 + dt, 0.3, 0.001, 0.03));
+  }
+  return 0.14;
+};

@@ -11,6 +11,7 @@ import type { Vfx } from '../vfx/Vfx';
 import type { Hud } from '../ui/Hud';
 import type { SpatialSynthAudio } from '../audio/SpatialSynthAudio';
 import type { GrenadeManager } from '../combat/GrenadeK400';
+import type { WeaponDrops } from '../combat/WeaponDrops';
 import type { DeathFx } from '../vfx/DeathFx';
 import type { TeamManager } from './TeamManager';
 import type { MatchManager } from './MatchManager';
@@ -18,6 +19,7 @@ import type { SpawnSystem } from './SpawnSystem';
 import type { BotDirector } from './BotDirector';
 import type { Settings } from '../ui/Settings';
 import type { ScopeSystem } from '../combat/ScopeSystem';
+import type { Killcam } from './Killcam';
 
 export interface DebugFlags {
   god: boolean; noclip: boolean; showNav: boolean; botLabels: boolean; dmgNumbers: boolean; colliders: boolean; slowmo: boolean;
@@ -28,7 +30,9 @@ export interface Ctx {
   camRig: CameraRig; viewmodel: Viewmodel; scope: ScopeSystem;
   entities: Entity[]; byId: Map<number, Entity>; player: Entity | null;
   teams: TeamManager; match: MatchManager; spawns: SpawnSystem; directors: Record<'blue' | 'red', BotDirector>;
-  vfx: Vfx; hud: Hud; audio: SpatialSynthAudio; grenades: GrenadeManager; deathFx: DeathFx;
+  vfx: Vfx; hud: Hud; audio: SpatialSynthAudio; grenades: GrenadeManager; deathFx: DeathFx; killcam: Killcam;
+  /** Senjata utama yang dibuang (G) — hanya tim sendiri yang bisa mengambil. */
+  drops: WeaponDrops;
   settings: Settings;
   time: number;          // waktu game (detik, ikut timeScale)
   fixedIndex: number;    // indeks fixed step
