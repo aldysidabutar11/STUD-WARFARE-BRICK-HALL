@@ -129,6 +129,12 @@ di URL kedua tab (ping ±120 ms, 2% paket hilang).
    (jaringan kampus/kantor/sebagian operator seluler). Isi `VITE_TURN_URL`, `VITE_TURN_USERNAME`, `VITE_TURN_CREDENTIAL` dari layanan
    TURN yang punya kuota gratis, lalu deploy ulang.
 
-Catatan paket gratis Supabase: project yang tidak dipakai ±1 minggu bisa dijeda otomatis — buka dashboard Supabase dan klik *Restore*
-bila room tiba-tiba tidak bisa dibuat/ditemukan.
+5. **Jaga Supabase tetap aktif (sekali saja)** — paket gratis menjeda project yang ±7 hari tanpa aktivitas *database* (signaling room
+   tidak dihitung). Buka Supabase → *SQL Editor* → *New query* → tempel isi `supabase/keepalive.sql` → *Run* (tabel mini 1 baris,
+   hanya bisa dibaca). Setelah itu **Vercel Cron** (`vercel.json`) memanggil `/api/keepalive` tiap hari ±10:00 WIB dan membaca baris
+   itu, jadi project tidak dijeda. Cek di Vercel → *Settings → Cron Jobs* (bisa *Run* manual). Opsional: tambah env `CRON_SECRET`
+   (teks acak) di Vercel lalu redeploy → hanya Vercel Cron yang boleh memanggil endpoint itu.
+
+Bila project Supabase tetap terjeda (mis. cron belum dipasang): buka dashboard Supabase dan klik *Restore* (bisa dalam 90 hari);
+lewat dari itu, buat project baru dan ganti 2 env di Vercel — game tidak menyimpan data apa pun di Supabase.
 

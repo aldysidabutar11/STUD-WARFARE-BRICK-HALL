@@ -251,6 +251,10 @@
     Supabase asli (project milik pengguna; URL + publishable key di `.env.local`, di-.gitignore — jangan ditulis ke file yang di-commit):
     room siap ±2.1 s (termasuk memuat chunk Supabase), gabung ±1.9 s, WebRTC tersambung, 20 snapshot/s, "Host menutup room." sampai.
     Belum diuji: dua perangkat/jaringan berbeda (NAT sungguhan), 3+ pemain, TURN; deploy Vercel (env harus diisi sebelum build).
+  - Keep-alive Supabase (permintaan pengguna): `api/keepalive.js` (Vercel Function, Node, `export default (req, res)`) dipanggil Vercel Cron
+    `vercel.json` "0 3 * * *" (Hobby: maks sekali sehari) → GET `/rest/v1/keepalive?select=id&limit=1` dengan header `apikey` saja
+    (publishable key bukan JWT). Tabel dari `supabase/keepalive.sql` (1 baris, RLS select anon) — dijalankan pengguna di SQL Editor.
+    Alasan: paket gratis dijeda setelah ±7 hari tanpa aktivitas DATABASE; signaling Realtime tidak dihitung. CRON_SECRET opsional.
   - Input: keydown di kolom teks (input non-range / textarea) tidak dicegah & tidak jadi input game (Spasi bisa diketik).
 
 ## Status
