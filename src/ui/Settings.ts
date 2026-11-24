@@ -6,6 +6,7 @@ import type { ScopeId, WeaponId } from '../config/weaponsData';
 import { WEAPONS, SCOPE_ORDER, scopeAllowed } from '../config/weaponsData';
 import { BINDS_VERSION, DEFAULT_BINDS, migrateBinds, validateBinds, type Binds } from '../core/Bindings';
 import { XH_MODES, XH_SHAPES, type XhMode, type XhShape } from './Crosshair';
+import { cleanName } from '../game/Lobby';
 export { XH_COLORS } from './Crosshair';
 
 export type MatchMode = 'tdm' | 'elim';
@@ -25,6 +26,8 @@ export interface Settings {
   weapon: WeaponId; scope: ScopeId;
   /** Tampilan karakter pemain: 'm' pria / 'f' wanita (desain karakter pengguna). */
   charVariant: 'm' | 'f';
+  /** Nama pemain di room/lobby (lihat game/Lobby.cleanName); '' = belum diisi. */
+  playerName: string;
   // aturan match
   mode: MatchMode; scoreLimit: number; timeLimit: number; roundsToWin: number;
   // kontrol
@@ -48,7 +51,7 @@ export const KEY = 'studwarfare.settings.v1';
 export const DEFAULTS: Settings = {
   sens: 1.0, adsMult: 1.0, fov: 75, invertY: false, adsToggle: false, crouchToggle: true, preset: 'MEDIUM',
   volMaster: 80, volSfx: 100, volUi: 70, showFps: false, difficulty: 'normal', allies: 4, enemies: 5, fullPause: false,
-  weapon: 'm416', scope: 'reddot', charVariant: 'm',
+  weapon: 'm416', scope: 'reddot', charVariant: 'm', playerName: '',
   mode: 'tdm', scoreLimit: CFG.match.scoreLimit, timeLimit: CFG.match.timeLimit / 60, roundsToWin: XCFG.elim.roundsToWin,
   binds: { ...DEFAULT_BINDS }, padSens: 1.0, bindsVer: BINDS_VERSION,
   xhShape: 'cross', xhMode: 'dynamic', xhColor: '#ffffff', xhAlpha: 1, xhLen: XCFG.hud.crosshairLen, xhThick: XCFG.hud.crosshairWidth,
@@ -81,6 +84,7 @@ export function validate(raw: Partial<Settings> | null): Settings {
     showFps: bool(r.showFps, D.showFps), difficulty: oneOf(r.difficulty, ['easy', 'normal', 'hard'] as const, D.difficulty),
     allies: Math.round(clamp(r.allies, 0, 4, D.allies)), enemies: Math.round(clamp(r.enemies, 1, 5, D.enemies)),
     fullPause: bool(r.fullPause, D.fullPause), weapon, scope, charVariant: oneOf(r.charVariant, ['m', 'f'] as const, D.charVariant),
+    playerName: typeof r.playerName === 'string' ? cleanName(r.playerName) : D.playerName,
     mode: oneOf(r.mode, ['tdm', 'elim'] as const, D.mode),
     scoreLimit: pick(r.scoreLimit, SCORE_LIMITS, D.scoreLimit as 50), timeLimit: pick(r.timeLimit, TIME_LIMITS, D.timeLimit as 10),
     roundsToWin: pick(r.roundsToWin, ROUNDS_TO_WIN, D.roundsToWin as 5),

@@ -25,6 +25,8 @@ tepat waktu; bila preset berat tidak stabil di refresh penuh, pilih **Batas FPS 
 
 - **Team Deathmatch** — 5v5 vs bot, respawn 4 s; target kill 25/50/75/100 & batas waktu 5–20 menit (default GDD: 50 kill / 10:00).
 - **Eliminasi** — tanpa respawn dalam ronde 2:00; yang mati menonton rekan (klik kiri/Spasi ganti rekan); menang 3/4/5/7 ronde.
+- **Main Bareng (Room)** — buat room (kode + link), 2 tim × 5 slot, slot kosong diisi bot, pindah tim, siap, setelan host. Saat ini
+  room berjalan lokal (kamu + bot / teman simulasi); bermain online bersama teman menyusul setelah server dipasang.
 - **Latihan Menembak** — 12 dummy (jembatan 10/40/70 u, lantai dasar, mezanin, 2 target bergerak), amunisi & granat tak terbatas, angka damage.
 
 ## Map: Brick Hall (v2)

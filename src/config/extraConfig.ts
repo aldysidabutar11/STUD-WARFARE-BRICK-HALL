@@ -205,6 +205,17 @@ export const XCFG = {
     // kepulan debu saat peluru mengenai permukaan (1 draw call Points)
     puff: { pool: 32, life: 0.55, size0: 0.35, size1: 1.5, alpha: 0.45, rise: 0.6 },
   },
+  // ── lobby / room (permintaan pengguna: main bareng teman 5v5, slot kosong diisi bot). Tahap 1 = tampilan + logika room LOKAL;
+  //    server online menyusul (pengguna mencari hosting gratis). teamSize = 5 sesuai 5v5 GDD (§12: 4 bot sekutu + pemain vs 5 bot).
+  lobby: {
+    teamSize: 5,
+    codeLen: 6,
+    codeAlphabet: 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789',   // tanpa I/O/0/1 (mudah dibaca & didiktekan)
+    nameMax: 16,
+    // nama bot per slot: Biru memakai 5 nama pertama, Merah 5 berikutnya (XCFG.bots.names)
+    simNames: ['Raka', 'Dimas', 'Sinta', 'Bayu', 'Nadia', 'Fajar', 'Putri', 'Rizky', 'Ayu'],   // teman simulasi (pratinjau tanpa server)
+    simReady: [0.8, 2.6],                                // teman simulasi siap setelah jeda acak (detik)
+  },
   // ── kehalusan frame (laporan pengguna "FPS 60–80 tapi tidak terasa 60–80"; perubahan §2.3 disetujui pengguna).
   //    Resolusi dinamis GDD memakai ambang layar 60 Hz (17.5 / 13 ms): di layar 90 Hz game diam di 60–80 FPS dengan frame
   //    berselang-seling 1–2 vsync (judder). Kini target = interval vsync × batas FPS. Nilai GDD tetap dipakai: CFG.render.dynRes

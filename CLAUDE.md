@@ -200,11 +200,27 @@
   - Overlay F3: refresh layar (`core/FramePacing.ts`, median frame tepat waktu), % tepat waktu, 1% low, GPU ms (`core/GpuTimer.ts`,
     EXT_disjoint_timer_query_webgl2, aktif hanya saat overlay terbuka), CPU ms, grafik interval frame (hijau/kuning/merah).
 
+- Main Bareng / room (permintaan pengguna: kumpul teman dalam 1 lobby, 5v5, slot kosong diisi bot). TAHAP 1 = tampilan + logika room LOKAL;
+  server online BELUM (pengguna mencari hosting 100% gratis — jangan pilih/pasang hosting tanpa persetujuan). Rencana online: server
+  otoritatif + WebSocket (GDD §1 pasca-MVP), prediksi klien, interpolasi, lag compensation.
+  - Logika murni `game/Lobby.ts` (diuji tests/lobby.test.ts): kode room 6 karakter (alfabet tanpa I/O/0/1, tampil "XXX-XXX", link `?room=`),
+    2 tim × XCFG.lobby.teamSize (5) slot, pemain pertama = host (selalu siap), masuk ke tim yang manusianya lebih sedikit, maks 10 orang;
+    slot kosong = bot (nama tetap per slot: Biru names[0..4], Merah names[5..9]) bila `fillBots`; pindah tim (reset siap), siap, keluarkan,
+    acak tim seimbang, setelan (mode/target/waktu/ronde/kesulitan/isi bot) hanya host; canStart = host + semua siap + tiap tim ≥ 1;
+    `roster(meId)` → susunan match. `cleanName` (huruf/angka/spasi/_.-, maks 16) → aman untuk innerHTML (HUD killfeed!).
+  - UI (Menus.showLobbyHome / showRoom / refreshRoom, CSS "Main Bareng" di hud.css): menu utama → "👥 Main Bareng (Room)"; nama pemain
+    (`settings.playerName`); Buat Room; Gabung (kode/link → pesan "server belum tersedia"); room: kode + Salin Link, kolom BIRU/MERAH (👑 host,
+    (kamu), ✔ Siap / ⏳, ✕ keluarkan, 🤖 bot · kesulitan, slot kosong), Pindah tim, setelan host, Acak Tim, "＋ Teman (simulasi)" (pratinjau
+    tanpa server: masuk lalu siap sendiri XCFG.lobby.simReady; di match dimainkan bot bernama teman), Mulai/Loadout/Keluar Room + status.
+  - Game: `room`/`roomMe`/`roster`; `play(mode, roster)` → `createEntities` per slot room — pemain bisa di tim MERAH (nama = nama pemain);
+    Main Lagi memakai roster yang sama; keluar match / hasil → kembali ke room ("Kembali ke Room"); link `?room=KODE` membuka Main Bareng.
+  - Input: keydown di kolom teks (input non-range / textarea) tidak dicegah & tidak jadi input game (Spasi bisa diketik).
+
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 131 test Vitest (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 142 test Vitest (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
-  kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS) hijau; typecheck & build hijau;
+  kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby) hijau; typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;
   di browser: TDM/Eliminasi/Latihan berjalan 0 error konsol; killcam → respawn 4 s; menonton rekan; gamepad tiruan (gerak/bidik/tembak/pause/menu);

@@ -52,7 +52,13 @@ export class Input {
   private padArmed = [true, true, true];
 
   constructor(private canvas: HTMLCanvasElement) {
+    // mengetik di kolom teks (nama / kode room di lobby): jangan dicegah (Spasi!) dan jangan dianggap input game
+    const typing = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      return !!t && ((t.tagName === 'INPUT' && (t as HTMLInputElement).type !== 'range') || t.tagName === 'TEXTAREA' || t.isContentEditable === true);
+    };
     window.addEventListener('keydown', (e) => {
+      if (typing(e)) return;
       if (PREVENT.has(e.code) || (this.locked && (e.code.startsWith('Control') || e.code === 'KeyW' && e.ctrlKey))) e.preventDefault();
       // tombol yang masih ditahan saat kembali ke jendela: repeat dari OS → tandai ditahan (tanpa "ditekan")
       if (e.repeat) { this.down.add(e.code); return; }
@@ -62,7 +68,7 @@ export class Input {
       this.onKey?.(e.code);
     });
     window.addEventListener('keyup', (e) => {
-      if (PREVENT.has(e.code)) e.preventDefault();
+      if (PREVENT.has(e.code) && !typing(e)) e.preventDefault();
       this.down.delete(e.code);
       this.released.add(e.code);
     });

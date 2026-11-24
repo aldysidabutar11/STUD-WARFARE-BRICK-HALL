@@ -9,6 +9,8 @@ import { Crosshair, XH_MODES, XH_PRESETS, XH_SHAPES } from './Crosshair';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import { ctx } from '../game/ctx';
+import { cleanName, formatRoomCode, parseRoomCode, type Lobby, type RoomSettings, type SlotView } from '../game/Lobby';
+import type { Team } from '../entities/BlockyCharacter';
 
 export interface MenuApi {
   play(practice?: boolean): void; resume(): void; quitToMenu(): void; replay(): void; fullscreen(): void;
@@ -16,7 +18,15 @@ export interface MenuApi {
   inMatch(): boolean;
   /** Taksiran refresh layar (Hz) — label pilihan batas FPS. */
   refreshHz(): number;
+  // room / lobby (tahap 1: lokal)
+  /** Room aktif + id pemain di perangkat ini; null bila tidak di room. */
+  room(): { lobby: Lobby; me: string } | null;
+  createRoom(name: string): void; leaveRoom(): void; startRoom(): void; addSimFriend(): void;
+  setPlayerName(name: string): void;
 }
+
+/** Escape teks bebas untuk innerHTML (nama sudah dibersihkan cleanName, ini lapisan kedua). */
+const esc = (t: string) => t.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 const FIXED_KEYS: [string, string][] = [
   ['Klik kiri', 'Tembak / tebas pisau / masak granat → lempar jauh'], ['Klik kanan', 'ADS / tusuk pisau / masak granat → gelinding'],
@@ -54,11 +64,13 @@ export class Menus {
 
   showMain() {
     const m = this.mount('main', `<div class="card main"><h1>STUD WARFARE</h1><div class="sub">BRICK HALL</div>
-      <div class="btns"><button class="primary" data-a="play">▶ Main</button><button data-a="practice">◎ Latihan Menembak</button>
+      <div class="btns"><button class="primary" data-a="play">▶ Main</button><button data-a="room">👥 Main Bareng (Room)</button>
+      <button data-a="practice">◎ Latihan Menembak</button>
       <button data-a="loadout">Loadout</button><button data-a="settings">Pengaturan</button><button data-a="controls">Kontrol</button>
       <button data-a="fs">Layar Penuh</button></div>
-      <div class="note">Biru di Selatan menghadap Utara. Mode: Team Deathmatch atau Eliminasi melawan bot. Gamepad didukung.</div></div>`);
+      <div class="note">Biru di Selatan menghadap Utara. Mode: Team Deathmatch atau Eliminasi melawan bot, atau Main Bareng di room (5 lawan 5, slot kosong diisi bot). Gamepad didukung.</div></div>`);
     this.on(m, 'play', () => this.showMatchSetup(() => this.showMain()));
+    this.on(m, 'room', () => (this.api.room() ? this.showRoom() : this.showLobbyHome(() => this.showMain())));
     this.on(m, 'practice', () => this.api.play(true));
     this.on(m, 'loadout', () => this.showLoadout(() => this.showMain()));
     this.on(m, 'settings', () => this.showSettings(() => this.showMain()));
@@ -96,6 +108,126 @@ export class Menus {
     this.on(m, 'start', () => { this.api.applySettings(s); this.api.play(false); });
     this.on(m, 'back', back);
   }
+
+  // ───────────────────────────── Main Bareng (room / lobby) — tahap 1: lokal, server online menyusul
+  /** Layar awal Main Bareng: nama, Buat Room, Gabung Room (kode / link). code = kode dari link ?room=. */
+  showLobbyHome(back: () => void, code = '') {
+    const s = this.api.settings(), LB = XCFG.lobby;
+    const m = this.mount('lobby', `<div class="card lobby-home"><h2>Main Bareng Teman</h2>
+      <div class="set-row"><span>Nama kamu</span><input class="txt" data-name maxlength="${LB.nameMax}" value="${esc(s.playerName)}" placeholder="mis. Aldy"><span></span></div>
+      <div class="lh-grid">
+        <div class="lh-box"><b>Buat Room</b><span>Kamu jadi host: atur mode & aturan, bagikan kode ke teman. Slot kosong otomatis diisi bot (5 lawan 5).</span>
+          <button class="primary" data-a="create">＋ Buat Room</button></div>
+        <div class="lh-box"><b>Gabung Room</b><span>Masukkan kode dari host (contoh K7R-B2X) atau tempel link room.</span>
+          <input class="txt code" data-code maxlength="80" placeholder="KODE ROOM" value="${esc(code)}">
+          <button data-a="join">Gabung</button></div>
+      </div>
+      <div class="lh-msg" data-msg></div>
+      <div class="note">Server online belum dipasang: room berjalan <b>lokal</b> (kamu + bot, bisa ditambah teman simulasi untuk mencoba).
+        Gabung ke room teman aktif setelah server ada.</div>
+      <div class="row"><button data-a="back">Kembali</button></div></div>`);
+    const nameIn = m.querySelector('[data-name]') as HTMLInputElement, codeIn = m.querySelector('[data-code]') as HTMLInputElement;
+    const msg = m.querySelector('[data-msg]') as HTMLElement;
+    const noServer = (c: string) => `Room ${formatRoomCode(c)}: server online belum tersedia — gabung ke room teman aktif setelah server dipasang. Sementara, buat room lokal untuk mencoba.`;
+    const name = () => {
+      const n = cleanName(nameIn.value);
+      if (!n) { msg.textContent = `Isi nama kamu dulu (huruf/angka, maks ${LB.nameMax}).`; nameIn.focus(); return null; }
+      nameIn.value = n; this.api.setPlayerName(n);
+      return n;
+    };
+    this.on(m, 'create', () => { const n = name(); if (n) { this.api.createRoom(n); this.showRoom(); } });
+    this.on(m, 'join', () => {
+      if (!name()) return;
+      const c = parseRoomCode(codeIn.value);
+      msg.textContent = c ? noServer(c) : 'Kode room tidak valid (6 huruf/angka, contoh K7R-B2X).';
+    });
+    nameIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') m.querySelector<HTMLButtonElement>('[data-a="create"]')!.click(); });
+    codeIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') m.querySelector<HTMLButtonElement>('[data-a="join"]')!.click(); });
+    const c0 = code ? parseRoomCode(code) : null;
+    if (c0) { codeIn.value = formatRoomCode(c0); msg.textContent = noServer(c0); }
+    this.on(m, 'back', back);
+    if (!s.playerName) nameIn.focus();
+  }
+
+  /** Room: kode + link, 2 tim × 5 slot (pemain / bot pengisi / kosong), pindah tim, siap, setelan host, mulai. */
+  showRoom() {
+    const R = this.api.room();
+    if (!R) { this.showMain(); return; }
+    const { lobby: L, me } = R, mine = L.find(me)!, host = mine.host, st = L.settings, LB = XCFG.lobby;
+    const diff = ({ easy: 'Mudah', normal: 'Normal', hard: 'Sulit' } as const)[st.difficulty];
+    const teamName = (t: Team) => (t === 'blue' ? 'Biru' : 'Merah');
+    const slotRow = (sv: SlotView) => {
+      const p = sv.player;
+      if (p) {
+        const tag = p.id === me ? ' <small>(kamu)</small>' : p.sim ? ' <small>(simulasi)</small>' : '';
+        const state = p.host ? '<span class="st host">HOST</span>' : `<span class="st ${p.ready ? 'ok' : ''}">${p.ready ? '✔ Siap' : '⏳ Belum siap'}</span>`;
+        const kick = host && p.id !== me ? `<button class="x" data-kick="${p.id}" title="Keluarkan dari room">✕</button>` : '';
+        return `<div class="slot ${p.id === me ? 'me' : ''}"><span class="nm">${p.host ? '👑 ' : ''}${esc(p.name)}${tag}</span>${state}${kick}</div>`;
+      }
+      if (sv.bot) return `<div class="slot bot"><span class="nm">🤖 ${sv.bot}</span><span class="st">BOT · ${diff}</span></div>`;
+      return '<div class="slot empty"><span class="nm">— slot kosong —</span></div>';
+    };
+    const teamCol = (t: Team) => {
+      const hs = L.humans(t).length, bots = L.slots(t).filter(s => s.bot).length;
+      const move = mine.team === t ? '' : `<button data-move="${t}" ${hs >= LB.teamSize ? 'disabled' : ''}>Pindah ke ${teamName(t)}</button>`;
+      return `<div class="tcol ${t}"><h3>${teamName(t).toUpperCase()} <small>${hs} orang${bots ? ` · ${bots} bot` : ''}</small></h3>
+        ${L.slots(t).map(slotRow).join('')}${move}</div>`;
+    };
+    const opt = (k: keyof RoomSettings, list: readonly number[], fmt: (v: number) => string) =>
+      `<select data-rk="${k}" ${host ? '' : 'disabled'}>${list.map(v => `<option value="${v}" ${st[k] === v ? 'selected' : ''}>${fmt(v)}</option>`).join('')}</select>`;
+    const chk = L.canStart(me);
+    const m = this.mount('room', `<div class="card room">
+      <div class="room-head"><h2>ROOM <span class="code">${formatRoomCode(L.code)}</span></h2>
+        <button data-a="copy">Salin Link</button><span class="badge local">● Lokal — server belum ada</span></div>
+      <div class="teams">${teamCol('blue')}${teamCol('red')}</div>
+      <div class="host-set"><h3>Setelan host${host ? '' : ' <small>(hanya host yang bisa mengubah)</small>'}</h3>
+        <div class="modes">
+          <div class="mode ${st.mode === 'tdm' ? 'sel' : ''}" data-m="tdm" tabindex="0"><b>Team Deathmatch</b><span>Respawn 4 s, target kill / skor tertinggi.</span></div>
+          <div class="mode ${st.mode === 'elim' ? 'sel' : ''}" data-m="elim" tabindex="0"><b>Eliminasi</b><span>Tanpa respawn dalam ronde, menang ronde terbanyak.</span></div>
+        </div>
+        <div class="hs-grid">
+          ${st.mode === 'tdm'
+            ? `<label>Target kill ${opt('scoreLimit', SCORE_LIMITS, v => `${v} kill`)}</label><label>Batas waktu ${opt('timeLimit', TIME_LIMITS, v => `${v} menit`)}</label>`
+            : `<label>Ronde untuk menang ${opt('roundsToWin', ROUNDS_TO_WIN, v => `${v} ronde`)}</label>`}
+          <label>Kesulitan bot <select data-rk="difficulty" ${host ? '' : 'disabled'}>${[['easy', 'Mudah'], ['normal', 'Normal'], ['hard', 'Sulit']]
+            .map(([v, t]) => `<option value="${v}" ${st.difficulty === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+          <label>Isi slot kosong dengan bot <select data-rk="fillBots" ${host ? '' : 'disabled'}><option value="true" ${st.fillBots ? 'selected' : ''}>On (5 lawan 5)</option>
+            <option value="false" ${st.fillBots ? '' : 'selected'}>Off (hanya manusia)</option></select></label>
+          ${host ? '<button data-a="shuffle">⇄ Acak Tim</button>' : ''}
+        </div></div>
+      <div class="sim"><button data-a="sim" ${L.full ? 'disabled' : ''}>＋ Teman (simulasi)</button>
+        <span>Pratinjau tanpa server: teman simulasi masuk lalu siap sendiri; di match dimainkan bot dengan namanya.</span></div>
+      <div class="row"><button class="primary" data-a="start" ${chk.ok ? '' : 'disabled'}>▶ Mulai</button>
+        ${host ? '' : `<button data-a="ready">${mine.ready ? 'Batal Siap' : '✔ Siap'}</button>`}
+        <button data-a="loadout">Loadout</button><button data-a="leave">Keluar Room</button>
+        <span class="room-status">${chk.ok ? 'Semua siap — host bisa mulai' : chk.reason}</span></div></div>`);
+    const again = () => this.showRoom();
+    m.querySelectorAll<HTMLElement>('[data-move]').forEach(b => b.addEventListener('click', () => { L.switchTeam(me, b.dataset.move as Team); again(); }));
+    m.querySelectorAll<HTMLElement>('[data-kick]').forEach(b => b.addEventListener('click', () => { L.kick(me, b.dataset.kick!); again(); }));
+    m.querySelectorAll<HTMLElement>('.mode').forEach(x => x.addEventListener('click', () => {
+      if (!host) return;
+      this.api.click(); L.setSettings(me, { mode: x.dataset.m as RoomSettings['mode'] }); again();
+    }));
+    m.querySelectorAll<HTMLSelectElement>('select[data-rk]').forEach(se => se.addEventListener('change', () => {
+      const k = se.dataset.rk as keyof RoomSettings, v = se.value;
+      L.setSettings(me, { [k]: v === 'true' ? true : v === 'false' ? false : /^\d+$/.test(v) ? Number(v) : v } as Partial<RoomSettings>);
+      again();
+    }));
+    this.on(m, 'shuffle', () => { L.shuffle(me, Math.random); again(); });
+    this.on(m, 'sim', () => { this.api.addSimFriend(); again(); });
+    this.on(m, 'ready', () => { L.setReady(me, !mine.ready); again(); });
+    this.on(m, 'start', () => this.api.startRoom());
+    this.on(m, 'loadout', () => this.showLoadout(() => this.showRoom()));
+    this.on(m, 'leave', () => { this.api.leaveRoom(); this.showMain(); });
+    this.on(m, 'copy', () => {
+      const url = `${location.origin}${location.pathname}?room=${L.code}`, b = m.querySelector('[data-a="copy"]') as HTMLButtonElement;
+      const done = (ok: boolean) => { b.textContent = ok ? '✔ Link disalin' : url; };
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(() => done(true), () => done(false)); else done(false);
+    });
+  }
+
+  /** Perbarui tampilan room bila sedang terbuka (mis. teman simulasi baru siap). */
+  refreshRoom() { if (this.current === 'room') this.showRoom(); }
 
   showLoadout(back: () => void, inMatch = false) {
     const s = this.api.settings();
@@ -357,7 +489,7 @@ export class Menus {
     this.on(m, 'quit', () => this.api.quitToMenu());
   }
 
-  showResults(winner: 'blue' | 'red' | 'draw', playerTeam: 'blue' | 'red') {
+  showResults(winner: 'blue' | 'red' | 'draw', playerTeam: 'blue' | 'red', fromRoom = false) {
     const title = winner === 'draw' ? 'SERI' : winner === playerTeam ? 'MENANG' : 'KALAH';
     const color = winner === 'draw' ? '#f5cd30' : winner === playerTeam ? '#7dff9a' : '#ff6b5e';
     const all = ctx.entities.filter(e => !e.dummyAt);
@@ -376,7 +508,7 @@ export class Menus {
       ${mvp ? `<div class="mvp">★ MVP: <b>${mvp.name}</b> — ${mvp.stats.score} poin</div>` : ''}
       <div class="scoreboard on" style="position:static;transform:none;min-width:0;background:none;border:none;padding:0">
       <h3 class="b">BIRU</h3><table>${head}${rows('blue')}</table><h3 class="r">MERAH</h3><table>${head}${rows('red')}</table></div>
-      <div class="row"><button class="primary" data-a="again">Main Lagi</button><button data-a="menu">Menu</button></div></div>`);
+      <div class="row"><button class="primary" data-a="again">Main Lagi</button><button data-a="menu">${fromRoom ? 'Kembali ke Room' : 'Menu'}</button></div></div>`);
     this.on(m, 'again', () => this.api.replay());
     this.on(m, 'menu', () => this.api.quitToMenu());
   }

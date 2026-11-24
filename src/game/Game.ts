@@ -40,6 +40,7 @@ import { Minimap } from '../ui/Minimap';
 import { Nameplates } from '../ui/Nameplates';
 import { Announcer } from '../ui/Announcer';
 import { loadSettings, saveSettings, validate, type Settings } from '../ui/Settings';
+import { Lobby, cleanName, makeRoomCode, type MatchRoster } from './Lobby';
 import { StatsOverlay } from '../debug/StatsOverlay';
 import { DebugPanel } from '../debug/DebugPanel';
 import { PerfLogger } from '../debug/PerfLogger';
@@ -83,6 +84,10 @@ export class Game {
   paused = false;
   autoTest = false;
   mode: GameMode = 'tdm';
+  /** Room main bareng (tahap 1: lokal) + id pemain ini; roster = susunan match yang sedang/terakhir dimainkan dari room. */
+  private room: Lobby | null = null;
+  private roomMe = '';
+  private roster: MatchRoster | null = null;
   private jumpLatch = false;
   private crouchToggled = false;
   private adsToggled = false;
@@ -167,11 +172,15 @@ export class Game {
     });
     this.menus = new Menus({
       play: (practice) => this.play(practice ? 'practice' : this.settings.mode), resume: () => this.resume(),
-      quitToMenu: () => this.quitToMenu(), replay: () => this.play(this.mode),
+      quitToMenu: () => this.quitToMenu(), replay: () => this.play(this.mode, this.roster),
       fullscreen: () => void this.input.goFullscreen(), settings: () => this.settings,
       applySettings: (s) => this.applySettings(s), setLoadout: (w, s, v) => this.setLoadout(w, s, v),
       click: () => { ctx.audio.unlock(); ctx.audio.click(); }, inMatch: () => this.inMatch,
       refreshHz: () => 1000 / engine.pacing.refreshMs,
+      room: () => (this.room ? { lobby: this.room, me: this.roomMe } : null),
+      createRoom: (n) => this.createRoom(n), leaveRoom: () => { this.room = null; this.roster = null; },
+      startRoom: () => this.startRoom(), addSimFriend: () => this.addSimFriend(),
+      setPlayerName: (n) => { this.settings.playerName = cleanName(n); saveSettings(this.settings); },
     });
     this.applyVisual();
     this.input.onLockChange = (locked) => {
@@ -231,6 +240,9 @@ export class Game {
     // ?autostart=1|tdm|elim|practice untuk uji otomatis (tanpa pointer lock)
     const auto = new URLSearchParams(location.search).get('autostart');
     if (auto !== null) { this.autoTest = true; this.play(auto === 'elim' ? 'elim' : auto === 'practice' ? 'practice' : 'tdm'); }
+    // link room (…?room=KODE): buka Main Bareng dengan kode terisi (gabung aktif setelah server online dipasang)
+    const roomLink = new URLSearchParams(location.search).get('room');
+    if (roomLink !== null && auto === null) this.menus.showLobbyHome(() => this.menus.showMain(), roomLink);
   }
 
   // ───────────────────────────────── entitas
@@ -263,10 +275,13 @@ export class Game {
     return { weapon, scope: pool[Math.floor(Math.random() * pool.length)] };
   }
 
-  private createEntities(mode: GameMode) {
+  /** roster = susunan dari room (tim pemain, teman, bot per slot); null = main solo (bot sekutu/musuh dari setelan). */
+  private createEntities(mode: GameMode, roster: MatchRoster | null) {
     this.disposeEntities();
     const s = this.settings, shadows = isHigh(s.preset), names = XCFG.bots.names;
-    const player = new Entity(1, 'Kamu', 'blue', true, shadows, s.charVariant);
+    const pTeam: Team = mode !== 'practice' && roster ? roster.playerTeam : 'blue';
+    const pName = (mode !== 'practice' && roster?.[pTeam].find(r => r.kind === 'you')?.name) || 'Kamu';
+    const player = new Entity(1, pName, pTeam, true, shadows, s.charVariant);
     player.char.setLayer(1); // tubuh lokal tidak dirender kamera FPS, tetap kena raycaster
     player.applyLoadout({ weapon: s.weapon, scope: s.scope });
     this.addEntity(player); ctx.player = player;
@@ -277,6 +292,14 @@ export class Game {
         e.dummyAt = new THREE.Vector3(x, y, z);
         this.addEntity(e); this.dummies.push(e);
         if (moving) this.movers.set(e, i % 2 ? 1 : -1);
+      });
+    } else if (roster) {
+      // room: tiap slot sesuai urutan room; teman (sementara tanpa server) & bot pengisi dimainkan bot dengan namanya
+      let id = 2, bi = 1;
+      for (const team of ['blue', 'red'] as const) roster[team].forEach((r, i) => {
+        if (r.kind === 'you') return;
+        const e = new Entity(id++, r.name, team, false, shadows, botVariant(i));
+        e.applyLoadout(this.randomLoadout()); e.bot = new TacticalBot(e, s.difficulty, bi++); this.addEntity(e);
       });
     } else {
       // campuran pria/wanita per tim (desain karakter: Biru taktis, Merah gerilyawan)
@@ -294,15 +317,16 @@ export class Game {
   }
 
   // ───────────────────────────────── alur aplikasi
-  play(mode: GameMode = this.settings.mode) {
+  play(mode: GameMode = this.settings.mode, roster: MatchRoster | null = null) {
     this.mode = mode;
+    this.roster = mode === 'practice' ? null : roster;
     ctx.audio.unlock();
     this.menus.hide();
     ctx.hud.clearFeed(); ctx.hud.showBanner('', '#fff');
     this.killcam.reset(); this.minimap.reset(); this.announcer.reset(true);
     this.stopSpectate();
     this.stress = null;
-    this.createEntities(mode);
+    this.createEntities(mode, this.roster);
     this.inMatch = true; this.paused = false; this.loop.timeScale = 1; this.slowmoEnd = 0;
     this.crouchToggled = false; this.adsToggled = false; this.padSprint = false;
     const s = this.settings;
@@ -354,7 +378,46 @@ export class Game {
     document.body.classList.remove('dead');
     this.engine.showViewmodel = false;
     this.applyVisual();
-    this.menus.showMain();
+    if (this.room) this.menus.showRoom(); else this.menus.showMain();   // match dari room → kembali ke room
+  }
+
+  // ───────────────────────────────── room / lobby (tahap 1: lokal — server online menyusul)
+  private createRoom(name: string) {
+    const s = this.settings;
+    this.room = new Lobby(makeRoomCode(Math.random),
+      { mode: s.mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit, roundsToWin: s.roundsToWin, difficulty: s.difficulty, fillBots: true });
+    this.roomMe = this.room.join(name, { local: true })!.id;
+  }
+
+  /** Teman simulasi (pratinjau tanpa server): masuk ke tim yang lebih sedikit, siap setelah jeda acak. */
+  private addSimFriend() {
+    const r = this.room;
+    if (!r || r.full) return;
+    const used = new Set(r.players.map(p => p.name)), pool = XCFG.lobby.simNames.filter(n => !used.has(n));
+    const p = r.join(pool.length ? pool[Math.floor(Math.random() * pool.length)] : 'Teman ' + (r.players.length + 1), { sim: true });
+    if (p) this.simReadyLater(p.id);
+  }
+
+  private simReadyLater(id: string) {
+    const r = this.room, [a, b] = XCFG.lobby.simReady;
+    setTimeout(() => {
+      const p = r?.find(id);
+      if (!r || this.room !== r || !p || p.ready) return;
+      r.setReady(id, true); this.menus.refreshRoom();
+    }, (a + Math.random() * (b - a)) * 1000);
+  }
+
+  /** Host menekan Mulai: aturan room → setelan, roster → match; setelah match semua (kecuali host) perlu siap lagi. */
+  private startRoom() {
+    const r = this.room;
+    if (!r || !r.canStart(this.roomMe).ok) return;
+    const L = r.settings;
+    Object.assign(this.settings, { mode: L.mode, scoreLimit: L.scoreLimit, timeLimit: L.timeLimit, roundsToWin: L.roundsToWin, difficulty: L.difficulty });
+    saveSettings(this.settings);
+    const roster = r.roster(this.roomMe);
+    r.resetReady();
+    for (const p of r.players) if (p.sim) this.simReadyLater(p.id);
+    this.play(L.mode, roster);
   }
 
   private onMatchState(state: GameEvents['match:state']['state']) {
@@ -400,7 +463,7 @@ export class Game {
     ctx.hud.setVisible(false); // layar hasil bersih (radar/nama/senjata disembunyikan)
     document.body.classList.remove('dead');
     ctx.props.reset(); ctx.vfx.clear();
-    this.menus.showResults(ctx.match.winner, ctx.player?.team ?? 'blue');
+    this.menus.showResults(ctx.match.winner, ctx.player?.team ?? 'blue', !!this.room && !!this.roster);
   }
 
   private onKill(ev: GameEvents['kill']) {

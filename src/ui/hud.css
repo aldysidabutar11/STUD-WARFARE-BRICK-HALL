@@ -261,3 +261,53 @@ body.dead #game { filter: grayscale(0.85) brightness(0.8); }
 .mvp b { color: var(--gold); }
 .menu button:focus-visible, .menu select:focus-visible, .menu input:focus-visible, .wcard:focus, .mode:focus {
   outline: 2px solid var(--gold); outline-offset: 2px; }
+
+/* ── Main Bareng: layar awal & room (lobby) ── */
+.menu .txt { font: inherit; font-size: 14px; color: var(--ink); background: var(--panel2); border: 1px solid var(--line); border-radius: 3px;
+  padding: 6px 9px; min-width: 0; }
+.menu .txt.code { text-transform: uppercase; letter-spacing: 3px; font-weight: 700; }
+.card.lobby-home { width: min(640px, calc(100vw - 32px)); box-sizing: border-box; }
+.lobby-home .set-row { grid-template-columns: 120px 1fr 0; }
+.lh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 6px; }
+.lh-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: rgba(0, 0, 0, 0.25); }
+.lh-box b { color: var(--gold); font-size: 16px; }
+.lh-box span { font-size: 13px; opacity: 0.8; flex: 1; }
+.lh-msg { min-height: 18px; color: #ffcf7a; font-size: 13px; }
+.card.room { width: min(880px, calc(100vw - 32px)); box-sizing: border-box; max-height: calc(100vh - 32px); overflow: auto; }
+.room-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.room-head h2 { margin: 0; }
+.room-head .code { color: var(--ink); letter-spacing: 4px; background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); border-radius: 4px; padding: 1px 10px; }
+.menu .room-head button { padding: 6px 12px; font-size: 13px; }
+.badge.local { color: #ffb347; font-size: 12px; }
+.teams { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tcol { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px 10px; background: rgba(0, 0, 0, 0.25); display: flex; flex-direction: column; }
+.tcol h3 { margin: 0 0 6px; font-size: 16px; letter-spacing: 2px; }
+.tcol h3 small { font-size: 12px; letter-spacing: 0; opacity: 0.75; color: var(--ink); margin-left: 6px; }
+.tcol.blue { border-color: rgba(61, 142, 224, 0.55); } .tcol.blue h3 { color: var(--blue); }
+.tcol.red { border-color: rgba(224, 72, 61, 0.55); } .tcol.red h3 { color: var(--red); }
+.slot { display: flex; align-items: center; gap: 8px; min-height: 24px; padding: 5px 8px; margin: 3px 0; border-radius: 4px; background: var(--panel2); font-size: 14px; }
+.slot .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slot .nm small { opacity: 0.65; }
+.slot .st { font-size: 12px; opacity: 0.85; white-space: nowrap; }
+.slot .st.ok { color: #7dff9a; opacity: 1; } .slot .st.host { color: var(--gold); font-weight: 700; opacity: 1; }
+.slot.me { box-shadow: inset 0 0 0 1px var(--gold); }
+.slot.bot { opacity: 0.7; }
+.slot.empty { opacity: 0.4; font-style: italic; background: transparent; border: 1px dashed var(--line); }
+.menu .slot .x { padding: 0 7px; font-size: 12px; line-height: 20px; }
+.menu .tcol > button { margin-top: 6px; padding: 6px 10px; font-size: 13px; }
+.host-set { margin-top: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px 10px; background: rgba(0, 0, 0, 0.18); }
+.host-set h3 { margin: 0 0 8px; font-size: 15px; color: var(--gold); } .host-set h3 small { color: var(--ink); opacity: 0.6; font-weight: 400; }
+.host-set .modes { margin-bottom: 8px; } .host-set .mode { padding: 7px 10px; } .host-set .mode b { font-size: 14px; margin-bottom: 2px; }
+.hs-grid { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 13px; }
+.hs-grid label { display: flex; align-items: center; gap: 6px; }
+.hs-grid select { font: inherit; background: var(--panel2); color: var(--ink); border: 1px solid var(--line); padding: 3px; }
+.menu .hs-grid button { padding: 5px 12px; font-size: 13px; }
+.sim { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; }
+.sim span { opacity: 0.65; }
+.menu .sim button { padding: 5px 12px; font-size: 13px; white-space: nowrap; }
+.room .row { flex-wrap: wrap; align-items: center; }
+.room-status { font-size: 13px; opacity: 0.85; }
+@media (max-width: 760px) {
+  .teams, .lh-grid { grid-template-columns: 1fr; }
+  .host-set .modes { grid-template-columns: 1fr; }
+}
