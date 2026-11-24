@@ -35,11 +35,42 @@ export class MatchManager {
   roundWinner: Winner | null = null;
   private roundEndT = 0;
   onResults: (() => void) | null = null;
+  /** Klien online: keadaan diatur host (tanpa transisi/skor lokal), timer hanya dihaluskan di antara snapshot. */
+  puppet = false;
   /** Dipanggil setiap awal ronde (TDM/Latihan: sekali di awal match). */
   onRoundStart: ((round: number) => void) | null = null;
 
   constructor() {
-    bus.on('kill', () => this.checkScore());
+    bus.on('kill', () => { if (!this.puppet) this.checkScore(); });
+  }
+
+  /** Klien: mulai match boneka (tanpa spawn lokal — posisi datang dari host). */
+  startPuppet(opts: MatchOptions) {
+    this.puppet = true;
+    this.opts = { ...opts };
+    this.round = 1; this.roundWinner = null; this.winner = 'draw';
+    this.timeLeft = opts.mode === 'elim' ? XCFG.elim.roundTime : opts.timeLimit;
+    this.countdown = CFG.match.countdown;
+    ctx.teams.reset();
+    for (const e of ctx.entities) { e.stats = newStats(); e.streak = 0; e.respawnT = 0; e.dmgBy.clear(); }
+    ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear();
+    this.set('COUNTDOWN');
+  }
+
+  /** Klien: keadaan dari host (snapshot / event). */
+  applyNet(state: MatchStateName, sb: number, sr: number, timeLeft: number, countdown: number, round: number) {
+    ctx.teams.scores.blue = sb; ctx.teams.scores.red = sr;
+    this.timeLeft = timeLeft; this.countdown = countdown;
+    if (round > this.round) {   // ronde baru (Eliminasi): bersihkan sisa visual ronde lalu
+      this.round = round; this.roundWinner = null;
+      ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear();
+      this.onRoundStart?.(round);
+    }
+    if (state !== this.state) {
+      if (state === 'ENDED') this.endT = 0;
+      this.set(state);
+      if (state === 'RESULTS') this.onResults?.();
+    }
   }
 
   get mode(): GameMode { return this.opts.mode; }
@@ -51,6 +82,7 @@ export class MatchManager {
 
   /** Mulai match baru: skor & statistik direset, semua karakter di ruang spawn, hitung mundur 3 s. */
   start(opts: MatchOptions) {
+    this.puppet = false;
     this.opts = { ...opts };
     this.round = 0;
     ctx.teams.reset();
@@ -73,6 +105,11 @@ export class MatchManager {
 
   /** dt = waktu game; realDt = waktu riil (slow-motion tidak memperlambat timer akhir). */
   update(dt: number, realDt: number) {
+    if (this.puppet) {   // klien: hanya haluskan timer; transisi datang dari host
+      if (this.state === 'COUNTDOWN') this.countdown = Math.max(0, this.countdown - dt);
+      else if (this.state === 'PLAYING' && this.opts.mode !== 'practice') this.timeLeft = Math.max(0, this.timeLeft - dt);
+      return;
+    }
     switch (this.state) {
       case 'COUNTDOWN':
         this.countdown -= dt;

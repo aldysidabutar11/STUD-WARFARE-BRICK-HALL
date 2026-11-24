@@ -57,6 +57,7 @@ export class WeaponSystem {
     this.reloadT = -1; this.committed = false; this.slot = 'ar'; this.equipT = 0; this.equipTotal = 0;
     this.hasPrimary = true; this.prevSlot = 'knife';
     this.nextShot = 0; this.shotsThisPull = 0; this.burstInProgress = false; this.adsActive = false;
+    this.shotsFired = 0;   // per nyawa: indeks spread ber-seed sama di host & prediksi klien
   }
 
   /** Ganti slot (senapan / pisau / granat). Sebelum titik komit: reload batal tanpa transfer. */

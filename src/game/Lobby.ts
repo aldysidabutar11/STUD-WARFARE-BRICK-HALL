@@ -18,6 +18,8 @@ export interface LobbyPlayer {
   local: boolean;
   /** Teman simulasi (pratinjau tanpa server) — di match dimainkan bot dengan namanya. */
   sim: boolean;
+  /** Tampilan & senjata pilihan pemain (dikirim saat masuk room online; dipakai saat match dimulai). */
+  variant?: 'm' | 'f'; weapon?: string; scope?: string;
 }
 
 export interface RoomSettings {
@@ -29,7 +31,14 @@ export interface RoomSettings {
 /** Satu baris slot tim untuk tampilan: pemain, bot pengisi, atau kosong. */
 export interface SlotView { team: Team; index: number; player: LobbyPlayer | null; bot: string | null }
 
-export interface RosterEntry { name: string; kind: 'you' | 'friend' | 'bot' }
+export interface RosterEntry {
+  name: string; kind: 'you' | 'friend' | 'bot';
+  /** id pemain room (manusia) — online: pemetaan peer → entitas. */
+  pid?: string;
+  /** Teman simulasi (tanpa server): dimainkan bot. */
+  sim?: boolean;
+  variant?: 'm' | 'f'; weapon?: string; scope?: string;
+}
 /** Susunan match dari room: tim pemain lokal + isi tiap tim berurutan slot. */
 export interface MatchRoster { playerTeam: Team; blue: RosterEntry[]; red: RosterEntry[] }
 
@@ -151,8 +160,27 @@ export class Lobby {
   /** Susunan match untuk pemain lokal `meId`: slot berurutan per tim (kamu / teman / bot). */
   roster(meId: string): MatchRoster {
     const me = this.find(meId);
-    const team = (t: Team): RosterEntry[] => this.slots(t).filter(s => s.player || s.bot).map(s =>
-      s.player ? { name: s.player.name, kind: s.player.id === meId ? 'you' : 'friend' } : { name: s.bot!, kind: 'bot' });
+    const team = (t: Team): RosterEntry[] => this.slots(t).filter(s => s.player || s.bot).map(s => {
+      const p = s.player;
+      return p ? { name: p.name, kind: p.id === meId ? 'you' : 'friend', pid: p.id, sim: p.sim, variant: p.variant, weapon: p.weapon, scope: p.scope }
+        : { name: s.bot!, kind: 'bot' };
+    });
     return { playerTeam: me?.team ?? 'blue', blue: team('blue'), red: team('red') };
   }
+
+  /** Data polos untuk dikirim lewat jaringan (host → klien). */
+  toState(): LobbyState {
+    return { code: this.code, settings: { ...this.settings }, nextId: this.nextId,
+      players: this.players.map(p => ({ ...p, local: false })) };
+  }
+
+  /** Cermin room di klien dari data host; local = pemain dengan id meId. */
+  static fromState(s: LobbyState, meId: string): Lobby {
+    const L = new Lobby(s.code, { ...s.settings });
+    L.nextId = s.nextId;
+    for (const p of s.players) L.players.push({ ...p, local: p.id === meId });
+    return L;
+  }
 }
+
+export interface LobbyState { code: string; settings: RoomSettings; nextId: number; players: LobbyPlayer[] }

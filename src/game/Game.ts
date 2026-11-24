@@ -1,5 +1,6 @@
 // src/game/Game.ts — orkestrasi: urutan update (GDD §2.6), input pemain (§14), state aplikasi (§12), debug (§16)
-// + pasca-MVP: mode Eliminasi & Latihan, killcam + menonton rekan, melee, gamepad, radar, nama, medali, opsi tampilan.
+// + pasca-MVP: mode Eliminasi & Latihan, killcam + menonton rekan, melee, gamepad, radar, nama, medali, opsi tampilan
+// + Main Bareng online: room di-host browser pemain (WebRTC); host = simulasi otoritatif, klien = prediksi + interpolasi.
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
@@ -25,17 +26,17 @@ import { botVariant, characterArt, type Variant } from '../entities/CharacterArt
 import type { Team } from '../entities/BlockyCharacter';
 import { ScopeSystem } from '../combat/ScopeSystem';
 import { fireOne, spreadDeg } from '../combat/Ballistics';
-import { GrenadeManager, equipTimeFor, type GrenadeInput } from '../combat/GrenadeK400';
-import { buttProgress, cancelMelee, knifeProgress, startKnife, startMelee, updateMelee } from '../combat/Melee';
+import { GrenadeManager, type GrenadeInput } from '../combat/GrenadeK400';
+import { buttProgress, knifeProgress, startMelee, updateMelee } from '../combat/Melee';
 import { WeaponDrops } from '../combat/WeaponDrops';
-import { cycleTarget, heldOf, quickSwitchTarget, slotAvail, type Slot } from '../combat/Slots';
+import { heldOf } from '../combat/Slots';
 import type { TriggerInput } from '../combat/WeaponSystem';
 import { Vfx } from '../vfx/Vfx';
 import { DeathFx } from '../vfx/DeathFx';
 import { SpatialSynthAudio } from '../audio/SpatialSynthAudio';
 import * as R from '../audio/Recipes';
 import { Hud } from '../ui/Hud';
-import { Menus } from '../ui/Menus';
+import { Menus, type RoomAction } from '../ui/Menus';
 import { Minimap } from '../ui/Minimap';
 import { Nameplates } from '../ui/Nameplates';
 import { Announcer } from '../ui/Announcer';
@@ -49,7 +50,13 @@ import { MatchManager, type GameMode, type MatchOptions } from './MatchManager';
 import { SpawnSystem } from './SpawnSystem';
 import { BotDirector } from './BotDirector';
 import { Killcam } from './Killcam';
+import { driveWeapons, emptyFrame } from './PlayerActions';
 import { ctx } from './ctx';
+import { NetClient, NetHost, cleanLoadout, type JoinFail } from '../net/Session';
+import { createSignaling, iceServers } from '../net/Signaling';
+import { ClientRep, HostRep, RemoteHuman } from '../net/NetMatch';
+import { parseStart, type NetEnt, type NetStart } from '../net/start';
+import { H, I, type Command } from '../net/protocol';
 
 const D2R = THREE.MathUtils.degToRad, R2D = THREE.MathUtils.radToDeg;
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();
@@ -90,8 +97,17 @@ export class Game {
   private roster: MatchRoster | null = null;
   private jumpLatch = false;
   private crouchToggled = false;
-  private adsToggled = false;
   private padSprint = false;
+  /** Tombol senjata pemain lokal per frame (aturan sama dengan pemain remote di host — PlayerActions). */
+  private readonly frame = emptyFrame();
+  // ── online: host (room di browser ini) / klien (gabung ke room teman); replikasi saat match
+  private host: NetHost | null = null;
+  private client: NetClient | null = null;
+  private hostRep: HostRep | null = null;
+  private clientRep: ClientRep | null = null;
+  private netState: 'connecting' | 'online' | 'error' = 'connecting';
+  /** Klien: perintah tick ini (dibuat sebelum KCC, disimpan + dikirim setelah world.step). */
+  private cmd: Command | null = null;
   private readonly trig: TriggerInput = { pressed: false, held: false, reload: false, modeSwitch: false, ads: false, sprinting: false };
   /** Jadwal hentakan kamera serangan pisau (waktu game; 0 = tidak ada). */
   private punchAt = 0; private punchKind: 'slash' | 'stab' = 'slash'; private punchAlt = false;
@@ -168,18 +184,19 @@ export class Game {
     if (this.settings.showFps) this.stats.toggle(true);
     this.debugPanel = new DebugPanel(engine.scene, {
       spawnDummies: () => this.spawnDummies(), resetProps: () => ctx.props.reset(), startStress: () => this.startStress(),
-      setSlowmo: (on) => (this.loop.timeScale = on ? 0.25 : 1), setNoclip: (on) => this.setNoclip(on),
+      setSlowmo: (on) => { if (ctx.net.role === 'offline') this.loop.timeScale = on ? 0.25 : 1; }, setNoclip: (on) => this.setNoclip(on),
     });
     this.menus = new Menus({
       play: (practice) => this.play(practice ? 'practice' : this.settings.mode), resume: () => this.resume(),
-      quitToMenu: () => this.quitToMenu(), replay: () => this.play(this.mode, this.roster),
+      quitToMenu: () => this.quitToMenu(), replay: () => this.replay(),
       fullscreen: () => void this.input.goFullscreen(), settings: () => this.settings,
       applySettings: (s) => this.applySettings(s), setLoadout: (w, s, v) => this.setLoadout(w, s, v),
       click: () => { ctx.audio.unlock(); ctx.audio.click(); }, inMatch: () => this.inMatch,
       refreshHz: () => 1000 / engine.pacing.refreshMs,
       room: () => (this.room ? { lobby: this.room, me: this.roomMe } : null),
-      createRoom: (n) => this.createRoom(n), leaveRoom: () => { this.room = null; this.roster = null; },
+      createRoom: (n) => this.createRoom(n), leaveRoom: () => this.leaveRoom(),
       startRoom: () => this.startRoom(), addSimFriend: () => this.addSimFriend(),
+      roomAct: (a) => this.roomAct(a), joinRoom: (code, name) => this.joinRoom(code, name), netInfo: () => this.netInfo(),
       setPlayerName: (n) => { this.settings.playerName = cleanName(n); saveSettings(this.settings); },
     });
     this.applyVisual();
@@ -240,7 +257,7 @@ export class Game {
     // ?autostart=1|tdm|elim|practice untuk uji otomatis (tanpa pointer lock)
     const auto = new URLSearchParams(location.search).get('autostart');
     if (auto !== null) { this.autoTest = true; this.play(auto === 'elim' ? 'elim' : auto === 'practice' ? 'practice' : 'tdm'); }
-    // link room (…?room=KODE): buka Main Bareng dengan kode terisi (gabung aktif setelah server online dipasang)
+    // link room (…?room=KODE): buka Main Bareng dengan kode terisi → isi nama lalu Gabung
     const roomLink = new URLSearchParams(location.search).get('room');
     if (roomLink !== null && auto === null) this.menus.showLobbyHome(() => this.menus.showMain(), roomLink);
   }
@@ -276,9 +293,27 @@ export class Game {
   }
 
   /** roster = susunan dari room (tim pemain, teman, bot per slot); null = main solo (bot sekutu/musuh dari setelan). */
-  private createEntities(mode: GameMode, roster: MatchRoster | null) {
+  private createEntities(mode: GameMode, roster: MatchRoster | null, net: NetStart | null = null) {
     this.disposeEntities();
     const s = this.settings, shadows = isHigh(s.preset), names = XCFG.bots.names;
+    if (net) {
+      // online: id per slot room (sama di host & semua klien). Host: teman = remote (perintah jaringan), bot = AI;
+      // klien: semua selain dirinya = boneka (keadaan dari snapshot host).
+      let bi = 1;
+      for (const d of net.ents) {
+        const me = !!d.pid && d.pid === this.roomMe;
+        const e = new Entity(d.id, d.name, d.team, me, shadows, d.variant);
+        e.applyLoadout({ weapon: d.weapon, scope: d.scope });
+        if (me) { e.char.setLayer(1); ctx.player = e; }
+        else if (ctx.net.role === 'client') e.puppet = true;
+        else if (d.pid && !d.bot) e.remote = new RemoteHuman(d.pid);
+        else e.bot = new TacticalBot(e, s.difficulty, bi++);
+        this.addEntity(e);
+      }
+      const p = ctx.player;
+      if (p) { ctx.viewmodel.setOutfit(p.team, p.char.variant); ctx.viewmodel.setWeapon(p.loadout.weapon, p.loadout.scope); }
+      return;
+    }
     const pTeam: Team = mode !== 'practice' && roster ? roster.playerTeam : 'blue';
     const pName = (mode !== 'practice' && roster?.[pTeam].find(r => r.kind === 'you')?.name) || 'Kamu';
     const player = new Entity(1, pName, pTeam, true, shadows, s.charVariant);
@@ -317,7 +352,13 @@ export class Game {
   }
 
   // ───────────────────────────────── alur aplikasi
-  play(mode: GameMode = this.settings.mode, roster: MatchRoster | null = null) {
+  /** net = match online (host: susunan yang baru dikirim ke klien; klien: dari pesan 'start' host). */
+  play(mode: GameMode = this.settings.mode, roster: MatchRoster | null = null, net: NetStart | null = null) {
+    this.endNet();
+    const role = net ? (this.client ? 'client' : 'host') : 'offline';
+    ctx.net.role = role;
+    ctx.net.seed = net ? net.seed : (Math.random() * 0x7fffffff) >>> 0;
+    if (net) mode = net.opts.mode;
     this.mode = mode;
     this.roster = mode === 'practice' ? null : roster;
     ctx.audio.unlock();
@@ -326,13 +367,18 @@ export class Game {
     this.killcam.reset(); this.minimap.reset(); this.announcer.reset(true);
     this.stopSpectate();
     this.stress = null;
-    this.createEntities(mode, this.roster);
+    this.createEntities(mode, this.roster, net);
     this.inMatch = true; this.paused = false; this.loop.timeScale = 1; this.slowmoEnd = 0;
-    this.crouchToggled = false; this.adsToggled = false; this.padSprint = false;
+    this.crouchToggled = false; this.padSprint = false;
     const s = this.settings;
-    const opts: MatchOptions = { mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit * 60, roundsToWin: s.roundsToWin };
+    const opts: MatchOptions = net ? net.opts : { mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit * 60, roundsToWin: s.roundsToWin };
     ctx.camRig.mode = 'fps';
-    ctx.match.start(opts);
+    if (role === 'client') { this.clientRep = new ClientRep(this.client!); ctx.match.startPuppet(opts); }
+    else {
+      if (role === 'host') { this.hostRep = new HostRep(this.host!); this.hostRep.begin(); }   // spawn awal ikut tersiar
+      ctx.match.start(opts);
+    }
+    this.loop.setKeepAlive(role === 'host');   // tab host di belakang → simulasi tetap jalan
     ctx.hud.setVisible(true);
     this.applyVisual();
     if (!this.input.padActive) void this.input.requestLock().then((ok) => {
@@ -345,7 +391,7 @@ export class Game {
     if (this.paused || !this.inMatch || this.autoTest) return;
     this.paused = true;
     this.input.clearAll();
-    if (this.settings.fullPause) this.loop.timeScale = 0;
+    if (this.settings.fullPause && ctx.net.role === 'offline') this.loop.timeScale = 0;   // online: dunia tetap berjalan
     this.menus.showPause(this.input.padActive ? 0 : this.input.lockCooldown);
   }
 
@@ -363,14 +409,26 @@ export class Game {
 
   private unpause() {
     this.paused = false;
-    this.loop.timeScale = ctx.debug.slowmo ? 0.25 : 1;
+    this.loop.timeScale = ctx.debug.slowmo && ctx.net.role === 'offline' ? 0.25 : 1;
   }
 
+  /** Pause → Keluar / layar hasil → Menu / Kembali ke Room. Online: host keluar di tengah match = match berakhir untuk semua
+   *  (room tetap); klien keluar di tengah match = keluar room (slotnya diambil bot). */
   quitToMenu() {
+    const midMatch = this.inMatch && ctx.match.state !== 'RESULTS';
+    if (midMatch && ctx.net.role === 'host') this.host?.sendAll({ t: 'ev', e: 'abort' });
+    if (midMatch && ctx.net.role === 'client') this.leaveRoom();
+    this.endMatch();
+    if (this.room) this.menus.showRoom(); else this.menus.showMain();   // match dari room → kembali ke room
+  }
+
+  /** Bersihkan match (entitas, efek, replikasi) tanpa memilih menu. */
+  private endMatch() {
     this.inMatch = false; this.paused = false; this.stress = null;
     this.loop.timeScale = 1; this.slowmoEnd = 0;
     this.input.exitLock();
     this.killcam.stop(); this.stopSpectate();
+    this.endNet();
     this.disposeEntities();
     ctx.grenades.clear(); ctx.drops.clear(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.props.reset();
     ctx.match.set('MENU');
@@ -378,24 +436,108 @@ export class Game {
     document.body.classList.remove('dead');
     this.engine.showViewmodel = false;
     this.applyVisual();
-    if (this.room) this.menus.showRoom(); else this.menus.showMain();   // match dari room → kembali ke room
   }
 
-  // ───────────────────────────────── room / lobby (tahap 1: lokal — server online menyusul)
+  private endNet() {
+    this.hostRep?.end();
+    this.hostRep = null; this.clientRep = null; this.cmd = null;
+    ctx.net.role = 'offline'; ctx.net.onShot = null; ctx.net.rewind = null; ctx.net.restore = null;
+    this.loop?.setKeepAlive(false);
+  }
+
+  /** Layar hasil → Main Lagi: room online/lokal → mulai lagi dari room (host); solo → match yang sama. */
+  private replay() {
+    if (this.room) { this.endMatch(); this.startRoom(true); return; }
+    this.play(this.mode, this.roster);
+  }
+
+  // ───────────────────────────────── room / lobby: host (room di browser ini) & klien (gabung lewat kode)
   private createRoom(name: string) {
+    this.leaveRoom();
     const s = this.settings;
     this.room = new Lobby(makeRoomCode(Math.random),
       { mode: s.mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit, roundsToWin: s.roundsToWin, difficulty: s.difficulty, fillBots: true });
-    this.roomMe = this.room.join(name, { local: true })!.id;
+    const me = this.room.join(name, { local: true })!;
+    me.variant = s.charVariant; me.weapon = s.weapon; me.scope = s.scope;
+    this.roomMe = me.id;
+    this.openHost(this.room.code);
   }
 
-  /** Teman simulasi (pratinjau tanpa server): masuk ke tim yang lebih sedikit, siap setelah jeda acak. */
+  /** Dengarkan kode room di signaling (Supabase / antar-tab) → teman bisa masuk lewat WebRTC. */
+  private openHost(code: string) {
+    const host = new NetHost(createSignaling(), {
+      lobby: () => this.room,
+      inMatch: () => this.inMatch,
+      onLobbyChanged: () => this.menus.refreshRoom(),
+      onCommands: (pid, cmds) => this.hostRep?.onCommands(pid, cmds),
+      onPeerLeft: (pid) => this.hostRep?.onPeerLeft(pid),
+      onLoadout: (pid, lo, v) => this.hostRep?.setLoadout(pid, lo, v),
+    }, iceServers(XCFG.net.ice));
+    this.host = host; this.netState = 'connecting';
+    host.open(code).then(
+      () => { if (this.host === host) { this.netState = 'online'; this.menus.refreshRoom(); } },
+      (err) => { console.warn('[net] signaling gagal:', err); if (this.host === host) { this.netState = 'error'; this.menus.refreshRoom(); } });
+  }
+
+  /** Gabung room teman: kode → host menjawab → WebRTC → cermin room. */
+  private async joinRoom(code: string, name: string): Promise<{ ok: true } | { ok: false; reason: JoinFail }> {
+    this.leaveRoom();
+    const s = this.settings;
+    const client: NetClient = new NetClient(createSignaling(), {
+      onLobby: () => { if (this.client !== client || !client.lobby || !client.pid) return; this.room = client.lobby; this.roomMe = client.pid; this.menus.refreshRoom(); },
+      onStart: (msg) => { if (this.client === client) this.startNetClient(msg); },
+      onEvent: (msg) => { if (this.client === client) this.onNetEvent(msg); },
+      onSnapshot: (snap) => { if (this.client === client) this.clientRep?.onSnapshot(snap); },
+      onClosed: (reason) => { if (this.client === client) this.onClientClosed(reason); },
+    }, iceServers(XCFG.net.ice));
+    this.client = client; this.netState = 'connecting';
+    const r = await client.join(code, { name, variant: s.charVariant, weapon: s.weapon, scope: s.scope }, XCFG.net.connectTimeout, XCFG.net.helloTimeout);
+    if (this.client !== client) return { ok: false, reason: 'failed' };   // dibatalkan (keluar / gabung lagi)
+    if (!r.ok) { this.client = null; return r; }
+    this.netState = 'online';
+    this.room = client.lobby; this.roomMe = client.pid!;
+    return r;
+  }
+
+  private leaveRoom() {
+    if (this.client) { const c = this.client; this.client = null; c.leave(); }
+    if (this.host) { const h = this.host; this.host = null; h.close(); }
+    this.room = null; this.roster = null;
+  }
+
+  private netInfo() {
+    const sig = (this.host ?? this.client)?.sig;
+    return { role: this.client ? 'client' as const : 'host' as const, state: this.netState, internet: !!sig?.internet, label: sig?.label ?? '',
+      peers: this.host?.connected ?? 0 };
+  }
+
+  /** Aksi di layar room. Host: ubah room lalu siarkan; klien: kirim ke host (host yang memvalidasi & menyiarkan). */
+  private roomAct(a: RoomAction) {
+    const L = this.room, me = this.roomMe;
+    if (!L) return;
+    if (this.client) {
+      if (a.type === 'team') this.client.act({ a: 'team', team: a.team });
+      else if (a.type === 'ready') this.client.act({ a: 'ready', ready: a.ready });
+      return;
+    }
+    switch (a.type) {
+      case 'team': L.switchTeam(me, a.team); break;
+      case 'ready': L.setReady(me, a.ready); break;
+      case 'kick': if (L.kick(me, a.id)) this.host?.kick(a.id); break;
+      case 'settings': L.setSettings(me, a.patch); break;
+      case 'shuffle': L.shuffle(me, Math.random); break;
+    }
+    this.host?.broadcastLobby();
+  }
+
+  /** Teman simulasi (pratinjau tanpa teman sungguhan): masuk ke tim yang lebih sedikit, siap setelah jeda acak. */
   private addSimFriend() {
     const r = this.room;
-    if (!r || r.full) return;
+    if (!r || r.full || this.client) return;
     const used = new Set(r.players.map(p => p.name)), pool = XCFG.lobby.simNames.filter(n => !used.has(n));
     const p = r.join(pool.length ? pool[Math.floor(Math.random() * pool.length)] : 'Teman ' + (r.players.length + 1), { sim: true });
     if (p) this.simReadyLater(p.id);
+    this.host?.broadcastLobby();
   }
 
   private simReadyLater(id: string) {
@@ -403,21 +545,75 @@ export class Game {
     setTimeout(() => {
       const p = r?.find(id);
       if (!r || this.room !== r || !p || p.ready) return;
-      r.setReady(id, true); this.menus.refreshRoom();
+      r.setReady(id, true); this.host?.broadcastLobby(); this.menus.refreshRoom();
     }, (a + Math.random() * (b - a)) * 1000);
   }
 
-  /** Host menekan Mulai: aturan room → setelan, roster → match; setelah match semua (kecuali host) perlu siap lagi. */
-  private startRoom() {
+  /** Host menekan Mulai (atau Main Lagi): aturan room → setelan, susunan room → match. Ada teman terhubung → match online
+   *  (susunan + seed dikirim dulu, lalu semua mulai bersamaan); tanpa teman → match lokal seperti biasa. */
+  private startRoom(fromResults = false) {
     const r = this.room;
-    if (!r || !r.canStart(this.roomMe).ok) return;
+    if (!r || this.client) return;
+    const chk = r.canStart(this.roomMe);
+    if (!chk.ok) { if (fromResults) this.menus.showRoom(chk.reason); return; }
     const L = r.settings;
     Object.assign(this.settings, { mode: L.mode, scoreLimit: L.scoreLimit, timeLimit: L.timeLimit, roundsToWin: L.roundsToWin, difficulty: L.difficulty });
     saveSettings(this.settings);
+    const me = r.find(this.roomMe);
+    if (me) { me.variant = this.settings.charVariant; me.weapon = this.settings.weapon; me.scope = this.settings.scope; }
     const roster = r.roster(this.roomMe);
-    r.resetReady();
-    for (const p of r.players) if (p.sim) this.simReadyLater(p.id);
-    this.play(L.mode, roster);
+    const online = !!this.host && this.host.connected > 0;
+    if (!online) {
+      r.resetReady();
+      for (const p of r.players) if (p.sim) this.simReadyLater(p.id);
+      this.play(L.mode, roster);
+      return;
+    }
+    const s = this.settings;
+    const net: NetStart = { seed: (Math.random() * 0x7fffffff) >>> 0, ents: this.buildNetEnts(roster),
+      opts: { mode: L.mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit * 60, roundsToWin: s.roundsToWin } };
+    this.host!.sendAll({ t: 'start', seed: net.seed, opts: net.opts, ents: net.ents });
+    this.play(L.mode, roster, net);
+  }
+
+  /** Susunan online: id per slot (Biru 1…5, Merah 6…10); teman terhubung = manusia, sisanya (bot / teman simulasi) = bot. */
+  private buildNetEnts(roster: MatchRoster): NetEnt[] {
+    const s = this.settings, live = new Set(this.host?.pids() ?? []), out: NetEnt[] = [];
+    for (const team of ['blue', 'red'] as const) roster[team].forEach((r, i) => {
+      const id = (team === 'blue' ? 1 : 1 + XCFG.lobby.teamSize) + i;
+      if (r.kind === 'you') out.push({ id, team, name: r.name, pid: r.pid ?? null, bot: false, variant: s.charVariant, weapon: s.weapon, scope: s.scope });
+      else if (r.kind === 'friend' && !r.sim && r.pid && live.has(r.pid))
+        out.push({ id, team, name: r.name, pid: r.pid, bot: false, variant: r.variant ?? 'm', ...cleanLoadout(r.weapon, r.scope) });
+      else out.push({ id, team, name: r.name, pid: null, bot: true, variant: botVariant(team === 'blue' ? i + 1 : i), ...this.randomLoadout() });
+    });
+    return out;
+  }
+
+  /** Klien: host memulai match. */
+  private startNetClient(msg: Record<string, unknown>) {
+    const net = parseStart(msg);
+    if (!net || !net.ents.some(e => e.pid === this.roomMe)) { console.warn('[net] pesan start tidak valid'); return; }
+    if (this.inMatch) this.endMatch();
+    this.play(net.opts.mode, null, net);
+  }
+
+  /** Klien: event reliable dari host. */
+  private onNetEvent(m: Record<string, unknown>) {
+    if (m.e === 'abort') {
+      if (!this.inMatch) return;
+      this.endMatch();
+      this.menus.showRoom('Host mengakhiri match');
+      return;
+    }
+    if (this.inMatch) this.clientRep?.onEvent(m);
+  }
+
+  /** Klien: koneksi ke host berakhir. */
+  private onClientClosed(reason: 'host' | 'kicked' | 'lost') {
+    this.client = null; this.room = null; this.roster = null;
+    if (this.inMatch) this.endMatch();
+    const msg = reason === 'host' ? 'Host menutup room.' : reason === 'kicked' ? 'Kamu dikeluarkan dari room oleh host.' : 'Koneksi ke host terputus.';
+    this.menus.showLobbyHome(() => this.menus.showMain(), '', msg);
   }
 
   private onMatchState(state: GameEvents['match:state']['state']) {
@@ -430,7 +626,8 @@ export class Game {
   private onRoundStart(round: number) {
     this.killcam.stop(); this.stopSpectate();
     this.announcer.reset(round === 1);
-    this.padSprint = false; this.crouchToggled = false; this.adsToggled = false;
+    this.padSprint = false; this.crouchToggled = false;
+    if (ctx.player) ctx.player.adsWanted = false;
     if (this.mode === 'elim') {
       if (round > 1) ctx.hud.clearFeed();
       ctx.hud.showBanner(`RONDE ${round}`, '#f4efe6', `BIRU ${ctx.teams.scores.blue} — ${ctx.teams.scores.red} MERAH`);
@@ -451,8 +648,10 @@ export class Game {
     const win = !!p && w === p.team;
     ctx.hud.showBanner(w === 'draw' ? 'SERI' : win ? 'MENANG' : 'KALAH', w === 'draw' ? '#f5cd30' : win ? '#7dff9a' : '#ff6b5e');
     ctx.audio.playUi(R.stinger(w === 'draw' ? 'draw' : win ? 'win' : 'lose'));
-    this.loop.timeScale = XCFG.match.endTimeScale; // slow-motion 1 s
-    this.slowmoEnd = performance.now() + XCFG.match.endSlowMoTime * 1000;
+    if (ctx.net.role === 'offline') {   // online: waktu host & klien harus tetap sama
+      this.loop.timeScale = XCFG.match.endTimeScale; // slow-motion 1 s
+      this.slowmoEnd = performance.now() + XCFG.match.endSlowMoTime * 1000;
+    }
   }
 
   private onResults() {
@@ -463,7 +662,8 @@ export class Game {
     ctx.hud.setVisible(false); // layar hasil bersih (radar/nama/senjata disembunyikan)
     document.body.classList.remove('dead');
     ctx.props.reset(); ctx.vfx.clear();
-    this.menus.showResults(ctx.match.winner, ctx.player?.team ?? 'blue', !!this.room && !!this.roster);
+    const online = ctx.net.role === 'offline' ? null : ctx.net.role;
+    this.menus.showResults(ctx.match.winner, ctx.player?.team ?? 'blue', !!this.room && (!!this.roster || !!online), online);
   }
 
   private onKill(ev: GameEvents['kill']) {
@@ -555,6 +755,10 @@ export class Game {
 
   private setLoadout(w: WeaponId, s: ScopeId, v: Variant) {
     this.settings.weapon = w; this.settings.scope = s; this.settings.charVariant = v; saveSettings(this.settings);
+    // room: host mencatat & menyiarkan; klien mengirim ke host (di tengah match: berlaku pada spawn berikutnya)
+    const me = this.room?.find(this.roomMe);
+    if (this.client) this.client.act({ a: 'loadout', weapon: w, scope: s, variant: v });
+    else if (me) { me.weapon = w; me.scope = s; me.variant = v; this.host?.broadcastLobby(); }
     if (ctx.player) {
       ctx.player.pendingLoadout = { weapon: w, scope: s }; // senjata berlaku pada spawn berikutnya
       ctx.player.char.setVariant(v);                       // tampilan karakter langsung (kosmetik)
@@ -584,7 +788,7 @@ export class Game {
   // ───────────────────────────────── fixed step 60 Hz (§2.6)
   private fixedUpdate(dt: number) {
     ctx.fixedIndex++;
-    const p = ctx.player, inp = this.input;
+    const p = ctx.player, inp = this.input, role = ctx.net.role;
     const control = this.inMatch && !this.paused && inp.captured && !ctx.match.locked && !ctx.debug.noclip;
     // 1. PlayerController: input → kecepatan → KCC
     if (p) {
@@ -603,7 +807,10 @@ export class Game {
       it.speedMult = p.weapon.slot === 'knife' ? XCFG.knife.speedMult : 1; // pisau: lari lebih cepat
       this.jumpLatch = false;
       it.yaw = p.yaw;
+      if (this.clientRep) this.cmd = this.clientRep.command(it, p);   // klien: niat dikuantisasi persis seperti yang diterima host
     }
+    // host online: perintah pemain remote → niat gerak (senjatanya setelah world.step, seperti prediksi di klien)
+    this.hostRep?.fixedRemote(dt);
     // Latihan: target bergerak bolak-balik ±5 u
     for (const [e, dir] of this.movers) {
       if (!e.alive || !e.dummyAt) continue;
@@ -618,21 +825,26 @@ export class Game {
         if ((ctx.fixedIndex + e.bot.index) % XCFG.bots.thinkEveryFixedSteps === 0 && !ctx.match.locked) e.bot.think();
         e.bot.fixedUpdate(dt);
       }
-      if (e.alive) e.ctrl.fixedUpdate(dt, e.intent, e.weapon.adsActive);
+      if (!e.alive || e.puppet) continue;                // boneka (klien): posisi dari snapshot host
+      if (e.remote?.frozen) e.ctrl.hold();               // host: perintah remote belum tiba → ditahan (tanpa mengarang masukan)
+      else e.ctrl.fixedUpdate(dt, e.intent, e.weapon.adsActive);
     }
     // 3. timer sumbu granat → world.step() → props, mayat
     ctx.grenades.fixedUpdate(dt);
     physics.world.step();
     ctx.grenades.postStep(); ctx.drops.postStep();
+    this.hostRep?.afterStep();                                              // senjata remote + snapshot 20 Hz
+    if (this.clientRep && this.cmd && p) this.clientRep.afterStep(this.cmd, p);   // simpan prediksi + kirim perintah
     ctx.props.fixedUpdate(dt);
     ctx.deathFx.fixedUpdate(dt);
     if (this.inMatch) {
       const st = ctx.match.state;
-      ctx.spawns.update(dt, (st === 'PLAYING' || st === 'COUNTDOWN') && ctx.match.mode !== 'elim'); // Eliminasi: tanpa respawn dalam ronde
+      if (role === 'client') { for (const e of ctx.entities) if (!e.alive && e.respawnT > 0) e.respawnT -= dt; }   // tampilan saja: spawn dari host
+      else ctx.spawns.update(dt, (st === 'PLAYING' || st === 'COUNTDOWN') && ctx.match.mode !== 'elim'); // Eliminasi: tanpa respawn dalam ronde
       this.killcam.record();
     }
     // regenerasi HP (opsi config, default mati)
-    if (CFG.player.healthRegen && p && p.alive && p.hp < CFG.player.hp && ctx.time - p.lastDamageT > XCFG.player.regenDelay)
+    if (CFG.player.healthRegen && role !== 'client' && p && p.alive && p.hp < CFG.player.hp && ctx.time - p.lastDamageT > XCFG.player.regenDelay)
       p.hp = Math.min(CFG.player.hp, p.hp + XCFG.player.regenRate * dt);
     this.updateStress(dt);
   }
@@ -643,10 +855,13 @@ export class Game {
     const p = ctx.player, rig = ctx.camRig, inp = this.input, cam = this.engine.camera;
     if (this.slowmoEnd && performance.now() > this.slowmoEnd) { this.slowmoEnd = 0; this.loop.timeScale = 1; }
     if (this.menus.open && inp.padActive) this.menus.padNav(inp.pad);
+    const cr = this.clientRep;
+    cr?.update(dt);   // klien: pemain lain & granat di posisi interpolasi snapshot host
     // posisi render terinterpolasi + yaw
     for (const e of ctx.entities) {
       if (!e.alive) continue;
       e.renderPos.lerpVectors(e.ctrl.prevPos, e.ctrl.pos, alpha);
+      if (cr && e === p) e.renderPos.add(cr.smooth);   // klien: koreksi prediksi dihaluskan (visual), kamera ikut
       e.char.root.position.copy(e.renderPos);
       e.char.root.rotation.y = e.yaw;
       e.char.root.updateMatrixWorld(true);
@@ -724,6 +939,8 @@ export class Game {
       a.vx = c.vel.x; a.vz = c.vel.z; a.yaw = e.yaw; a.stepPhase = THREE.MathUtils.lerp(c.prevStepPhase, c.stepPhase, alpha);
       e.char.update(dt, a);
     }
+    // host: riwayat hitbox untuk lag compensation (label waktu = tick host yang sedang digambar, sama dengan acuan klien)
+    this.hostRep?.frame(ctx.fixedIndex - 1 + alpha);
     // 6. viewmodel, killcam, VFX, audio, HUD
     const replay = this.killcam.replaying;
     if (p && this.inMatch && !replay) {
@@ -832,62 +1049,45 @@ export class Game {
   }
 
   // ───────────────────────────────── input senjata/granat/melee pemain
+  /** Tombol pemain lokal → ActionFrame → aturan senjata bersama (PlayerActions, juga dipakai host untuk pemain remote).
+   *  Klien online: tombol yang sama dikemas ke perintah tick berikutnya (impuls dikumpulkan sampai terkirim). */
   private playerWeapon(dt: number, looking: boolean) {
-    const p = ctx.player!, inp = this.input, w = p.weapon, t = this.trig, g = this.gIn;
+    const p = ctx.player!, inp = this.input, w = p.weapon, f = this.frame;
     const active = looking && p.alive && !ctx.match.locked && !ctx.debug.noclip;
-    const lP = active && inp.mousePressed[0], lH = active && inp.mouseDown[0], lR = inp.mouseReleased[0];
-    const rP = active && inp.mousePressed[2], rH = active && inp.mouseDown[2], rR = inp.mouseReleased[2];
-    // slot: 1 senjata utama · 2 pisau · 3 granat · Q / gamepad Y senjata sebelumnya · scroll siklus · D-pad ↓ pisau
-    const av = slotAvail(w.hasPrimary, p.grenades);
-    let want: Slot | null = null;
-    if (active) {
-      if (inp.actPressed('primary')) want = 'ar';
-      else if (inp.actPressed('knife')) want = 'knife';
-      else if (inp.actPressed('grenade')) want = 'grenade';
-      else if (inp.actPressed('lastWeapon')) want = quickSwitchTarget(w.slot, w.prevSlot, av);
-      else if (inp.wheel !== 0) want = cycleTarget(w.slot, inp.wheel > 0 ? 1 : -1, av);
-      if (want && (!av[want] || want === w.slot)) want = null;
-    }
-    g.equip = want === 'grenade';                                                   // diproses state machine granat (§8.1)
-    g.toSlot = want && want !== 'grenade' && w.slot === 'grenade' ? want : null;   // keluar dari granat (READY)
-    if (want && want !== 'grenade' && w.slot !== 'grenade' && p.grenadeState === 'NONE' && (p.meleeT < 0 || p.meleeHit)) {
-      cancelMelee(p);
-      w.switchTo(want, equipTimeFor(want));
-    }
-    const nade = w.slot === 'grenade' || p.grenadeState !== 'NONE';
-    const gun = w.slot === 'ar' && !nade, knife = w.slot === 'knife' && !nade;
-    g.lPress = nade && lP; g.lHeld = nade && lH; g.lRelease = nade && lR;
-    g.rPress = nade && rP; g.rHeld = nade && rH; g.rRelease = nade && rR;
-    const meleeing = p.meleeT >= 0;
-    // ADS (hanya senapan): tahan / toggle
-    if (!this.settings.adsToggle) this.adsToggled = rH && gun;
-    else if (rP && gun) this.adsToggled = !this.adsToggled;
-    if (w.reloading || !gun || !p.alive || meleeing) this.adsToggled = this.settings.adsToggle ? false : this.adsToggled;
-    t.pressed = gun && !meleeing && lP; t.held = gun && !meleeing && lH;
-    // senjata tim sendiri di dekat kaki → prompt ambil/tukar (E; gamepad X mengambil alih fungsi reload saat itu)
-    const near = p.alive && p.grenadeState === 'NONE' ? ctx.drops.nearestFor(p) : null;
+    const online = ctx.net.role !== 'offline';
+    // senjata tim sendiri di dekat kaki → prompt ambil/tukar (E; gamepad X mengambil alih fungsi reload saat itu) — offline saja
+    const near = !online && p.alive && p.grenadeState === 'NONE' ? ctx.drops.nearestFor(p) : null;
     const padPick = active && !!near && inp.padActive && inp.pad.pressed(PAD.X);
-    t.reload = active && inp.actPressed('reload') && !padPick; t.modeSwitch = active && inp.actPressed('fireMode');
-    t.ads = active && gun && !meleeing && this.adsToggled;
-    t.sprinting = p.ctrl.sprinting;
+    f.lP = inp.mousePressed[0]; f.lH = inp.mouseDown[0]; f.lR = inp.mouseReleased[0];
+    f.rP = inp.mousePressed[2]; f.rH = inp.mouseDown[2]; f.rR = inp.mouseReleased[2];
+    f.aimHold = active && f.rH;
+    f.reload = inp.actPressed('reload') && !padPick; f.fireMode = inp.actPressed('fireMode'); f.melee = inp.actPressed('melee');
+    // slot: 1 senjata utama · 2 pisau · 3 granat · Q / gamepad Y senjata sebelumnya · scroll siklus · D-pad ↓ pisau
+    f.slot = inp.actPressed('primary') ? 'ar' : inp.actPressed('knife') ? 'knife' : inp.actPressed('grenade') ? 'grenade' : null;
+    f.last = inp.actPressed('lastWeapon'); f.wheel = inp.wheel;
+    const res = driveWeapons(p, f, dt, { active, adsMode: this.settings.adsToggle ? 'toggle' : 'hold', practice: this.mode === 'practice' },
+      this.trig, this.gIn);
+    if (res.meleeStarted) this.padSprint = false;
     ctx.hud.pickup = near;
+    const cr = this.clientRep;
+    if (cr) {
+      cr.held = (active && f.lH ? H.FIRE : 0) | (active && f.rH ? H.ALT : 0) | (p.adsWanted ? H.AIM : 0);
+      let imp = (f.lR ? I.FIRE_R : 0) | (f.rR ? I.ALT_R : 0);
+      if (active) {
+        imp |= (f.lP ? I.FIRE_P : 0) | (f.rP ? I.ALT_P : 0) | (f.reload ? I.RELOAD : 0) | (f.fireMode ? I.FIREMODE : 0) | (f.melee ? I.MELEE : 0)
+          | (f.slot === 'ar' ? I.SLOT_AR : f.slot === 'knife' ? I.SLOT_KNIFE : f.slot === 'grenade' ? I.SLOT_NADE : 0)
+          | (f.last ? I.LAST : 0) | (f.wheel > 0 ? I.WHEEL_UP : f.wheel < 0 ? I.WHEEL_DN : 0);
+      }
+      cr.imp |= imp;
+    }
     if (!p.alive || ctx.match.locked) return;
-    // F: pukul popor (senapan) / tebas cepat (pisau); pisau: klik kiri tebas, klik kanan tusuk (tahan = berulang)
-    if (active && inp.actPressed('melee') && (startMelee(p) || (knife && startKnife(p, false)))) { this.adsToggled = false; this.padSprint = false; }
-    if (knife && (lH || rH)) startKnife(p, !lH);
     // G: buang senjata utama (saat dipegang); E / gamepad X: ambil atau tukar senjata TIM SENDIRI
     if (active && inp.actPressed('drop')) {
-      if (gun && !meleeing) { if (ctx.drops.drop(p)) this.adsToggled = false; }
+      if (online) ctx.hud.toast('Buang / ambil senjata belum tersedia saat main online');
+      else if (res.gun && !res.meleeing) { if (ctx.drops.drop(p)) p.adsWanted = false; }
       else if (w.slot !== 'ar') ctx.hud.toast('Hanya senjata utama yang bisa dibuang');
     }
-    if (near && !meleeing && (padPick || (active && inp.actPressed('pickup')))) { ctx.drops.pickup(p, near); this.adsToggled = false; }
-    if (this.mode === 'practice') { // latihan: amunisi cadangan & granat tak terbatas
-      w.reserve = w.def.reserveAmmo;
-      if (p.grenades < 1 && p.grenadeState === 'NONE') p.grenades = 1;
-    }
-    w.update(dt, ctx.time, t, () => fireOne(p));
-    ctx.grenades.handle(p, g, dt);
-    updateMelee(p, dt);
+    if (near && !res.meleeing && (padPick || (active && inp.actPressed('pickup')))) { ctx.drops.pickup(p, near); p.adsWanted = false; }
     ctx.viewmodel.setWeapon(p.loadout.weapon, p.loadout.scope); // no-op bila loadout tidak berubah
   }
 

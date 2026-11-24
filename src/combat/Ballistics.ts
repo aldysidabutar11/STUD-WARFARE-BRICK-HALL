@@ -8,7 +8,9 @@ import { stanceMult } from './Recoil';
 import { bus, type HitPart } from '../core/EventBus';
 import { ctx } from '../game/ctx';
 import type { Entity } from '../entities/Entity';
+import { PART_KEYS as PART_ORDER } from '../entities/BlockyCharacter';
 import { surfaceAt } from '../world/MapData';
+import { makeRng } from '../core/Rng';
 
 const S = CFG.combat.spread;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -27,10 +29,10 @@ export function spreadDeg(ads: boolean, airborne: boolean, moving: boolean, crou
   return s;
 }
 
-/** Arah peluru acak seragam di dalam kerucut (sudut setengah = spreadDeg). */
-export function applySpread(dir: THREE.Vector3, spreadDegVal: number, out: THREE.Vector3) {
-  const theta = THREE.MathUtils.degToRad(spreadDegVal) * Math.sqrt(Math.random()); // sqrt -> rata di piringan
-  const phi = 2 * Math.PI * Math.random();
+/** Arah peluru acak seragam di dalam kerucut (sudut setengah = spreadDeg). rnd = sumber acak (default Math.random). */
+export function applySpread(dir: THREE.Vector3, spreadDegVal: number, out: THREE.Vector3, rnd: () => number = Math.random) {
+  const theta = THREE.MathUtils.degToRad(spreadDegVal) * Math.sqrt(rnd()); // sqrt -> rata di piringan
+  const phi = 2 * Math.PI * rnd();
   tmpR.crossVectors(dir, UP); if (tmpR.lengthSq() < 1e-6) tmpR.set(1, 0, 0); tmpR.normalize();
   tmpU.crossVectors(tmpR, dir).normalize();
   const t = Math.tan(theta);
@@ -97,6 +99,13 @@ const pFire = new THREE.Vector3(), vCam = new THREE.Vector3(), vShot = new THREE
 const tmp = new THREE.Vector3(), muzzle = new THREE.Vector3(), endV = new THREE.Vector3(), recoilOut = { dPitch: 0, dYaw: 0 };
 const SURFACE_COLOR = { tile: 0x9a9a9a, carpet: 0x1f3a73, wood: 0x7c5c46 } as const;
 
+/** Acak tembakan deterministik (seed match × entitas × tembakan ke-n per nyawa) → prediksi klien = hasil host. */
+export function shotRandom(e: Entity): () => number {
+  return makeRng((ctx.net.seed ^ Math.imul(e.id + 1, 0x9e3779b1) ^ Math.imul(e.weapon.shotsFired + 1, 0x85ebca77)) >>> 0);
+}
+
+const SURF_IDX = { tile: 0, carpet: 1, wood: 2 } as const;
+
 /** Satu peluru: spread → raycast → damage → recoil → event 'shot' + VFX. */
 export function fireOne(e: Entity) {
   const w = e.weapon, rig = ctx.camRig;
@@ -104,9 +113,12 @@ export function fireOne(e: Entity) {
   const spread = spreadDeg(w.adsActive, e.airborne, moving, e.crouched);
   e.eye(pFire);
   const tpsAim = e.isPlayer && !rig.isFpsView;
+  const rnd = shotRandom(e);
+  // host: penembak remote → hitbox lawan di-rewind ke saat yang dilihat penembak (lag compensation)
+  const rewound = !!(e.remote && ctx.net.rewind?.(e));
   if (tpsAim) {
     // Tahap 1: ray kamera (sudah diberi spread) → P_target; abaikan hit sebelum t_min
-    rig.forward(tmp); applySpread(tmp, spread, vCam);
+    rig.forward(tmp); applySpread(tmp, spread, vCam, rnd);
     const tMin = Math.max(0, tmp.copy(pFire).sub(rig.position).dot(vCam));
     const h1 = castShot(rig.position, vCam, tMin, e, true);
     if (h1) pTarget.copy(h1.point); else pTarget.copy(rig.position).addScaledVector(vCam, CFG.combat.maxRange);
@@ -115,10 +127,11 @@ export function fireOne(e: Entity) {
     if (vShot.length() < 1.0) vShot.copy(vCam); else vShot.normalize();
   } else {
     if (e.isPlayer) rig.forward(tmp); else e.aimDir(tmp);
-    applySpread(tmp, spread, vShot);
+    applySpread(tmp, spread, vShot, rnd);
   }
   // Tahap 3: validasi halangan dari titik mata (FPS & TPS identik)
   const hit = castShot(pFire, vShot, 0, e);
+  if (rewound) ctx.net.restore?.();
   e.stats.shots++;
   e.protectT = 0; // perlindungan spawn berakhir saat menembak
   const end = hit ? hit.point : endV.copy(pFire).addScaledVector(vShot, CFG.combat.maxRange); // vektor sendiri (tmp dipakai ulang di bawah)
@@ -139,6 +152,12 @@ export function fireOne(e: Entity) {
   if (w.shotsFired % every === 0) ctx.vfx.tracer(muzzle, end);
   ctx.vfx.shell(e, fpsView);
   bus.emit('shot', { shooterId: e.id, weaponId: w.def.id, origin: pFire, dir: vShot, end });
+  if (ctx.net.onShot) {
+    const body = hit?.kind === 'body' && hit.victim;
+    ctx.net.onShot(e, !hit ? 0 : body ? 2 : 1, end, hit ? hit.normal : null,
+      hit && !body ? SURF_IDX[surfaceAt(hit.point.x, hit.point.y, hit.point.z)] : 0, body ? hit.victim!.id : 0,
+      body ? Math.max(0, PART_ORDER.indexOf(hit.partKey as never)) : 0);
+  }
 
   if (hit) {
     if (hit.kind === 'body' && hit.victim && hit.part) {

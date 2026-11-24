@@ -25,6 +25,19 @@ export interface DebugFlags {
   god: boolean; noclip: boolean; showNav: boolean; botLabels: boolean; dmgNumbers: boolean; colliders: boolean; slowmo: boolean;
 }
 
+/** Status multiplayer. offline = solo/latihan/room lokal; host = otoritatif (listen server); client = prediksi + snapshot. */
+export interface NetCtx {
+  role: 'offline' | 'host' | 'client';
+  /** Seed match: spread tembakan identik di host & prediksi klien (indeks = tembakan ke-n per nyawa). */
+  seed: number;
+  /** Host: catat tembakan untuk efek visual di klien. */
+  onShot: ((e: Entity, kind: number, end: { x: number; y: number; z: number }, normal: { x: number; y: number; z: number } | null,
+    mat: number, victim: number, part: number) => void) | null;
+  /** Host: rewind hitbox ke tick tampilan penembak remote (lag compensation); kembalikan false bila tidak dipakai. */
+  rewind: ((shooter: Entity) => boolean) | null;
+  restore: (() => void) | null;
+}
+
 export interface Ctx {
   engine: Engine; input: Input; props: Props; nav: NavGraph; map: BuiltMap;
   camRig: CameraRig; viewmodel: Viewmodel; scope: ScopeSystem;
@@ -37,6 +50,10 @@ export interface Ctx {
   time: number;          // waktu game (detik, ikut timeScale)
   fixedIndex: number;    // indeks fixed step
   debug: DebugFlags;
+  net: NetCtx;
 }
 
-export const ctx = { time: 0, fixedIndex: 0, player: null } as unknown as Ctx;
+export const ctx = {
+  time: 0, fixedIndex: 0, player: null,
+  net: { role: 'offline', seed: 1, onShot: null, rewind: null, restore: null },
+} as unknown as Ctx;

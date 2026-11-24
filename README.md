@@ -17,7 +17,7 @@ tepat waktu; bila preset berat tidak stabil di refresh penuh, pilih **Batas FPS 
 
 | Perintah | Fungsi |
 | :--- | :--- |
-| `npm run test` | Test vector GDD §16.1 + validator map/nav + logika fitur (rebind, settings, Eliminasi, medali, slot senjata & pisau) |
+| `npm run test` | Test vector GDD §16.1 + validator map/nav + logika fitur (rebind, settings, Eliminasi, medali, slot senjata & pisau, room & jaringan) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run build` / `npm run preview` | Build produksi & pratinjau |
 
@@ -25,8 +25,8 @@ tepat waktu; bila preset berat tidak stabil di refresh penuh, pilih **Batas FPS 
 
 - **Team Deathmatch** — 5v5 vs bot, respawn 4 s; target kill 25/50/75/100 & batas waktu 5–20 menit (default GDD: 50 kill / 10:00).
 - **Eliminasi** — tanpa respawn dalam ronde 2:00; yang mati menonton rekan (klik kiri/Spasi ganti rekan); menang 3/4/5/7 ronde.
-- **Main Bareng (Room)** — buat room (kode + link), 2 tim × 5 slot, slot kosong diisi bot, pindah tim, siap, setelan host. Saat ini
-  room berjalan lokal (kamu + bot / teman simulasi); bermain online bersama teman menyusul setelah server dipasang.
+- **Main Bareng (Room)** — main online dengan teman: buat room (kode + link), 2 tim × 5 slot, slot kosong diisi bot, pindah tim,
+  siap, setelan host (TDM / Eliminasi). Lihat **Main Bareng online** di bawah.
 - **Latihan Menembak** — 12 dummy (jembatan 10/40/70 u, lantai dasar, mezanin, 2 target bergerak), amunisi & granat tak terbatas, angka damage.
 
 ## Map: Brick Hall (v2)
@@ -91,3 +91,40 @@ Tempo gerak 1.35× (jalan 8.1, sprint 11.5 u/s; lompat tetap setinggi 1.38 u tap
 kamera miring saat strafe, FOV melebar saat sprint, hentakan saat mendarat, senjata berinersia, dan animasi karakter yang halus
 (kaki mengikuti arah gerak). Kurangi/matikan lewat Pengaturan → *Gerak kamera & senjata*. Untuk menyetel langsung saat main:
 panel debug `` ` `` → **RASA GERAK** (slider uji coba, tidak disimpan).
+
+## Main Bareng online
+
+**Cara kerjanya (100% gratis, tanpa server game sewaan):** browser pembuat room (**host**) menjalankan match — simulasi, bot, damage, skor.
+Teman tersambung langsung ke host lewat **WebRTC** (P2P, kanal *unreliable* seperti UDP). Server pihak ketiga hanya dipakai untuk
+"perkenalan" (tukar kode room & alamat koneksi, ±puluhan pesan per pemain): **Supabase Realtime** (paket gratis, tanpa kartu kredit).
+File game di-host gratis di **Vercel** (atau hosting statis lain).
+
+- Gerak kamu **diprediksi** di perangkatmu (respons instan), lalu dicocokkan dengan host; pemain lain digambar ±117 ms di belakang
+  agar mulus walau paket datang tidak rata. Host me-**rewind hitbox** ke apa yang kamu lihat saat menembak (lag compensation, maks 250 ms).
+- Host sebaiknya pemain dengan koneksi & laptop paling kuat (upload ±0.1–0.2 MB/s untuk 9 teman). Host jangan menutup tab selama main;
+  pindah tab/aplikasi tetap aman (simulasi tetap jalan di latar belakang).
+- Teman keluar di tengah match → slotnya diambil alih bot. Host keluar → match berakhir, semua kembali ke room.
+- Belum tersedia saat online: buang/ambil senjata (G/E), mode Latihan.
+
+### Coba tanpa akun apa pun (uji lokal)
+
+`npm run dev` → buka dua tab/jendela `http://localhost:5173` → tab 1: **Main Bareng → Buat Room** → tab 2: **Gabung** dengan kodenya.
+Tanpa Supabase, room hanya terlihat dari tab lain di browser yang sama. Uji jaringan buruk: tambahkan `?netlag=60&netjitter=15&netloss=2`
+di URL kedua tab (ping ±120 ms, 2% paket hilang).
+
+### Pasang online (sekali saja, ±10 menit)
+
+1. **Supabase** — daftar di supabase.com (gratis) → *New project* (region terdekat, mis. Singapore) → tombol **Connect** (atau
+   *Settings → API Keys*): salin **Project URL** dan **publishable key** (`sb_publishable_…`; kunci *anon* lama juga bisa). Tidak perlu
+   membuat tabel apa pun; pastikan *Realtime → Settings → Allow public access* menyala (kanal room memakai kanal publik).
+2. **Lokal (opsional)** — salin `.env.example` jadi `.env.local`, isi `VITE_SUPABASE_URL` & `VITE_SUPABASE_ANON_KEY`, jalankan ulang `npm run dev`.
+3. **Vercel** — daftar di vercel.com dengan akun GitHub (paket Hobby, gratis) → *Add New → Project* → pilih repo ini (framework: Vite,
+   otomatis) → *Environment Variables*: isi dua variabel di atas → **Deploy**. Bagikan link `https://<nama>.vercel.app`; tombol
+   **Salin Link** di room membuat link langsung ke room (`…/?room=KODE`).
+4. **TURN (opsional)** — bila ada teman yang selalu gagal tersambung ("koneksi tidak tersambung"), biasanya karena NAT ketat
+   (jaringan kampus/kantor/sebagian operator seluler). Isi `VITE_TURN_URL`, `VITE_TURN_USERNAME`, `VITE_TURN_CREDENTIAL` dari layanan
+   TURN yang punya kuota gratis, lalu deploy ulang.
+
+Catatan paket gratis Supabase: project yang tidak dipakai ±1 minggu bisa dijeda otomatis — buka dashboard Supabase dan klik *Restore*
+bila room tiba-tiba tidak bisa dibuat/ditemukan.
+

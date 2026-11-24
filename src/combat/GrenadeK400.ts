@@ -17,7 +17,7 @@ const D2R = THREE.MathUtils.degToRad;
 const EARLY_GROUPS = ((G.GRENADE << 16) | (G.STATIC | G.PROP)) >>> 0; // 0.15 s pertama: abaikan kapsul pelempar
 
 interface Live { body: RAPIER.RigidBody; collider: RAPIER.Collider; mesh: THREE.Group; fuse: number; owner: number; prev: THREE.Vector3; early: number;
-  lerp: BodyLerp }
+  lerp: BodyLerp; id: number }
 
 /** Waktu angkat per slot: senapan 0.55 s (GDD §5.1), pisau XCFG.knife, granat 0.35 s (GDD §8). */
 export function equipTimeFor(slot: Slot): number {
@@ -44,10 +44,15 @@ function grenadeMesh(): THREE.Group {
   return g;
 }
 
+/** Granat dari snapshot host (klien online): tampilan saja. */
+interface NetNade { mesh: THREE.Group; x: number; y: number; z: number; fuse: number; owner: number }
+
 export class GrenadeManager {
   private live: Live[] = [];
   private pool: THREE.Group[] = [];
   readonly handMesh: THREE.Group;
+  private nextId = 1;
+  private readonly net = new Map<number, NetNade>();
 
   constructor(private scene: THREE.Scene) {
     for (let i = 0; i < 8; i++) { const m = grenadeMesh(); m.visible = false; scene.add(m); this.pool.push(m); }
@@ -56,9 +61,34 @@ export class GrenadeManager {
 
   get count() { return this.live.length; }
 
-  /** Iterasi granat hidup (posisi, sisa sumbu, pemilik) — dipakai indikator bahaya HUD & radar. */
+  /** Iterasi granat hidup (posisi, sisa sumbu, pemilik) — dipakai indikator bahaya HUD & radar (klien: dari snapshot). */
   forEachLive(cb: (x: number, y: number, z: number, fuse: number, owner: number) => void) {
     for (const g of this.live) { const t = g.body.translation(); cb(t.x, t.y, t.z, g.fuse, g.owner); }
+    for (const n of this.net.values()) cb(n.x, n.y, n.z, n.fuse, n.owner);
+  }
+
+  /** Host: granat hidup untuk snapshot. */
+  forEachNet(cb: (id: number, x: number, y: number, z: number, fuse: number, owner: number) => void) {
+    for (const g of this.live) { const t = g.lerp.pos; cb(g.id, t.x, t.y, t.z, g.fuse, g.owner); }
+  }
+
+  /** Klien: tampilkan / gerakkan granat dari host. */
+  netSet(id: number, x: number, y: number, z: number, fuse: number, owner: number) {
+    let n = this.net.get(id);
+    if (!n) {
+      const mesh = this.pool.find(m => !m.visible) ?? this.pool[0];
+      mesh.visible = true;
+      n = { mesh, x, y, z, fuse, owner };
+      this.net.set(id, n);
+    }
+    n.x = x; n.y = y; n.z = z; n.fuse = fuse; n.owner = owner;
+    n.mesh.position.set(x, y, z);
+    n.mesh.rotation.x += 0.21; n.mesh.rotation.z += 0.13;   // berputar di udara (kosmetik)
+  }
+
+  /** Klien: hapus granat yang tidak ada lagi di snapshot. */
+  netPrune(alive: Set<number>) {
+    for (const [id, n] of this.net) if (!alive.has(id)) { n.mesh.visible = false; this.net.delete(id); }
   }
 
   /** State machine per entitas (pemain: input mouse; bot: input virtual yang sama). */
@@ -83,7 +113,7 @@ export class GrenadeManager {
         e.cookT += dt;
         if (e.cookT >= GR.fuse) { // meledak di tangan
           e.grenades--; e.grenadeState = 'NONE'; w.switchTo(returnSlot(w.prevSlot, w.hasPrimary), CFG.combat.equipAfterThrow);
-          this.handPos(e, _hand); this.explode(_hand, e.id);
+          if (ctx.net.role !== 'client') { this.handPos(e, _hand); this.explode(_hand, e.id); }   // klien: ledakan dari host
         } else if ((e.throwOver && inp.lRelease) || (!e.throwOver && inp.rRelease) || (e.throwOver ? !inp.lHeld : !inp.rHeld)) {
           this.throw(e, e.throwOver, GR.fuse - e.cookT);
           e.grenades--; e.grenadeState = 'THROWN'; e.grenadeT = CFG.combat.equipAfterThrow; e.throwAnimT = 0;
@@ -105,6 +135,7 @@ export class GrenadeManager {
   }
 
   throw(e: Entity, overhand: boolean, fuseLeft: number) {
+    if (ctx.net.role === 'client') return;   // online: host yang meluncurkan; klien melihatnya lewat snapshot
     const rig = ctx.camRig;
     const fps = !e.isPlayer || rig.isFpsView;
     // basis arah dari yaw/pitch bidik
@@ -136,7 +167,8 @@ export class GrenadeManager {
       .setDensity(GR.density).setCollisionGroups(EARLY_GROUPS), body);
     const mesh = this.pool.find(m => !m.visible) ?? this.pool[0];
     mesh.visible = true; mesh.position.copy(_a);
-    this.live.push({ body, collider, mesh, fuse: fuseLeft, owner: e.id, prev: _b.clone(), early: 0.15, lerp: new BodyLerp().snap(body) });
+    this.live.push({ body, collider, mesh, fuse: fuseLeft, owner: e.id, prev: _b.clone(), early: 0.15, lerp: new BodyLerp().snap(body),
+      id: this.nextId++ });
   }
 
   fixedUpdate(dt: number) {
@@ -199,6 +231,12 @@ export class GrenadeManager {
       _d.copy(_imp).normalize();
       ctx.teams.applyDamage(v, owner, dmg, 'upper', 'k400', _d, true, _imp);
     }
+    this.explodeFx(c, ownerId);
+  }
+
+  /** Efek ledakan tanpa damage (host & klien): buku, balok tubuh, VFX, guncangan kamera, telinga berdenging, event audio. */
+  explodeFx(c: THREE.Vector3, ownerId: number) {
+    const R = GR.blastRadius;
     ctx.props.explode(c);
     ctx.deathFx.explode(c, R, GR.propImpulse, GR.corpseImpulseMult);
     ctx.vfx.explosion(c);
@@ -210,5 +248,9 @@ export class GrenadeManager {
     bus.emit('grenade:explode', { position: c.clone(), ownerId });
   }
 
-  clear() { for (let i = this.live.length - 1; i >= 0; i--) this.remove(i); }
+  clear() {
+    for (let i = this.live.length - 1; i >= 0; i--) this.remove(i);
+    for (const n of this.net.values()) n.mesh.visible = false;
+    this.net.clear();
+  }
 }

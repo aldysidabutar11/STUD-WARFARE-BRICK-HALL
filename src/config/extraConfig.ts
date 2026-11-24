@@ -216,6 +216,26 @@ export const XCFG = {
     simNames: ['Raka', 'Dimas', 'Sinta', 'Bayu', 'Nadia', 'Fajar', 'Putri', 'Rizky', 'Ayu'],   // teman simulasi (pratinjau tanpa server)
     simReady: [0.8, 2.6],                                // teman simulasi siap setelah jeda acak (detik)
   },
+  // ── multiplayer online (disetujui pengguna: WebRTC host–client; signaling Supabase / antar-tab). Host = otoritatif (listen server):
+  //    simulasi penuh di browser host; klien memprediksi gerak sendiri + interpolasi pemain lain; host me-rewind hitbox (lag compensation).
+  net: {
+    cmdEvery: 1,          // klien kirim perintah tiap tick (60 paket/s, ±6 KB/s) → antrean di host rata, jeda minimal ...
+    cmdRedundancy: 3,     // ... berisi 3 perintah terakhir (tahan paket hilang di kanal unreliable)
+    snapEvery: 3,         // host kirim snapshot tiap 3 tick (20 Hz)
+    interpTicks: 7,       // pemain lain digambar ±117 ms di belakang (2 snapshot + jitter)
+    lagCompMax: 0.25,     // rewind hitbox maksimum (detik)
+    lagCompHistory: 48,   // sampel riwayat hitbox (per frame host, jarak antar sampel ≥ ½ tick → ±0.4 s)
+    idleCmd: 0.25,        // perintah telat → pemain remote ditahan; > 0.25 s tanpa perintah → dianggap diam (tombol dilepas)
+    cmdCatchUp: 3,        // antrean > 3 perintah → host memproses 2 per tick sampai normal (jeda input remote tetap kecil)
+    cmdQueueMax: 12,      // antrean > 12 perintah → buang yang terlama (klien terlalu jauh di depan; impuls dipertahankan)
+    correctEps: 0.04,     // pemain lokal dikoreksi bila beda posisi > 0.04 u dari host
+    smoothT: 0.12,        // koreksi posisi pemain lokal dihaluskan ±120 ms (visual)
+    statsEvery: 1.0,      // sinkron statistik papan skor (detik)
+    maxShotFx: 24,        // efek tembakan per snapshot
+    connectTimeout: 10,   // detik: batas total gabung (termasuk koneksi WebRTC)
+    helloTimeout: 4,      // detik: host tidak menjawab kode room → "room tidak ditemukan"
+    ice: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'],
+  },
   // ── kehalusan frame (laporan pengguna "FPS 60–80 tapi tidak terasa 60–80"; perubahan §2.3 disetujui pengguna).
   //    Resolusi dinamis GDD memakai ambang layar 60 Hz (17.5 / 13 ms): di layar 90 Hz game diam di 60–80 FPS dengan frame
   //    berselang-seling 1–2 vsync (judder). Kini target = interval vsync × batas FPS. Nilai GDD tetap dipakai: CFG.render.dynRes

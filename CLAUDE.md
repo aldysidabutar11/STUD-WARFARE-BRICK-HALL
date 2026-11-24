@@ -200,33 +200,66 @@
   - Overlay F3: refresh layar (`core/FramePacing.ts`, median frame tepat waktu), % tepat waktu, 1% low, GPU ms (`core/GpuTimer.ts`,
     EXT_disjoint_timer_query_webgl2, aktif hanya saat overlay terbuka), CPU ms, grafik interval frame (hijau/kuning/merah).
 
-- Main Bareng / room (permintaan pengguna: kumpul teman dalam 1 lobby, 5v5, slot kosong diisi bot). TAHAP 1 = tampilan + logika room LOKAL;
-  server online BELUM (pengguna mencari hosting 100% gratis — jangan pilih/pasang hosting tanpa persetujuan). Rencana online: server
-  otoritatif + WebSocket (GDD §1 pasca-MVP), prediksi klien, interpolasi, lag compensation.
+- Main Bareng / room (permintaan pengguna: kumpul teman dalam 1 lobby, 5v5, slot kosong diisi bot) + ONLINE (disetujui pengguna: stack
+  100% gratis — WebRTC host–client P2P, signaling Supabase Realtime, frontend Vercel, TURN opsional; GDD §1 menyebut WebSocket —
+  menyimpang karena syarat gratis tanpa server game). Akun Supabase/Vercel milik pengguna: JANGAN membuat/menyambung akun sendiri.
   - Logika murni `game/Lobby.ts` (diuji tests/lobby.test.ts): kode room 6 karakter (alfabet tanpa I/O/0/1, tampil "XXX-XXX", link `?room=`),
     2 tim × XCFG.lobby.teamSize (5) slot, pemain pertama = host (selalu siap), masuk ke tim yang manusianya lebih sedikit, maks 10 orang;
     slot kosong = bot (nama tetap per slot: Biru names[0..4], Merah names[5..9]) bila `fillBots`; pindah tim (reset siap), siap, keluarkan,
     acak tim seimbang, setelan (mode/target/waktu/ronde/kesulitan/isi bot) hanya host; canStart = host + semua siap + tiap tim ≥ 1;
-    `roster(meId)` → susunan match. `cleanName` (huruf/angka/spasi/_.-, maks 16) → aman untuk innerHTML (HUD killfeed!).
-  - UI (Menus.showLobbyHome / showRoom / refreshRoom, CSS "Main Bareng" di hud.css): menu utama → "👥 Main Bareng (Room)"; nama pemain
-    (`settings.playerName`); Buat Room; Gabung (kode/link → pesan "server belum tersedia"); room: kode + Salin Link, kolom BIRU/MERAH (👑 host,
-    (kamu), ✔ Siap / ⏳, ✕ keluarkan, 🤖 bot · kesulitan, slot kosong), Pindah tim, setelan host, Acak Tim, "＋ Teman (simulasi)" (pratinjau
-    tanpa server: masuk lalu siap sendiri XCFG.lobby.simReady; di match dimainkan bot bernama teman), Mulai/Loadout/Keluar Room + status.
-  - Game: `room`/`roomMe`/`roster`; `play(mode, roster)` → `createEntities` per slot room — pemain bisa di tim MERAH (nama = nama pemain);
-    Main Lagi memakai roster yang sama; keluar match / hasil → kembali ke room ("Kembali ke Room"); link `?room=KODE` membuka Main Bareng.
+    `roster(meId)` → susunan match; `toState()` / `Lobby.fromState(s, meId)` = cermin room di klien. `cleanName` (huruf/angka/spasi/_.-,
+    maks 16) → aman untuk innerHTML (HUD killfeed!); nama dari jaringan tetap di-escape (Menus `esc`).
+  - Jaringan (`src/net/`, angka di XCFG.net): `Signaling.ts` (LocalSignaling = BroadcastChannel antar-tab untuk uji tanpa akun;
+    SupabaseSignaling = kanal broadcast per kode room, pustaka dimuat lazy (chunk terpisah); `onlineConfigured()` = env VITE_SUPABASE_URL +
+    VITE_SUPABASE_ANON_KEY dan bukan `?signal=local`; `iceServers` = STUN Google/Cloudflare + VITE_TURN_*); `Peer.ts` (RTCPeerConnection,
+    kanal 'r' reliable JSON + 'u' unreliable biner maxRetransmits 0; simulator debug `?netlag=&netjitter=&netloss=`); `Session.ts`
+    (NetHost: hello → welcome/deny started|full → offer/answer → 'join' → room disiarkan; aksi klien team/ready/loadout divalidasi host,
+    `cleanLoadout`; NetClient.join: hello diulang 1×, tanpa jawaban XCFG.net.helloTimeout → notfound, total connectTimeout);
+    `protocol.ts` (perintah 17 B: seq, gerak, yaw/pitch 16-bit, tombol ditahan H + impuls I, viewTick; snapshot: entitas ±40 B, keadaan
+    gerak SENDIRI f64 (f32 membuat KCC yang menempel dinding berbeda hasil → koreksi berantai), granat, efek tembakan & lain-lain);
+    `sync.ts` (HostClock, InterpBuffer, CommandHistory, CommandQueue: perintah telat → pemain remote DITAHAN (tanpa mengarang masukan),
+    antrean > cmdCatchUp → 2 perintah/tick, idle > 0.25 s → masukan nol); `start.ts` (susunan match + `parseStart` memvalidasi pesan host);
+    `NetMatch.ts` (HostRep: perintah → niat gerak sebelum KCC, senjata remote SETELAH world.step lewat `game/PlayerActions.driveWeapons`
+    (aturan senjata sama persis dengan pemain lokal), snapshot 20 Hz per klien (ack + keadaan sendiri), event reliable spawn (+loadout/varian)
+    / kill / assist / hit (hanya penyerang & korban) / mstate / boom / stats tiap 1 s / notice / abort, lag compensation = riwayat
+    matrixWorld hitbox per frame (jarak ≥ ½ tick, label `fixedIndex − 1 + alpha`) di-rewind ke viewTick penembak ≤ 250 ms;
+    ClientRep: perintah per tick (dikirim tiap tick + 2 sebelumnya), rekonsiliasi (setState host + putar ulang `quiet`), koreksi visual
+    `smooth` meluruh 120 ms, boneka diinterpolasi 7 tick di belakang, efek tembakan/granat/suara dari snapshot, HP sendiri dari snapshot).
+  - Game: `ctx.net.role` offline|host|client (+ seed spread `shotRandom` = seed ^ id ^ tembakan ke-n per nyawa → spread prediksi = host).
+    Room yang dibuat selalu membuka NetHost; Mulai dengan ≥ 1 teman terhubung → match online (id entitas per slot: Biru 1…5, Merah 6…10;
+    pesan 'start' dulu, lalu spawn tersiar); tanpa teman → match lokal seperti biasa. Klien: semua entitas lain `puppet` (tanpa KCC/AI),
+    damage/spawn hanya dari host (TeamManager.applyDamage return di klien), `MatchManager.startPuppet/applyNet`. Online: tanpa jeda penuh,
+    slow-mo akhir match & slowmo debug (waktu host = klien); buang/ambil senjata & Latihan offline saja; killcam tetap jalan.
+    Host keluar di tengah match → 'abort' (semua ke room, pesan di status room); klien keluar di tengah match = keluar room → slotnya
+    TacticalBot (HostRep.onPeerLeft). Hasil: host "Main Lagi" (mulai lagi untuk semua; status siap tidak direset online) / klien menunggu.
+    `GameLoop.setKeepAlive(true)` saat host: Worker (blob) menjalankan frame tanpa render bila rAF berhenti > 100 ms (tab di belakang).
+  - UI (Menus.showLobbyHome(back, code, message) / showRoom(notice) / refreshRoom, CSS hud.css): Gabung = koneksi sungguhan dengan pesan
+    gagal (notfound/full/started/timeout/failed); badge status (Menyiapkan / Online — n teman / Uji lokal / Terhubung ke host);
+    aksi room lewat `MenuApi.roomAct` (host: ubah + siarkan; klien: kirim ke host); "＋ Teman (simulasi)" hanya host (dimainkan bot).
+  - Terukur (2 jendela Chromium, signaling antar-tab): gabung ±0.8 s; posisi klien = host (< 0.002 u); koreksi prediksi: f32 → 7 per
+    5 s gerak menempel rak, f64 → 1 per 8 s; dengan `?netlag=55&netjitter=15&netloss=2` (ping ±120 ms) 0 koreksi; tembak target strafe
+    12 u: kena 98% dengan lag compensation vs 86% tanpa; keep-alive: rAF host dimatikan → tetap 59 tick/s & 19.9 snapshot/s.
+    Supabase asli (project milik pengguna; URL + publishable key di `.env.local`, di-.gitignore — jangan ditulis ke file yang di-commit):
+    room siap ±2.1 s (termasuk memuat chunk Supabase), gabung ±1.9 s, WebRTC tersambung, 20 snapshot/s, "Host menutup room." sampai.
+    Belum diuji: dua perangkat/jaringan berbeda (NAT sungguhan), 3+ pemain, TURN; deploy Vercel (env harus diisi sebelum build).
   - Input: keydown di kolom teks (input non-range / textarea) tidak dicegah & tidak jadi input game (Spasi bisa diketik).
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 142 test Vitest (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 153 test Vitest (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
-  kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby) hijau; typecheck & build hijau;
+  kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
+  perintah/interpolasi/validasi pesan host) hijau; typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;
   di browser: TDM/Eliminasi/Latihan berjalan 0 error konsol; killcam → respawn 4 s; menonton rekan; gamepad tiruan (gerak/bidik/tembak/pause/menu);
   map v2 (TDM, Iris Xe): frame median 11.1 ms (p95 13.1), draw call rata-rata 106 / maks 121, tris maks ±45k.
 - Belum diverifikasi di perangkat acuan: prosedur 16.3 (Stress Test, panel ` → "Stress Test") di laptop Iris Xe; rasa mouse/gamepad asli.
 - Uji otomatis tanpa pointer lock: http://localhost:5173/?autostart=1 (atau =elim / =practice); window.__ctx / window.__game tersedia.
+- Uji online 2 jendela (Playwright, same context): host `?signal=local` → `window.open(url + '&popup=1')` untuk klien (tab terpisah tidak
+  jalan — rAF tab tersembunyi berhenti); `__game.autoTest = true` + `Object.defineProperty(__game.input, 'captured', {get: () => true})`;
+  `__game.createRoom / joinRoom / roomAct / startRoom`; input lewat `input.down` / `input.rawMouse`. Modul (physics, bus) diambil dengan
+  `import(url)` dari `performance.getEntriesByType('resource')` (URL ber-?t= setelah HMR).
 - Catatan teknis penting: lihat "Keputusan implementasi". Bot juga mempertimbangkan granat saat INVESTIGATE
   (posisi terakhir target tak terlihat, 8–24 u) karena duel di layout ini umumnya selesai sebelum target "hilang" di ENGAGE.
 - Catatan desain (nilai bot GDD tidak diubah): di map v1 bot Normal (sight 65) berduel antar-mezanin ±60 u → ±30–35 kill/menit;

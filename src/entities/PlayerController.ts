@@ -13,6 +13,13 @@ const D2R = THREE.MathUtils.degToRad;
 const STAND_HH = (P.standHeight - 2 * P.capsuleRadius) / 2;   // 1.7
 const CROUCH_HH = (P.crouchHeight - 2 * P.capsuleRadius) / 2; // 1.05
 
+/** Keadaan gerak yang cukup untuk memutar ulang langkah KCC (prediksi + rekonsiliasi online). */
+export interface CtrlState {
+  x: number; y: number; z: number; vx: number; vz: number; velY: number; crouchT: number;
+  coyote: number; jumpBuf: number; airCap: number; peakY: number; stepPhase: number;
+  grounded: boolean; crouched: boolean; sprinting: boolean; crouchQueued: boolean | null;
+}
+
 /** Input virtual (sama untuk pemain & bot). ix: A=−1 D=+1; iz: S=−1 W=+1. */
 export interface MoveIntent {
   ix: number; iz: number; yaw: number;
@@ -50,6 +57,8 @@ export class PlayerController {
   private tv = { vx: 0, vz: 0 };
   onFallDamage: ((dmg: number) => void) | null = null;
   enabled = true;
+  /** Replay prediksi klien: tanpa suara langkah / fall damage (event sudah terjadi saat langkah aslinya). */
+  quiet = false;
 
   constructor(readonly entityId: number, x: number, y: number, z: number) {
     const w = physics.world;
@@ -75,6 +84,31 @@ export class PlayerController {
     this.stepPhase = this.prevStepPhase = 0.5; // langkah pertama ±setengah interval setelah mulai jalan
     this.setCrouch(false, true);
   }
+
+  /** Keadaan gerak lengkap (prediksi klien online: simpan per perintah, pulihkan dari host, putar ulang). */
+  getState(): CtrlState {
+    return { x: this.pos.x, y: this.pos.y, z: this.pos.z, vx: this.vel.x, vz: this.vel.z, velY: this.velY, crouchT: this.crouchT,
+      coyote: this.coyote, jumpBuf: this.jumpBuf, airCap: this.airCap, peakY: this.peakY, stepPhase: this.stepPhase,
+      grounded: this.grounded, crouched: this.crouched, sprinting: this.sprinting, crouchQueued: this.crouchQueued };
+  }
+
+  setState(s: CtrlState) {
+    this.pos.set(s.x, s.y, s.z);
+    this.vel.set(s.vx, 0, s.vz); this.velY = s.velY; this.crouchT = s.crouchT;
+    this.coyote = s.coyote; this.jumpBuf = s.jumpBuf; this.airCap = s.airCap; this.peakY = s.peakY;
+    this.stepPhase = s.stepPhase; this.grounded = s.grounded; this.sprinting = s.sprinting; this.crouchQueued = s.crouchQueued;
+    if (s.crouched !== this.crouched) this.setCrouch(s.crouched, true);
+    this.syncCollider();
+  }
+
+  /** Pindahkan collider ke pos sekarang segera (tanpa menunggu world.step) — dipakai saat memutar ulang beberapa langkah. */
+  syncCollider() {
+    this.body.setTranslation({ x: this.pos.x, y: this.pos.y, z: this.pos.z }, true);
+    physics.world.propagateModifiedBodyPositionsToColliders();
+  }
+
+  /** Tick tanpa gerak (host: perintah pemain remote belum tiba) — interpolasi render tidak mengulang langkah sebelumnya. */
+  hold() { this.prevPos.copy(this.pos); this.prevStepPhase = this.stepPhase; }
 
   setEnabled(on: boolean) {
     this.enabled = on;
@@ -183,14 +217,14 @@ export class PlayerController {
       const interval = this.crouched ? fi.crouch : this.sprinting ? fi.sprint : adsActive ? fi.ads : fi.normal;
       const before = Math.floor(this.stepPhase);
       this.stepPhase += dt / interval;
-      if (Math.floor(this.stepPhase) > before) {
+      if (Math.floor(this.stepPhase) > before && !this.quiet) {
         bus.emit('footstep', { entityId: this.entityId, material: physics.surfaceBelow(this.pos.x, this.pos.y, this.pos.z),
           position: this.pos, loud: this.sprinting, land: false });
       }
     }
 
     // keluar map (jaga-jaga)
-    if (this.pos.y < -30) this.onFallDamage?.(999);
+    if (this.pos.y < -30 && !this.quiet) this.onFallDamage?.(999);
   }
 
   /** Tinggi jatuh pendaratan terakhir (u) — dipakai hentakan kamera. */
@@ -200,6 +234,7 @@ export class PlayerController {
     const H = this.peakY - this.pos.y;
     this.lastLandH = H;
     const dmg = fallDamage(H);
+    if (this.quiet) { this.peakY = this.pos.y; return; }
     if (dmg > 0) this.onFallDamage?.(dmg);
     if (H > 0.6) bus.emit('footstep', { entityId: this.entityId, material: physics.surfaceBelow(this.pos.x, this.pos.y, this.pos.z),
       position: this.pos, loud: true, land: true });

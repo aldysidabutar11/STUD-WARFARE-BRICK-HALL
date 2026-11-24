@@ -51,10 +51,15 @@ export class SpawnSystem {
   spawn(e: Entity) {
     const i = e.dummyAt ? 0 : this.pickSlot(e);
     const [x, y, z] = e.dummyAt ? [e.dummyAt.x, e.dummyAt.y, e.dummyAt.z] : this.slotPos(e, i);
+    this.applySpawn(e, x, y, z, e.team === 'blue' ? Math.PI : 0, i);
+  }
+
+  /** Hidupkan entitas di titik tertentu (host memilih slot; klien online menerapkan spawn dari host). */
+  applySpawn(e: Entity, x: number, y: number, z: number, yaw: number, slot = 0) {
     if (e.pendingLoadout) { e.applyLoadout(e.pendingLoadout); e.pendingLoadout = null; }
     e.ctrl.setEnabled(true);
     e.ctrl.teleport(x, y + 0.05, z);
-    e.yaw = e.team === 'blue' ? Math.PI : 0; e.pitch = 0;
+    e.yaw = yaw; e.pitch = 0;
     e.hp = CFG.player.hp; e.alive = true; e.respawnT = 0;
     e.protectT = CFG.player.spawnProtection;
     e.char.protectT = e.protectT;
@@ -67,7 +72,8 @@ export class SpawnSystem {
     e.char.root.position.set(x, y, z); e.char.root.rotation.y = e.yaw;
     if (e.isPlayer) { ctx.camRig.yaw = e.yaw; ctx.camRig.pitch = 0; }
     e.bot?.onSpawn();
-    bus.emit('spawn', { entityId: e.id, slot: i });
+    e.adsWanted = false;
+    bus.emit('spawn', { entityId: e.id, slot });
   }
 
   /** Jadwal respawn untuk entitas yang mati. */

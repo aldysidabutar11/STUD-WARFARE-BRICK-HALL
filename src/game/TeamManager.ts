@@ -19,6 +19,7 @@ export class TeamManager {
   /** dir = arah datang (peluru) atau dorongan ledakan; grenadeImpulse diisi untuk kematian akibat granat. */
   applyDamage(victim: Entity, attacker: Entity | null, dmg: number, part: HitPart, weapon: KillWeapon,
     dir: THREE.Vector3, grenade: boolean, grenadeImpulse?: THREE.Vector3) {
+    if (ctx.net.role === 'client') return;                                 // online: damage hanya dihitung host
     if (!victim.alive || dmg <= 0) return;
     if (victim.protectT > 0) return;                                        // perlindungan spawn: kebal
     if (victim.isPlayer && ctx.debug.god) return;

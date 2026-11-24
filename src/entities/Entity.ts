@@ -1,4 +1,5 @@
 // src/entities/Entity.ts — entitas karakter (pemain atau bot): rig + KCC + senjata + status tempur
+import type { RemoteHuman } from '../net/NetMatch';
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import type { ScopeId, WeaponId } from '../config/weaponsData';
@@ -52,6 +53,12 @@ export class Entity {
   loadout: { weapon: WeaponId; scope: ScopeId } = { weapon: 'm416', scope: 'reddot' };
   pendingLoadout: { weapon: WeaponId; scope: ScopeId } | null = null;
   bot: TacticalBot | null = null;
+  /** ADS yang diinginkan pemilik input (tahan/toggle sudah di-resolve) — PlayerActions. */
+  adsWanted = false;
+  /** Host online: manusia di perangkat lain, digerakkan perintah jaringan (net/NetMatch). */
+  remote: RemoteHuman | null = null;
+  /** Klien online: entitas bukan milik kita — keadaan dari snapshot host (tanpa fisika/AI lokal). */
+  puppet = false;
   /** Debug: dummy/stress di posisi tetap (respawn di tempat). */
   dummyAt: THREE.Vector3 | null = null;
   lastAttacker = -1;
