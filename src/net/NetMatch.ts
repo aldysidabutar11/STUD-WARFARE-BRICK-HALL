@@ -7,7 +7,7 @@
 //        tapi hitmarker & suara kena serangan sendiri tampil instan (prediksi, dikonfirmasi host tanpa ganda).
 import * as THREE from 'three';
 import { ctx } from '../game/ctx';
-import { bus, type GameEvents, type HitPart, type KillWeapon, type MatchStateName, type MeleeKind, type SurfaceMaterial } from '../core/EventBus';
+import { bus, type GameEvents, type HitPart, type KillWeapon, type MatchStateName, type MeleeKind } from '../core/EventBus';
 import { XCFG } from '../config/extraConfig';
 import { CFG } from '../config/gameConfig';
 import type { Entity } from '../entities/Entity';
@@ -22,9 +22,11 @@ import type { ScopeId, WeaponId } from '../config/weaponsData';
 import type { Variant } from '../entities/CharacterArt';
 import { CommandHistory, CommandQueue, HitLedger, HostClock, InterpBuffer, SnapStats } from './sync';
 import {
-  EF, H, I, MATCH_STATES, encodeCommands, encodeSnapshot, qAxis, qPitch, qYaw,
+  EF, H, I, MATCH_STATES, encodeCommands, encodeSnapshot, packBounce, qAxis, qPitch, qYaw, unpackBounce,
   type Command, type EntState, type MiscFx, type OwnState, type ShotFx, type Snapshot,
 } from './protocol';
+import { SURFACE_COLOR, surfaceCode, surfaceOf } from '../world/surfaces';
+import { physics } from '../physics/Physics';
 import { driveWeapons, emptyFrame, frameFromCommand, type ActionFrame } from '../game/PlayerActions';
 import { cleanLoadout, type NetClient, type NetHost } from './Session';
 
@@ -32,8 +34,6 @@ const NET = XCFG.net, STEP = CFG.world.fixedStep;
 const SLOTS: Slot[] = ['ar', 'knife', 'grenade'];
 const GSTATES = ['NONE', 'EQUIP', 'READY', 'COOKING', 'THROWN'] as const;
 const MKINDS: MeleeKind[] = ['butt', 'slash', 'stab'];
-const MATS: SurfaceMaterial[] = ['tile', 'carpet', 'wood'];
-const SURFACE_COLOR = { tile: 0x9a9a9a, carpet: 0x1f3a73, wood: 0x7c5c46 } as const;
 const NPART = PART_KEYS.length;
 const _v = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3(), _n = new THREE.Vector3();
 
@@ -172,7 +172,7 @@ export class HostRep {
       sb: p.scores[0], sr: p.scores[1], tl: p.timeLeft }));
     on('grenade:explode', (p) => all({ e: 'boom', x: p.position.x, y: p.position.y, z: p.position.z, o: p.ownerId }));
     on('melee', (p) => this.pushFx(p.phase === 'swing' ? 1 : p.phase === 'hit' ? 2 : 3, p.entityId, meleeIdx(p.kind), p.position));
-    on('grenade:bounce', (p) => this.pushFx(4, 0, (Math.max(0, MATS.indexOf(p.material)) & 3) | (Math.min(63, Math.round(p.speed * 2)) << 2), p.position));
+    on('grenade:bounce', (p) => this.pushFx(4, 0, packBounce(surfaceCode(p.material), p.speed), p.position));
     on('reload', (p) => { const e = ctx.byId.get(p.entityId); if (e) this.pushFx(5, e.id, p.stage, e.pos); });
     on('dryfire', (p) => { const e = ctx.byId.get(p.entityId); if (e) this.pushFx(6, e.id, 0, e.pos); });
     on('pin', (p) => { const e = ctx.byId.get(p.entityId); if (e) this.pushFx(7, e.id, 0, e.pos); });
@@ -451,7 +451,7 @@ export class ClientRep {
     // langkah kaki dari fase kontinu host
     const prev = this.lastStep.get(e.id) ?? s.stepPhase;
     if (Math.floor(s.stepPhase) > Math.floor(prev) && c.grounded && Math.hypot(s.vx, s.vz) > 1) {
-      bus.emit('footstep', { entityId: e.id, material: 'tile', position: c.pos, loud: c.sprinting, land: false });
+      bus.emit('footstep', { entityId: e.id, material: physics.surfaceBelow(c.pos.x, c.pos.y, c.pos.z), position: c.pos, loud: c.sprinting, land: false });
     }
     this.lastStep.set(e.id, s.stepPhase);
     c.prevStepPhase = c.stepPhase = s.stepPhase;
@@ -482,7 +482,7 @@ export class ClientRep {
       if (v) ctx.vfx.bodyHit(_b, v, (PART_KEYS[f.part] ?? 'upper') as PartKey);
       bus.emit('impact', { position: _b.clone(), normal: _n.clone(), material: 'body' });
     } else if (f.kind === 1) {
-      const mat = MATS[f.mat] ?? 'tile';
+      const mat = surfaceOf(f.mat);
       ctx.vfx.decal(_b, _n); ctx.vfx.chips(_b, _n, SURFACE_COLOR[mat], 4); ctx.vfx.puff(_b, _n, SURFACE_COLOR[mat]);
       bus.emit('impact', { position: _b.clone(), normal: _n.clone(), material: mat });
     }
@@ -491,7 +491,7 @@ export class ClientRep {
   private playFx(f: MiscFx) {
     const pos = new THREE.Vector3(f.x, f.y, f.z);
     if (f.type <= 3) bus.emit('melee', { entityId: f.ent, phase: f.type === 1 ? 'swing' : f.type === 2 ? 'hit' : 'wall', position: pos, kind: MKINDS[f.a] ?? 'butt' });
-    else if (f.type === 4) bus.emit('grenade:bounce', { position: pos, speed: (f.a >> 2) / 2, material: MATS[f.a & 3] ?? 'tile' });
+    else if (f.type === 4) { const b = unpackBounce(f.a); bus.emit('grenade:bounce', { position: pos, speed: b.speed, material: surfaceOf(b.mat) }); }
     else if (f.type === 5) bus.emit('reload', { entityId: f.ent, stage: Math.min(2, f.a) as 0 | 1 | 2 });
     else if (f.type === 6) bus.emit('dryfire', { entityId: f.ent });
     else if (f.type === 7) bus.emit('pin', { entityId: f.ent });

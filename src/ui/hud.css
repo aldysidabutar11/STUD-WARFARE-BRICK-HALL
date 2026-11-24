@@ -319,3 +319,36 @@ body.dead #game { filter: grayscale(0.85) brightness(0.8); }
   .teams, .lh-grid { grid-template-columns: 1fr; }
   .host-set .modes { grid-template-columns: 1fr; }
 }
+
+/* ── pilihan map (multi-map): kartu denah prosedural (ui/MapThumb). Atur Match = kartu besar; room = kartu kecil (host memilih,
+   semua pemain melihat pilihan); "Acak" diundi saat match dimulai. Nama map juga di layar hasil & tombol Latihan. */
+.menu .card.setup { width: min(720px, calc(100vw - 32px)); }
+.menu .sec { margin: 2px 0 6px; font-size: 11px; font-weight: 800; letter-spacing: 3px; text-transform: uppercase; color: var(--gold); opacity: 0.8; }
+.maps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.menu button.mapcard { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 6px 6px 8px; border-radius: 6px;
+  font-weight: 400; letter-spacing: 0; }
+.mapcard canvas.thumb { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; margin-bottom: 3px; border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.55); background: #120c07; }
+.mapcard b { font-size: 15px; font-weight: 800; letter-spacing: 0.5px; color: var(--gold); }
+.mapcard i { font-size: 11px; font-style: normal; font-weight: 700; opacity: 0.75; }
+.mapcard span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+  font-size: 12px; line-height: 1.3; opacity: 0.8; }                    /* deskripsi lengkap di tooltip (title) */
+.menu button.mapcard.sel { border-color: var(--gold); background: #5a3a1f; box-shadow: inset 0 0 0 1px var(--gold); }
+.mapcard.sel b::after { content: ' ✔'; font-size: 12px; }
+.maps.small { grid-template-columns: repeat(3, minmax(0, 132px)) minmax(0, 1fr); gap: 8px; margin-bottom: 8px; }
+.menu button.mapcard.small { padding: 4px 4px 5px; }
+.mapcard.small b { font-size: 12px; text-align: center; }
+.menu button.mapcard:disabled { opacity: 0.45; cursor: default; }        /* klien room: hanya melihat pilihan host */
+.menu button.mapcard.sel:disabled { opacity: 1; }
+.map-now { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; padding-left: 6px; font-size: 13px; }
+.map-now span { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.65; }
+.map-now b { font-size: 17px; color: var(--gold); }
+.map-now small { opacity: 0.75; }
+.res-map { margin: -2px 0 6px; font-size: 13px; letter-spacing: 3px; text-transform: uppercase; opacity: 0.8; }
+.menu button small.bsub { font-weight: 400; letter-spacing: 0; opacity: 0.7; }
+@media (max-width: 760px) {
+  .menu .card.setup { min-width: 0; }
+  .maps { grid-template-columns: 1fr 1fr; }
+  .maps.small { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .map-now { grid-column: 1 / -1; padding-left: 0; }
+}

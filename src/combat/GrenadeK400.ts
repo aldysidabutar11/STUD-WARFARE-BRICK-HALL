@@ -1,14 +1,14 @@
 // src/combat/GrenadeK400.ts — state machine, lemparan, CCD, damage + okklusi fraksional, efek (GDD §8)
 import * as THREE from 'three';
-import { RAPIER, physics } from '../physics/Physics';
+import { RAPIER, physics, type V3 } from '../physics/Physics';
 import { G, GROUPS } from '../physics/groups';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import { k400 } from './Damage';
-import { bus } from '../core/EventBus';
+import { bus, type SurfaceMaterial } from '../core/EventBus';
 import { ctx } from '../game/ctx';
 import type { Entity } from '../entities/Entity';
-import { surfaceAt } from '../world/MapData';
+import { currentMap, type MapDef } from '../world/maps/registry';
 import { returnSlot, type Slot } from './Slots';
 import { BodyLerp } from '../core/BodyLerp';
 
@@ -33,6 +33,27 @@ export interface GrenadeInput {
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3(), _f = new THREE.Vector3();
 const _r = new THREE.Vector3(), _u = new THREE.Vector3(), _imp = new THREE.Vector3(), _hand = new THREE.Vector3();
+const _bo: V3 = { x: 0, y: 0, z: 0 }, _bd: V3 = { x: 0, y: 0, z: 0 };
+
+/**
+ * Material pantulan granat (suara & paket jaringan). Brick Hall (surfaceAt per wilayah lantai) → pusat granat (perilaku lama).
+ * Map dengan permukaan per benda (MapDef.contactSurface, Steel Yard) → titik KONTAK: setelah step pantul, pusat granat masih
+ * ≥ jari-jari (+ jarak tempuh satu step) dari dinding/atap, padahal surfaceAt membedakan benda dalam 0.05 u. Maka raycast
+ * pendek (STATIC) dari pusat searah impuls benturan ke dalam permukaan, d = (v_lama + g·dt) − v_baru, sepanjang jari-jari +
+ * |v|·dt + 0.1. Tidak kena (karakter, buku) → pusat.
+ */
+export function bounceMaterial(map: MapDef, t: V3, prev: V3, v: V3, dt: number): SurfaceMaterial {
+  if (map.contactSurface) {
+    const dx = prev.x - v.x, dy = prev.y + CFG.world.gravity * dt - v.y, dz = prev.z - v.z, l = Math.hypot(dx, dy, dz);
+    if (l > 1e-6) {
+      _bo.x = t.x; _bo.y = t.y; _bo.z = t.z;
+      _bd.x = dx / l; _bd.y = dy / l; _bd.z = dz / l;
+      const hit = physics.raycast(_bo, _bd, GR.radius + Math.hypot(v.x, v.y, v.z) * dt + 0.1);
+      if (hit >= 0) return map.surfaceAt(t.x + _bd.x * hit, t.y + _bd.y * hit, t.z + _bd.z * hit);
+    }
+  }
+  return map.surfaceAt(t.x, t.y, t.z);
+}
 
 function grenadeMesh(): THREE.Group {
   const g = new THREE.Group();
@@ -183,7 +204,7 @@ export class GrenadeManager {
         const dot = (g.prev.x * v.x + g.prev.y * v.y + g.prev.z * v.z) / (ps * vs);
         if (dot < XCFG.grenadeThrow.bounceDot) {
           _c.set(t.x, t.y, t.z);
-          bus.emit('grenade:bounce', { position: _c, speed: ps, material: surfaceAt(t.x, t.y, t.z) });
+          bus.emit('grenade:bounce', { position: _c, speed: ps, material: bounceMaterial(currentMap(), t, g.prev, v, dt) });
         }
       }
       g.prev.set(v.x, v.y, v.z);

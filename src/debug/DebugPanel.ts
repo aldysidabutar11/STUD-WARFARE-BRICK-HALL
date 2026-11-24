@@ -83,8 +83,9 @@ export class DebugPanel {
 
   setStatus(s: string) { this.status = s; (this.el.querySelector('.st') as HTMLElement).textContent = s; }
 
-  private buildNav() {
-    if (this.navLines) { this.scene.remove(this.navLines); this.navLines = null; }
+  /** Garis graf nav (debug) — dibangun ulang saat ganti map. */
+  buildNav() {
+    if (this.navLines) { this.scene.remove(this.navLines); this.navLines.geometry.dispose(); (this.navLines.material as THREE.Material).dispose(); this.navLines = null; }
     if (!ctx.debug.showNav) return;
     const pos: number[] = [], col: number[] = [];
     const C = { walk: [1, 1, 1], door: [1, 0.55, 0.1], stair: [0.2, 1, 0.3], drop: [0.7, 0.3, 1] } as const;

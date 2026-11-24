@@ -1,12 +1,13 @@
-// src/world/Props.ts — buku dinamis, tumpukan buku, kertas (GDD §4.8, §8.3, §10.2)
+// src/world/Props.ts — buku dinamis, tumpukan buku, kertas (GDD §4.8, §8.3, §10.2). Multi-map: data dari MapDef.props (hanya
+// Brick Hall); map tanpa props = tanpa buku & kertas (metode tetap aman dipanggil). dispose() saat ganti map.
 import * as THREE from 'three';
 import { RAPIER, physics } from '../physics/Physics';
 import { GROUPS } from '../physics/groups';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import { makeRng } from '../core/Rng';
-import { BOOK_PILES, FLOOR_AREA, groundObstacles } from './MapData';
 import type { ShelfInfo } from './BrickHallBuilder';
+import type { MapDef } from './maps/types';
 import { BodyLerp } from '../core/BodyLerp';
 
 const BOOK_COLORS = [0xc4281c, 0x0d69ac, 0xf5cd30, 0x287f47, 0x6b327c, 0xda8541, 0x74869d, 0xf2f3f3];
@@ -28,12 +29,14 @@ export class Props {
   private mass = 0.27;
   awakeCount = 0;
 
-  constructor(scene: THREE.Scene, shelves: ShelfInfo[], shadows: boolean) {
+  constructor(scene: THREE.Scene, shelves: ShelfInfo[], shadows: boolean, data?: MapDef['props']) {
     const [bw, bh, bd] = XCFG.props.bookSize;
     const geo = new THREE.BoxGeometry(bw, bh, bd);
     const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-    const total = shelves.length * 15 + XCFG.props.piles * XCFG.props.perPile;
-    this.mesh = new THREE.InstancedMesh(geo, mat, total);
+    const piles = data?.bookPiles ?? [];
+    const total = shelves.length * 15 + (data ? XCFG.props.piles * XCFG.props.perPile : 0);
+    this.mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, total));
+    this.mesh.count = total; this.mesh.visible = total > 0;
     this.mesh.castShadow = shadows; this.mesh.receiveShadow = shadows;
     // depth material bayangan sendiri: three.js memakai SATU depth material bersama untuk semua pembuat bayangan, dan
     // berganti instanced ↔ biasa memaksa program shadernya dihitung ulang (2× per frame, terukur ±0.8 MB/s sampah)
@@ -74,7 +77,7 @@ export class Props {
       });
     }
     // 24 buku tergeletak: 6 tumpukan × 4
-    BOOK_PILES.forEach(([x, z], pi) => {
+    piles.forEach(([x, z], pi) => {
       for (let j = 0; j < XCFG.props.perPile; j++) {
         const r = makeRng(CFG.props.seed + 9000 + pi * 10 + j);
         _p.set(x + (r() - 0.5) * 0.15, bw / 2 + j * (bw + 0.004), z + (r() - 0.5) * 0.15);
@@ -89,16 +92,19 @@ export class Props {
     // 40 lembar kertas (bukan rigid body)
     const [pw, ph] = XCFG.props.paperSize;
     const pg = new THREE.PlaneGeometry(pw, ph); pg.rotateX(-Math.PI / 2);
-    this.papersMesh = new THREE.InstancedMesh(pg, new THREE.MeshLambertMaterial({ color: 0xf5f5f0, side: THREE.DoubleSide }), XCFG.props.papers);
+    const nPapers = data ? XCFG.props.papers : 0;
+    this.papersMesh = new THREE.InstancedMesh(pg, new THREE.MeshLambertMaterial({ color: 0xf5f5f0, side: THREE.DoubleSide }), Math.max(1, nPapers));
+    this.papersMesh.count = nPapers; this.papersMesh.visible = nPapers > 0;
     this.papersMesh.receiveShadow = shadows;
     this.papersMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    const obst = groundObstacles();
+    const obst = data ? data.groundObstacles() : [];
+    const FA = data?.floorArea ?? { x: [0, 0], z: [0, 0] };
     const rng = makeRng(CFG.props.seed + 777);
-    for (let i = 0; i < XCFG.props.papers; i++) {
+    for (let i = 0; i < nPapers; i++) {
       let x = 0, z = 0;
       for (let tries = 0; tries < 60; tries++) {
-        x = FLOOR_AREA.x[0] + 1 + rng() * (FLOOR_AREA.x[1] - FLOOR_AREA.x[0] - 2);
-        z = FLOOR_AREA.z[0] + 1 + rng() * (FLOOR_AREA.z[1] - FLOOR_AREA.z[0] - 2);
+        x = FA.x[0] + 1 + rng() * (FA.x[1] - FA.x[0] - 2);
+        z = FA.z[0] + 1 + rng() * (FA.z[1] - FA.z[0] - 2);
         if (!obst.some(o => x > o.x[0] - 0.6 && x < o.x[1] + 0.6 && z > o.z[0] - 0.6 && z < o.z[1] + 0.6)) break;
       }
       const p0 = new THREE.Vector3(x, 0.010 + i * 0.00025, z);
@@ -193,6 +199,15 @@ export class Props {
       _d.set(p.pos.x - c.x, 0, p.pos.z - c.z).normalize();
       p.vel.set(_d.x * 7 * k, 3 + 5 * k * Math.random(), _d.z * 7 * k);
       p.spin = (Math.random() - 0.5) * 12; p.flying = true; p.pos.y += 0.05;
+    }
+  }
+
+  /** Ganti map: lepas benda fisika buku, mesh & materialnya. */
+  dispose() {
+    for (const bk of this.books) physics.world.removeRigidBody(bk.body);   // collider yang menempel ikut terhapus
+    this.books.length = 0; this.byCollider.clear(); this.papers.length = 0; this.awakeCount = 0;
+    for (const m of [this.mesh, this.papersMesh]) {
+      m.removeFromParent(); m.geometry.dispose(); (m.material as THREE.Material).dispose(); m.customDepthMaterial?.dispose(); m.dispose();
     }
   }
 

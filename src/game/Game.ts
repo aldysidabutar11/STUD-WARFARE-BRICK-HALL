@@ -1,6 +1,7 @@
 // src/game/Game.ts — orkestrasi: urutan update (GDD §2.6), input pemain (§14), state aplikasi (§12), debug (§16)
 // + pasca-MVP: mode Eliminasi & Latihan, killcam + menonton rekan, melee, gamepad, radar, nama, medali, opsi tampilan
 // + Main Bareng online: room di-host browser pemain (WebRTC); host = simulasi otoritatif, klien = prediksi + interpolasi.
+// + multi-map (Brick Hall, Steel Yard): loadMap() bongkar map lama → bangun map baru tanpa reload; data map lewat MapDef.
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
@@ -11,8 +12,8 @@ import { GameLoop } from '../core/GameLoop';
 import { Input } from '../core/Input';
 import { PAD } from '../core/Bindings';
 import { bus, type GameEvents } from '../core/EventBus';
-import { buildBrickHall } from '../world/BrickHallBuilder';
 import { isHigh } from '../config/presets';
+import { MAPS, currentMap, isMapId, setCurrentMap, type MapDef, type MapId } from '../world/maps/registry';
 import type { LightSample } from '../world/LightBake';
 import { Props } from '../world/Props';
 import { NavGraph } from '../world/NavGraph';
@@ -41,7 +42,7 @@ import { Minimap } from '../ui/Minimap';
 import { Nameplates } from '../ui/Nameplates';
 import { Announcer } from '../ui/Announcer';
 import { loadSettings, saveSettings, validate, type Settings } from '../ui/Settings';
-import { Lobby, cleanName, makeRoomCode, type MatchRoster } from './Lobby';
+import { Lobby, cleanName, makeRoomCode, pickMap, type MapChoice, type MatchRoster } from './Lobby';
 import { StatsOverlay } from '../debug/StatsOverlay';
 import { DebugPanel } from '../debug/DebugPanel';
 import { PerfLogger } from '../debug/PerfLogger';
@@ -56,6 +57,7 @@ import { NetClient, NetHost, cleanLoadout, type JoinFail } from '../net/Session'
 import { createSignaling, iceServers } from '../net/Signaling';
 import { ClientRep, HostRep, RemoteHuman } from '../net/NetMatch';
 import { parseStart, type NetEnt, type NetStart } from '../net/start';
+import { HoldQueue } from '../net/HoldQueue';
 import { H, I, type Command } from '../net/protocol';
 
 const D2R = THREE.MathUtils.degToRad, R2D = THREE.MathUtils.radToDeg;
@@ -63,14 +65,8 @@ const _v = new THREE.Vector3(), _w = new THREE.Vector3();
 const DOWN = new THREE.Vector3(0, -1, 0);
 const wrapA = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
-/** Dummy Latihan (tim Merah, menghadap Selatan): [x, y, z, bergerak kiri-kanan]. */
-const PRACTICE_DUMMIES: [number, number, number, boolean][] = [
-  [-8, 10, -25.5, false], [-8, 10, 4.5, false], [-8, 10, 34.5, false],   // jembatan Barat: 10/40/70 u dari mulut jembatan
-  [8, 10, -20, false], [8, 10, 15, false],                               // jembatan Timur
-  [-3.4, 0, -24, false], [-11, 0, 1, false], [11, 0, 1, false], [3.4, 0, 24, false], // lantai dasar (v2: di samping rak tengah)
-  [0, 0, -11, true], [0, 0, 11, true],                                   // target bergerak (v2: di depan ujung rak tengah)
-  [0, 10, 38, false],                                                    // mezanin Utara
-];
+/** Jalankan fn setelah browser sempat menggambar frame berikutnya (overlay "Memuat map…" terlihat sebelum kerja berat). */
+const afterPaint = (fn: () => void) => requestAnimationFrame(() => setTimeout(fn, 0));
 
 interface Stress { t: number; shooters: Entity[]; target: Entity; nextNade: number }
 
@@ -108,6 +104,10 @@ export class Game {
   private netState: 'connecting' | 'online' | 'error' = 'connecting';
   /** Klien: perintah tick ini (dibuat sebelum KCC, disimpan + dikirim setelah world.step). */
   private cmd: Command | null = null;
+  /** Klien: pesan host yang ditahan selama map match dimuat (tidak menahan = langsung diproses). */
+  private readonly netHold = new HoldQueue();
+  /** Host: token Mulai room (memuat map sebelum match online; permintaan baru membatalkan yang lama). */
+  private roomStartTok = 0;
   private readonly trig: TriggerInput = { pressed: false, held: false, reload: false, modeSwitch: false, ads: false, sprinting: false };
   /** Jadwal hentakan kamera serangan pisau (waktu game; 0 = tidak ada). */
   private punchAt = 0; private punchKind: 'slash' | 'stab' = 'slash'; private punchAlt = false;
@@ -124,7 +124,15 @@ export class Game {
   private baseLight = { sun: 1, hemi: 1 };
   // grafik realistis: peta lingkungan (pantulan), kabut, lampu kilat moncong (HIGH+), sampel probe cahaya karakter
   private envTex: THREE.Texture | null = null;
+  private envRT: THREE.WebGLRenderTarget | null = null;
   private fog = new THREE.FogExp2(XCFG.gfx.fog.color, XCFG.gfx.fog.density);
+  /** ?map=brickhall|steelyard menimpa settings.map untuk sesi ini (uji) — dihapus saat pemain memilih map (selectMap). */
+  private urlMap: MapId | null = null;
+  /** Token muat-map tertunda (play/prepareMap): permintaan baru membatalkan yang lama. */
+  private loadToken = 0;
+  /** Map yang BENAR-BENAR terbangun (build + Props + world.step + nav + radar sukses). null = belum ada / muat terakhir gagal
+   *  di tengah jalan (map lama sudah dibongkar, currentMap() sudah menunjuk map baru) → permintaan berikutnya membangun ulang. */
+  private loadedId: MapId | null = null;
   private probe: LightSample = { sky: 1, bounce: 0 };
   private noclipPos = new THREE.Vector3();
   private anim: AnimState = { speed: 0, sprinting: false, crouchT: 0, airborne: false, pitch: 0, reload: -1, throwPose: NaN, lowReady: false, melee: -1 };
@@ -138,13 +146,13 @@ export class Game {
     ctx.engine = engine;
     ctx.settings = this.settings;
     ctx.debug = { god: false, noclip: false, showNav: false, botLabels: false, dmgNumbers: false, colliders: false, slowmo: false };
-    ctx.map = buildBrickHall(engine.scene, engine.preset, this.settings.preset, engine.maxAnisotropy);
-    ctx.props = new Props(engine.scene, ctx.map.shelves, engine.preset.shadowMap > 0);
-    physics.world.step(); // query pipeline Rapier baru valid setelah step pertama
-    if (engine.gfx.env) this.captureEnvironment();
-    ctx.nav = new NavGraph();
-    const warn = ctx.nav.validate((ax, ay, az, bx, by, bz) => physics.losBlocked(ax, ay, az, bx, by, bz));
-    if (warn.length) console.warn('[NavGraph] peringatan:', warn); else console.log(`[NavGraph] ${ctx.nav.nodes.length} node, ${ctx.nav.walkEdgeCount} jalur, ${ctx.nav.dropCount} drop — 0 peringatan`);
+    // map awal: setelan (default Brick Hall); ?map=… menimpa untuk uji
+    const qMap = new URLSearchParams(location.search).get('map');
+    this.urlMap = isMapId(qMap) ? qMap : null;
+    const startMap = this.defaultMapId();
+    const sub = document.querySelector('#loading .ld-sub');
+    if (sub) sub.textContent = MAPS[startMap].name.toUpperCase();
+    this.loadMap(startMap, true);
     ctx.camRig = new CameraRig();
     ctx.viewmodel = new Viewmodel(engine.vmScene, 'blue');
     ctx.scope = new ScopeSystem();
@@ -163,7 +171,6 @@ export class Game {
     this.minimap = new Minimap(ctx.hud.root);
     this.nameplates = new Nameplates(ctx.hud.root);
     this.announcer = new Announcer(ctx.hud.root);
-    this.baseLight = { sun: ctx.map.sun.intensity, hemi: ctx.map.hemi.intensity };
     ctx.entities = []; ctx.byId = new Map(); ctx.player = null;
     this.input = ctx.input = new Input(canvas);
     this.stats = new StatsOverlay({
@@ -198,9 +205,10 @@ export class Game {
       refreshHz: () => 1000 / engine.pacing.refreshMs,
       room: () => (this.room ? { lobby: this.room, me: this.roomMe } : null),
       createRoom: (n) => this.createRoom(n), leaveRoom: () => this.leaveRoom(),
-      startRoom: () => this.startRoom(), addSimFriend: () => this.addSimFriend(),
+      startRoom: () => void this.startRoom(), addSimFriend: () => this.addSimFriend(),
       roomAct: (a) => this.roomAct(a), joinRoom: (code, name) => this.joinRoom(code, name), netInfo: () => this.netInfo(),
       setPlayerName: (n) => { this.settings.playerName = cleanName(n); saveSettings(this.settings); },
+      selectMap: (c) => void this.selectMap(c), mapId: () => currentMap().id, mapChoice: () => this.urlMap ?? this.settings.map,
     });
     this.applyVisual();
     this.input.onLockChange = (locked) => {
@@ -324,8 +332,9 @@ export class Game {
     player.applyLoadout({ weapon: s.weapon, scope: s.scope });
     this.addEntity(player); ctx.player = player;
     if (mode === 'practice') {
-      PRACTICE_DUMMIES.forEach(([x, y, z, moving], i) => {
-        const e = new Entity(100 + i, moving ? `Target Gerak ${i - 8}` : `Dummy ${i + 1}`, 'red', false, shadows, botVariant(i));
+      let mover = 0;
+      currentMap().practice.forEach(([x, y, z, moving], i) => {
+        const e = new Entity(100 + i, moving ? `Target Gerak ${++mover}` : `Dummy ${i + 1}`, 'red', false, shadows, botVariant(i));
         e.applyLoadout({ weapon: 'm416', scope: 'iron' });
         e.dummyAt = new THREE.Vector3(x, y, z);
         this.addEntity(e); this.dummies.push(e);
@@ -354,9 +363,121 @@ export class Game {
     ctx.viewmodel.setWeapon(player.loadout.weapon, player.loadout.scope);
   }
 
+  // ───────────────────────────────── map (multi-map)
+  /** Id map yang terbangun & siap dimainkan (null = muat terakhir gagal → Mulai berikutnya memuat ulang). */
+  get mapId(): MapId | null { return this.loadedId; }
+
+  /** Map untuk main solo / Latihan bila tidak disebut: ?map= (uji) atau setelan; setelan 'Acak' diundi setiap panggilan. */
+  defaultMapId(): MapId { return this.urlMap ?? pickMap(this.settings.map, Math.random); }
+
+  /** Pilihan map pemain (menu Atur Match): simpan ke setelan; preload = muat sekarang di menu (dengan layar "Memuat map…")
+   *  agar tombol Mulai tidak menunggu ('Acak' tidak dimuat — diundi saat Mulai). Diabaikan saat match berjalan. */
+  selectMap(choice: MapChoice, preload = true): Promise<boolean> {
+    this.urlMap = null;
+    if (this.settings.map !== choice) { this.settings.map = choice; saveSettings(this.settings); }
+    return preload && choice !== 'random' ? this.prepareMap(choice) : Promise.resolve(false);
+  }
+
+  /** Muat map dengan layar "Memuat map…" yang sempat tergambar (tidak di tengah match). true = map diganti. */
+  prepareMap(id: MapId): Promise<boolean> {
+    if (this.inMatch) return Promise.resolve(false);
+    const token = ++this.loadToken;                    // permintaan baru membatalkan muat tertunda (yang membatalkan mengurus overlay)
+    if (id === this.loadedId) { this.hideMapLoading(); return Promise.resolve(false); }
+    this.showMapLoading(id);
+    return new Promise((res) => afterPaint(() => {
+      if (token !== this.loadToken || this.inMatch) { res(false); return; }
+      // gagal → false (bukan janji menggantung): pemanggil (Mulai room) melihat mapId ≠ id lalu menampilkan pesan
+      try { res(this.loadMap(id)); } catch (err) { console.error('[map] gagal memuat', id, err); res(false); } finally { this.hideMapLoading(); }
+    }));
+  }
+
+  /**
+   * Ganti map SINKRON: bongkar map lama (mesh, collider, lampu, props, debu/berkas, peta lingkungan) → bangun map baru →
+   * world.step → graf nav (+ validasi) → peta lingkungan di MapDef.envProbe → radar → kabut/latar dari MapDef.atmosphere →
+   * applyVisual (warmup shader). false = map itu sudah aktif. Panggil di luar match (entitas lama sebaiknya sudah dibuang).
+   * Melempar error bila gagal di tengah jalan: loadedId tetap null → permintaan berikutnya membongkar sisa (dispose aman
+   * dipanggil ulang) & membangun ulang, bukan memakai map setengah jadi.
+   */
+  loadMap(id: MapId, force = false): boolean {
+    if (this.loadedId === id && !force) return false;
+    const t0 = performance.now(), engine = this.engine, sc = engine.scene;
+    this.loadedId = null;
+    if (ctx.map) {
+      // efek & benda fisika yang bersandar di geometri lama, lalu map + props
+      ctx.grenades?.clear(); ctx.drops?.clear(); ctx.vfx?.clear(); ctx.deathFx?.clear();
+      ctx.props.dispose();
+      ctx.map.dispose();
+      if (ctx.directors) for (const d of Object.values(ctx.directors)) d.reports.clear();
+    }
+    sc.environment = null; engine.vmScene.environment = null;
+    if (this.envRT) { this.envRT.dispose(); this.envRT = null; this.envTex = null; }
+    const def = setCurrentMap(id), A = def.atmosphere;
+    sc.background = new THREE.Color(A.background);           // builder luar ruang boleh menggantinya (langit)
+    this.fog.color.setHex(A.fogColor); this.fog.density = A.fogDensity;
+    ctx.map = def.build(sc, engine.preset, this.settings.preset, engine.maxAnisotropy);
+    ctx.props = new Props(sc, ctx.map.shelves, engine.preset.shadowMap > 0, def.props);
+    physics.world.step(); // query pipeline Rapier baru valid setelah step pertama
+    if (engine.gfx.env) this.captureEnvironment(def);
+    ctx.nav = new NavGraph(def.nav);
+    const warn = ctx.nav.validate((ax, ay, az, bx, by, bz) => physics.losBlocked(ax, ay, az, bx, by, bz));
+    if (warn.length) console.warn('[NavGraph] peringatan:', warn); else console.log(`[NavGraph] ${ctx.nav.nodes.length} node, ${ctx.nav.walkEdgeCount} jalur, ${ctx.nav.dropCount} drop — 0 peringatan`);
+    this.baseLight = { sun: ctx.map.sun.intensity, hemi: ctx.map.hemi.intensity };
+    this.minimap?.setMap(def);
+    this.debugPanel?.buildNav();
+    if (this.loop) this.applyVisual();                        // setelah boot: kabut/pantulan/kecerahan + kompilasi shader
+    this.loadedId = id;
+    console.log(`[map] ${def.name}: ${(performance.now() - t0).toFixed(0)} ms, ${ctx.map.colliders} collider, ${ctx.map.triangles} segitiga, bake ${ctx.map.light.ms.toFixed(0)} ms`);
+    return true;
+  }
+
+  /** Layar "Memuat map…" (elemen #loading dari boot dipakai ulang). */
+  private showMapLoading(id: MapId) {
+    const el = document.getElementById('loading');
+    if (!el) return;
+    const sub = el.querySelector('.ld-sub'), msg = el.querySelector('.ld-msg');
+    if (sub) sub.textContent = MAPS[id].name.toUpperCase();
+    if (msg) msg.textContent = 'Memuat map…';
+    el.classList.remove('hidden');
+  }
+  private hideMapLoading() { document.getElementById('loading')?.classList.add('hidden'); }
+
   // ───────────────────────────────── alur aplikasi
-  /** net = match online (host: susunan yang baru dikirim ke klien; klien: dari pesan 'start' host). */
-  play(mode: GameMode = this.settings.mode, roster: MatchRoster | null = null, net: NetStart | null = null) {
+  /**
+   * net = match online (host: susunan yang baru dikirim ke klien; klien: dari pesan 'start' host).
+   * mapId = map match ini (bawaan: offline → setelan/?map=, online → map yang sedang dimuat; room online WAJIB menyebutnya).
+   * Map berbeda: offline → layar "Memuat map…" lalu mulai; online → dimuat sinkron (urutan pesan host tetap terjaga).
+   */
+  play(mode: GameMode = this.settings.mode, roster: MatchRoster | null = null, net: NetStart | null = null, mapId?: MapId) {
+    const want = mapId ?? (net ? this.loadedId ?? currentMap().id : this.defaultMapId());
+    if (want !== this.loadedId) {
+      if (!net) { this.playAfterLoad(mode, roster, want); return; }
+      if (this.inMatch) this.endMatch();
+      this.loadMap(want);
+    }
+    this.loadToken++; this.hideMapLoading();          // batalkan muat-map tertunda lainnya (prepareMap)
+    this.startMatch(mode, roster, net, null);
+  }
+
+  /** Offline + map lain: overlay dulu (tergambar), bangun map, lalu mulai. Kunci mouse diminta SEKARANG (masih dalam gestur
+   *  klik tombol Mulai — setelah memuat ±1 s Chrome bisa menolak). */
+  private playAfterLoad(mode: GameMode, roster: MatchRoster | null, id: MapId) {
+    const token = ++this.loadToken;
+    if (this.inMatch) this.endMatch();
+    this.menus.hide();
+    this.showMapLoading(id);
+    const lock = this.input.padActive || this.autoTest ? null : this.input.requestLock();
+    afterPaint(() => {
+      if (token !== this.loadToken) return;
+      try { this.loadMap(id); } catch (err) {
+        console.error('[map] gagal memuat', id, err); this.hideMapLoading(); this.input.exitLock(); this.menus.showMain(); return;
+      }
+      this.hideMapLoading();
+      this.startMatch(mode, roster, null, lock);
+    });
+  }
+
+  /** Mulai match di map yang sudah dimuat. lock = permintaan kunci mouse yang sudah berjalan (playAfterLoad). */
+  private startMatch(mode: GameMode, roster: MatchRoster | null, net: NetStart | null, lock: Promise<boolean> | null) {
     this.endNet();
     const role = net ? (this.client ? 'client' : 'host') : 'offline';
     ctx.net.role = role;
@@ -381,10 +502,11 @@ export class Game {
       if (role === 'host') { this.hostRep = new HostRep(this.host!); this.hostRep.begin(); }   // spawn awal ikut tersiar
       ctx.match.start(opts);
     }
+    this.introBanner(opts);
     this.loop.setKeepAlive(role === 'host');   // tab host di belakang → simulasi tetap jalan
     ctx.hud.setVisible(true);
     this.applyVisual();
-    if (!this.input.padActive) void this.input.requestLock().then((ok) => {
+    if (!this.input.padActive) void (lock ?? this.input.requestLock()).then((ok) => {
       // Chrome menolak mengunci mouse → jangan biarkan game jalan dengan kursor bebas: tunggu satu klik lagi
       if (!ok && !this.autoTest && this.inMatch && !this.paused) { this.paused = true; this.input.clearAll(); this.menus.showClickToResume(); }
     });
@@ -422,7 +544,8 @@ export class Game {
     if (midMatch && ctx.net.role === 'host') this.host?.sendAll({ t: 'ev', e: 'abort' });
     if (midMatch && ctx.net.role === 'client') this.leaveRoom();
     this.endMatch();
-    if (this.room) this.menus.showRoom(); else this.menus.showMain();   // match dari room → kembali ke room
+    // match dari room → kembali ke room (klien: map yang dipilih host selama layar hasil dimuat sekarang)
+    if (this.room) { this.menus.showRoom(); this.preloadRoomMap(); } else this.menus.showMain();
   }
 
   /** Bersihkan match (entitas, efek, replikasi) tanpa memilih menu. */
@@ -448,10 +571,11 @@ export class Game {
     this.loop?.setKeepAlive(false);
   }
 
-  /** Layar hasil → Main Lagi: room online/lokal → mulai lagi dari room (host); solo → match yang sama. */
+  /** Layar hasil → Main Lagi / pause → Ulangi: room online/lokal → mulai lagi dari room (host); solo → match yang sama.
+   *  Map tetap map match ini (juga bila pilihannya 'Acak'). */
   private replay() {
-    if (this.room) { this.endMatch(); this.startRoom(true); return; }
-    this.play(this.mode, this.roster);
+    if (this.room) { this.endMatch(); void this.startRoom(true); return; }
+    this.play(this.mode, this.roster, null, this.mapId ?? undefined);
   }
 
   // ───────────────────────────────── room / lobby: host (room di browser ini) & klien (gabung lewat kode)
@@ -459,7 +583,7 @@ export class Game {
     this.leaveRoom();
     const s = this.settings;
     this.room = new Lobby(makeRoomCode(Math.random),
-      { mode: s.mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit, roundsToWin: s.roundsToWin, difficulty: s.difficulty, fillBots: true });
+      { mode: s.mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit, roundsToWin: s.roundsToWin, difficulty: s.difficulty, fillBots: true, map: s.map });
     const me = this.room.join(name, { local: true })!;
     me.variant = s.charVariant; me.weapon = s.weapon; me.scope = s.scope;
     this.roomMe = me.id;
@@ -488,10 +612,17 @@ export class Game {
     this.leaveRoom();
     const s = this.settings;
     const client: NetClient = new NetClient(createSignaling(), {
-      onLobby: () => { if (this.client !== client || !client.lobby || !client.pid) return; this.room = client.lobby; this.roomMe = client.pid; this.menus.refreshRoom(); },
-      onStart: (msg) => { if (this.client === client) this.startNetClient(msg); },
-      onEvent: (msg) => { if (this.client === client) this.onNetEvent(msg); },
-      onSnapshot: (snap) => { if (this.client === client) this.clientRep?.onSnapshot(snap); },
+      onLobby: () => {
+        if (this.client !== client || !client.lobby || !client.pid) return;
+        this.room = client.lobby; this.roomMe = client.pid; this.menus.refreshRoom(); this.preloadRoomMap();
+      },
+      // selama map match dimuat (startNetClient) pesan host ditahan lalu diputar berurutan setelah match siap
+      onStart: (msg) => { if (this.client === client) this.netHold.run(() => this.startNetClient(msg)); },
+      onEvent: (msg) => { if (this.client === client) this.netHold.run(() => this.onNetEvent(msg)); },
+      onSnapshot: (snap) => {
+        if (this.client !== client) return;
+        if (this.netHold.holding) this.netHold.run(() => this.clientRep?.onSnapshot(snap)); else this.clientRep?.onSnapshot(snap);
+      },
       onClosed: (reason) => { if (this.client === client) this.onClientClosed(reason); },
       onPings: () => { if (this.client === client) this.menus.updatePings(this.netInfo().pings); },
     }, iceServers(XCFG.net.ice));
@@ -505,6 +636,7 @@ export class Game {
   }
 
   private leaveRoom() {
+    this.cancelNetHold();
     if (this.client) { const c = this.client; this.client = null; c.leave(); }
     if (this.host) { const h = this.host; this.host = null; h.close(); }
     this.room = null; this.roster = null;
@@ -529,7 +661,7 @@ export class Game {
       case 'team': L.switchTeam(me, a.team); break;
       case 'ready': L.setReady(me, a.ready); break;
       case 'kick': if (L.kick(me, a.id)) this.host?.kick(a.id); break;
-      case 'settings': L.setSettings(me, a.patch); break;
+      case 'settings': if (L.setSettings(me, a.patch) && isMapId(a.patch.map)) void this.prepareMap(a.patch.map); break;   // map dipratinjau di menu
       case 'shuffle': L.shuffle(me, Math.random); break;
     }
     this.host?.broadcastLobby();
@@ -554,31 +686,49 @@ export class Game {
     }, (a + Math.random() * (b - a)) * 1000);
   }
 
-  /** Host menekan Mulai (atau Main Lagi): aturan room → setelan, susunan room → match. Ada teman terhubung → match online
-   *  (susunan + seed dikirim dulu, lalu semua mulai bersamaan); tanpa teman → match lokal seperti biasa. */
-  private startRoom(fromResults = false) {
+  /** Host menekan Mulai (atau Main Lagi / Ulangi): aturan room → setelan, susunan room → match. Map = pilihan room ('Acak' diundi
+   *  di sini, id konkret yang dikirim; Main Lagi / Ulangi = map match sebelumnya). Ada teman terhubung → match online: host memuat
+   *  map dulu (layar "Memuat map…"), lalu susunan + seed + map dikirim & semua mulai bersamaan; tanpa teman → match lokal. */
+  private async startRoom(fromResults = false) {
     const r = this.room;
     if (!r || this.client) return;
     const chk = r.canStart(this.roomMe);
     if (!chk.ok) { if (fromResults) this.menus.showRoom(chk.reason); return; }
     const L = r.settings;
-    Object.assign(this.settings, { mode: L.mode, scoreLimit: L.scoreLimit, timeLimit: L.timeLimit, roundsToWin: L.roundsToWin, difficulty: L.difficulty });
+    const cur = this.mapId;
+    const map = L.map === 'random' && fromResults && cur ? cur : pickMap(L.map, Math.random);
+    Object.assign(this.settings, { mode: L.mode, scoreLimit: L.scoreLimit, timeLimit: L.timeLimit, roundsToWin: L.roundsToWin,
+      difficulty: L.difficulty, map: L.map });
     saveSettings(this.settings);
     const me = r.find(this.roomMe);
     if (me) { me.variant = this.settings.charVariant; me.weapon = this.settings.weapon; me.scope = this.settings.scope; }
-    const roster = r.roster(this.roomMe);
-    const online = !!this.host && this.host.connected > 0;
-    if (!online) {
-      r.resetReady();
-      for (const p of r.players) if (p.sim) this.simReadyLater(p.id);
-      this.play(L.mode, roster);
-      return;
+    const tok = ++this.roomStartTok;
+    if (!this.host || this.host.connected === 0) { this.startRoomLocal(r, map); return; }
+    if (map !== this.mapId) {
+      // map lain: muat di host dulu (kunci mouse diminta sekarang, selagi masih dalam gestur klik Mulai)
+      if (!this.input.padActive && !this.autoTest) void this.input.requestLock();
+      await this.prepareMap(map);
+      if (tok !== this.roomStartTok || this.inMatch) return;                        // digantikan permintaan Mulai lain
+      const again = this.room === r && !this.client ? r.canStart(this.roomMe) : null;   // room bisa berubah selama memuat
+      if (!again?.ok || this.mapId !== map) {
+        this.input.exitLock();
+        if (again) this.menus.showRoom(again.ok ? 'Map gagal dimuat — coba Mulai lagi' : again.reason);
+        return;
+      }
+      if (!this.host || this.host.connected === 0) { this.startRoomLocal(r, map); return; }
     }
-    const s = this.settings;
+    const roster = r.roster(this.roomMe), s = this.settings;
     const net: NetStart = { seed: (Math.random() * 0x7fffffff) >>> 0, ents: this.buildNetEnts(roster),
-      opts: { mode: L.mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit * 60, roundsToWin: s.roundsToWin } };
-    this.host!.sendAll({ t: 'start', seed: net.seed, opts: net.opts, ents: net.ents });
-    this.play(L.mode, roster, net);
+      opts: { mode: L.mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit * 60, roundsToWin: s.roundsToWin }, map };
+    this.host.sendAll({ t: 'start', seed: net.seed, opts: net.opts, ents: net.ents, map });
+    this.play(L.mode, roster, net, map);
+  }
+
+  /** Room tanpa teman terhubung: match lokal (teman simulasi & slot kosong dimainkan bot); map lain → layar "Memuat map…". */
+  private startRoomLocal(r: Lobby, map: MapId) {
+    r.resetReady();
+    for (const p of r.players) if (p.sim) this.simReadyLater(p.id);
+    this.play(r.settings.mode, r.roster(this.roomMe), null, map);
   }
 
   /** Susunan online: id per slot (Biru 1…5, Merah 6…10); teman terhubung = manusia, sisanya (bot / teman simulasi) = bot. */
@@ -594,12 +744,35 @@ export class Game {
     return out;
   }
 
-  /** Klien: host memulai match. */
+  /** Klien: host memulai match di map net.map. Map sudah dimuat (pratinjau room) → langsung main; map lain → layar
+   *  "Memuat map…" tergambar dulu, pesan host berikutnya (spawn, snapshot, event) ditahan lalu diputar berurutan setelah siap. */
   private startNetClient(msg: Record<string, unknown>) {
     const net = parseStart(msg);
     if (!net || !net.ents.some(e => e.pid === this.roomMe)) { console.warn('[net] pesan start tidak valid'); return; }
+    if (msg.map !== undefined && msg.map !== net.map) console.warn('[net] map dari host tidak dikenal:', msg.map, '→', net.map);
     if (this.inMatch) this.endMatch();
-    this.play(net.opts.mode, null, net);
+    if (net.map === this.mapId) { this.play(net.opts.mode, null, net, net.map); return; }
+    const hold = this.netHold.hold();
+    this.loadToken++;                                   // batalkan pratinjau map yang masih tertunda
+    this.menus.hide();
+    this.showMapLoading(net.map);
+    // false = keluar room / koneksi putus selama menunggu (penahanan dibatalkan); antrean diputar setelah match dimulai
+    afterPaint(() => this.netHold.release(hold, () => {
+      try { this.play(net.opts.mode, null, net, net.map); } catch (err) {
+        console.error('[map] gagal memuat', net.map, err);
+        this.hideMapLoading(); if (this.inMatch) this.endMatch();
+        if (this.room) this.menus.showRoom('Map gagal dimuat');
+      }
+    }));
+  }
+
+  /** Klien: batalkan penahanan pesan (keluar room / koneksi putus) beserta layar "Memuat map…". */
+  private cancelNetHold() { if (this.netHold.cancel()) this.hideMapLoading(); }
+
+  /** Klien: map pilihan host (bukan 'Acak') dimuat di layar room (layar "Memuat map…") → saat host menekan Mulai tanpa menunggu. */
+  private preloadRoomMap() {
+    const m = this.room?.settings.map;
+    if (this.client && !this.inMatch && !this.netHold.holding && isMapId(m) && m !== this.mapId) void this.prepareMap(m);
   }
 
   /** Klien: event reliable dari host. */
@@ -615,10 +788,19 @@ export class Game {
 
   /** Klien: koneksi ke host berakhir. */
   private onClientClosed(reason: 'host' | 'kicked' | 'lost') {
+    this.cancelNetHold();
     this.client = null; this.room = null; this.roster = null;
     if (this.inMatch) this.endMatch();
     const msg = reason === 'host' ? 'Host menutup room.' : reason === 'kicked' ? 'Kamu dikeluarkan dari room oleh host.' : 'Koneksi ke host terputus.';
     this.menus.showLobbyHome(() => this.menus.showMain(), '', msg);
+  }
+
+  /** Awal match: banner nama map + mode selama hitung mundur (Eliminasi: menggantikan banner "RONDE 1"); Latihan: pesan singkat. */
+  private introBanner(o: MatchOptions) {
+    const name = currentMap().name;
+    if (o.mode === 'practice') { ctx.hud.toast(`Latihan Menembak · ${name}`); return; }
+    if (ctx.match.state !== 'COUNTDOWN') return;
+    ctx.hud.showBanner(name.toUpperCase(), '#f5cd30', o.mode === 'elim' ? 'ELIMINASI · RONDE 1' : `TEAM DEATHMATCH · ${o.scoreLimit} KILL`);
   }
 
   private onMatchState(state: GameEvents['match:state']['state']) {
@@ -718,15 +900,19 @@ export class Game {
   }
   private _buf = new THREE.Vector2();
 
-  /** Peta lingkungan dari aula itu sendiri (sekali saat loading) → pantulan PBR & cahaya lingkungan realistis. */
-  private captureEnvironment() {
+  /** Peta lingkungan dari map itu sendiri (sekali saat memuat map) → pantulan PBR & cahaya lingkungan realistis.
+   *  Posisi = MapDef.envProbe; tanpa kabut (sama seperti saat boot); luar ruang: jarak pandang jauh agar langit ikut. */
+  private captureEnvironment(def: MapDef) {
     const r = this.engine.renderer, scene = this.engine.scene;
     const crt = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType });
-    const cam = new THREE.CubeCamera(0.3, 220, crt);
-    cam.position.set(0, 20, -18);                  // udara terbuka di atas rak tengah
+    const cam = new THREE.CubeCamera(0.3, def.atmosphere.outdoor ? 2000 : 220, crt);
+    cam.position.set(def.envProbe[0], def.envProbe[1], def.envProbe[2]);
+    const fog = scene.fog; scene.fog = null;
     scene.add(cam); cam.update(r, scene); scene.remove(cam);
+    scene.fog = fog;
     const pm = new THREE.PMREMGenerator(r);
-    this.envTex = pm.fromCubemap(crt.texture).texture;
+    this.envRT = pm.fromCubemap(crt.texture);
+    this.envTex = this.envRT.texture;
     pm.dispose(); crt.dispose();
   }
 
@@ -740,6 +926,8 @@ export class Game {
     sc.environment = env; sc.environmentIntensity = XCFG.gfx.light.envIntensity;
     this.engine.vmScene.environment = env; this.engine.vmScene.environmentIntensity = XCFG.gfx.light.envIntensity;
     this.engine.post?.setBloom(s.gfxBloom); this.engine.post?.setSsao(s.gfxSsao);
+    const bl = currentMap().atmosphere.bloom ?? XCFG.gfx.bloom;
+    this.engine.post?.setBloomTuning(bl.threshold, bl.strength);
     if (ctx.map.dust) ctx.map.dust.visible = s.gfxDust;
     if (ctx.map.shafts) ctx.map.shafts.visible = s.gfxDust;
     ctx.map.sun.intensity = this.baseLight.sun * s.brightness;
@@ -1113,8 +1301,9 @@ export class Game {
 
   private menuCamera(dt: number, cam: THREE.PerspectiveCamera) {
     this.menuT += dt * XCFG.menu.orbitSpeed;
-    cam.position.set(Math.sin(this.menuT) * 17, 21, Math.cos(this.menuT) * 34);
-    cam.lookAt(0, 6, 0);
+    const M = currentMap().menuCam;
+    cam.position.set(M.look[0] + Math.sin(this.menuT) * M.rx, M.y, M.look[2] + Math.cos(this.menuT) * M.rz);
+    cam.lookAt(M.look[0], M.look[1], M.look[2]);
     cam.layers.enableAll();
     if (cam.fov !== CFG.camera.baseFov) { cam.fov = CFG.camera.baseFov; cam.updateProjectionMatrix(); }
   }
@@ -1135,8 +1324,15 @@ export class Game {
   }
 
   /** Dummy R6 di jembatan pada jarak 10/40/70 u dari mulut jembatan Barat-Selatan; pemain dipindah ke titik uji. */
+  /** Debug: posisi uji (jembatan / lantai tengah) ditulis untuk Brick Hall — map lain cukup Latihan / TDM. */
+  private debugMapOk(): boolean {
+    if (currentMap().id === 'brickhall') return true;
+    this.debugPanel.setStatus(`Khusus Brick Hall (map aktif: ${currentMap().name}) — pakai mode Latihan / TDM.`);
+    return false;
+  }
+
   private spawnDummies() {
-    if (!this.inMatch || !ctx.player) return;
+    if (!this.inMatch || !ctx.player || !this.debugMapOk()) return;
     let id = 200 + this.dummies.length * 3;
     for (const d of [10, 40, 70]) {
       const e = new Entity(id, `Dummy ${d}u`, 'red', false, false, botVariant(id++));
@@ -1161,7 +1357,7 @@ export class Game {
 
   /** Stress Test (§16.3): 10 karakter di lantai tengah menembak dummy, 2 granat ke rak tiap 10 s, selama 60 s. */
   private startStress() {
-    if (!this.inMatch || this.stress) return;
+    if (!this.inMatch || this.stress || !this.debugMapOk()) return;
     const target = new Entity(150, 'Target', 'blue', false, false);
     target.applyLoadout({ weapon: 'm416', scope: 'iron' });
     target.dummyAt = new THREE.Vector3(0, 0, -20);

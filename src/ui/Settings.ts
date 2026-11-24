@@ -6,7 +6,7 @@ import type { ScopeId, WeaponId } from '../config/weaponsData';
 import { WEAPONS, SCOPE_ORDER, scopeAllowed } from '../config/weaponsData';
 import { BINDS_VERSION, DEFAULT_BINDS, migrateBinds, validateBinds, type Binds } from '../core/Bindings';
 import { XH_MODES, XH_SHAPES, type XhMode, type XhShape } from './Crosshair';
-import { cleanName } from '../game/Lobby';
+import { cleanName, isMapChoice, type MapChoice } from '../game/Lobby';
 export { XH_COLORS } from './Crosshair';
 
 export type MatchMode = 'tdm' | 'elim';
@@ -30,6 +30,8 @@ export interface Settings {
   playerName: string;
   // aturan match
   mode: MatchMode; scoreLimit: number; timeLimit: number; roundsToWin: number;
+  /** Map pilihan main solo / Latihan & bawaan room baru: 'brickhall' | 'steelyard' | 'random' (Acak: diundi tiap match). */
+  map: MapChoice;
   // kontrol
   binds: Binds; padSens: number;
   /** Versi skema tombol (migrasi otomatis setelan lama, lihat Bindings.migrateBinds). */
@@ -53,6 +55,7 @@ export const DEFAULTS: Settings = {
   volMaster: 80, volSfx: 100, volUi: 70, showFps: false, difficulty: 'normal', allies: 4, enemies: 5, fullPause: false,
   weapon: 'm416', scope: 'reddot', charVariant: 'm', playerName: '',
   mode: 'tdm', scoreLimit: CFG.match.scoreLimit, timeLimit: CFG.match.timeLimit / 60, roundsToWin: XCFG.elim.roundsToWin,
+  map: 'brickhall',
   binds: { ...DEFAULT_BINDS }, padSens: 1.0, bindsVer: BINDS_VERSION,
   xhShape: 'cross', xhMode: 'dynamic', xhColor: '#ffffff', xhAlpha: 1, xhLen: XCFG.hud.crosshairLen, xhThick: XCFG.hud.crosshairWidth,
   xhGap: 0, xhDotSize: XCFG.hud.crosshairWidth, xhDotAlpha: 1, xhCircleR: 10, xhCircleThick: 2,
@@ -88,6 +91,7 @@ export function validate(raw: Partial<Settings> | null): Settings {
     mode: oneOf(r.mode, ['tdm', 'elim'] as const, D.mode),
     scoreLimit: pick(r.scoreLimit, SCORE_LIMITS, D.scoreLimit as 50), timeLimit: pick(r.timeLimit, TIME_LIMITS, D.timeLimit as 10),
     roundsToWin: pick(r.roundsToWin, ROUNDS_TO_WIN, D.roundsToWin as 5),
+    map: isMapChoice(r.map) ? r.map : D.map,
     binds: validateBinds(migrateBinds(r.binds, typeof r.bindsVer === 'number' ? r.bindsVer : 1)), bindsVer: BINDS_VERSION,
     padSens: clamp(r.padSens, 0.3, 3, D.padSens),
     // crosshair; setelan lama (xhDot / xhLen 0 / xhDynamic) dimigrasi ke bentuk & perilaku

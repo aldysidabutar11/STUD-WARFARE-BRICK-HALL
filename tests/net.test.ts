@@ -1,5 +1,6 @@
 // tests/net.test.ts — multiplayer: codec biner perintah/snapshot, kuantisasi sama di klien & host, jam tick host, interpolasi,
-// riwayat perintah (prediksi + rekonsiliasi), antrean perintah remote di host, serialisasi room untuk klien.
+// riwayat perintah (prediksi + rekonsiliasi), antrean perintah remote di host, serialisasi room untuk klien, antrean pesan host
+// selama klien memuat map (HoldQueue).
 import { describe, expect, it } from 'vitest';
 import {
   H, I, decodeCommands, decodeSnapshot, encodeCommands, encodeSnapshot, msgType, MSG, qPitch, qYaw, type Command, type EntState, type Snapshot,
@@ -7,6 +8,7 @@ import {
 import { CommandHistory, CommandQueue, HitLedger, HostClock, InterpBuffer, SnapStats } from '../src/net/sync';
 import { Lobby, type RoomSettings } from '../src/game/Lobby';
 import { parseStart } from '../src/net/start';
+import { HoldQueue } from '../src/net/HoldQueue';
 
 const cmd = (seq: number, o: Partial<Command> = {}): Command =>
   ({ seq, mx: 0, mz: 1, yaw: 1.2, pitch: -0.3, held: H.FIRE | H.AIM, imp: I.JUMP | I.RELOAD, viewTick: 1000 + seq, ...o });
@@ -124,7 +126,7 @@ describe('Sinkronisasi', () => {
 
 describe('Room online: serialisasi untuk klien', () => {
   it('klien mendapat cermin room dengan pemain lokalnya sendiri', () => {
-    const S: RoomSettings = { mode: 'tdm', scoreLimit: 50, timeLimit: 10, roundsToWin: 5, difficulty: 'normal', fillBots: true };
+    const S: RoomSettings = { mode: 'tdm', scoreLimit: 50, timeLimit: 10, roundsToWin: 5, difficulty: 'normal', fillBots: true, map: 'steelyard' };
     const L = new Lobby('K7RB2X', S);
     L.join('Aldy', { local: true });
     const f = L.join('Raka')!;
@@ -162,6 +164,14 @@ describe('Pesan mulai match dari host (divalidasi di klien)', () => {
     expect(parseStart({ seed: 1, opts: {}, ents: [ent(0)] })).toBeNull();                          // id di luar batas
     expect(parseStart({ seed: 1, opts: {}, ents: Array.from({ length: 11 }, (_, i) => ent(i + 1)) })).toBeNull();   // > 10 entitas
     expect(parseStart({ seed: 1, ents: [ent(1)] })).toBeNull();                                    // tanpa aturan
+  });
+  it('map match: id dikenal diteruskan; hilang / tak dikenal / "random" → Brick Hall (default aman)', () => {
+    const base = { seed: 5, opts: { mode: 'tdm', scoreLimit: 50, timeLimit: 600, roundsToWin: 5 }, ents: [ent(1)] };
+    expect(parseStart({ ...base, map: 'steelyard' })!.map).toBe('steelyard');
+    expect(parseStart({ ...base, map: 'brickhall' })!.map).toBe('brickhall');
+    expect(parseStart(base)!.map).toBe('brickhall');                                              // host versi lama (tanpa map)
+    for (const bad of ['random', 'atlantis', '../steelyard', 7, null, { id: 'steelyard' }])
+      expect(parseStart({ ...base, map: bad })!.map).toBe('brickhall');                           // Acak harus sudah diundi host
   });
 });
 
@@ -212,3 +222,67 @@ describe('Perbaikan ping: jeda interpolasi adaptif, ekstrapolasi pendek, hitmark
   });
 });
 
+
+describe('HoldQueue: pesan host ditahan selama klien memuat map match (Game.startNetClient)', () => {
+  it('tanpa penahanan: pesan langsung diproses', () => {
+    const q = new HoldQueue(), log: string[] = [];
+    q.run(() => log.push('a'));
+    expect(log).toEqual(['a']);
+    expect(q.holding).toBe(false);
+  });
+  it('ditahan → release: ready (mulai match) dulu, lalu antrean berurutan; pesan sesudahnya langsung', () => {
+    const q = new HoldQueue(), log: string[] = [];
+    const tok = q.hold();
+    for (const m of ['spawn', 'snap1', 'event', 'snap2']) q.run(() => log.push(m));
+    expect(log).toEqual([]);
+    expect(q.size).toBe(4);
+    expect(q.release(tok, () => log.push('play'))).toBe(true);
+    expect(log).toEqual(['play', 'spawn', 'snap1', 'event', 'snap2']);
+    q.run(() => log.push('snap3'));
+    expect(log.at(-1)).toBe('snap3');
+    expect(q.release(tok, () => log.push('lagi'))).toBe(false);          // token sudah dilepas
+  });
+  it('cancel (keluar room / koneksi putus): antrean dibuang, token lama tidak memulai match', () => {
+    const q = new HoldQueue(), log: string[] = [];
+    const tok = q.hold();
+    q.run(() => log.push('snap'));
+    expect(q.cancel()).toBe(true);
+    expect(q.cancel()).toBe(false);
+    expect(q.release(tok, () => log.push('play'))).toBe(false);
+    expect(log).toEqual([]);
+    q.run(() => log.push('baru'));
+    expect(log).toEqual(['baru']);
+  });
+  it('penahanan baru menggantikan yang lama (start kedua sebelum map pertama siap)', () => {
+    const q = new HoldQueue(), log: string[] = [];
+    const t1 = q.hold();
+    q.run(() => log.push('lama'));
+    const t2 = q.hold();
+    q.run(() => log.push('baru'));
+    expect(q.release(t1, () => log.push('play1'))).toBe(false);
+    expect(q.release(t2, () => log.push('play2'))).toBe(true);
+    expect(log).toEqual(['play2', 'baru']);
+  });
+  it('pesan yang diputar memulai penahanan baru (start map lain): sisa pesan ikut ditahan, urutan tetap', () => {
+    const q = new HoldQueue(), log: string[] = [];
+    let t2: object | null = null;
+    const t1 = q.hold();
+    q.run(() => log.push('a'));
+    q.run(() => { log.push('start2'); t2 = q.hold(); });
+    q.run(() => log.push('b'));
+    q.run(() => log.push('c'));
+    q.release(t1, () => log.push('play1'));
+    expect(log).toEqual(['play1', 'a', 'start2']);
+    expect(q.holding).toBe(true);
+    expect(q.release(t2!, () => log.push('play2'))).toBe(true);
+    expect(log).toEqual(['play1', 'a', 'start2', 'play2', 'b', 'c']);
+  });
+  it('ready melempar (map gagal dimuat): antrean tetap diputar lalu error diteruskan', () => {
+    const q = new HoldQueue(), log: string[] = [];
+    const tok = q.hold();
+    q.run(() => log.push('snap'));
+    expect(() => q.release(tok, () => { throw new Error('gagal'); })).toThrow('gagal');
+    expect(log).toEqual(['snap']);
+    expect(q.holding).toBe(false);
+  });
+});

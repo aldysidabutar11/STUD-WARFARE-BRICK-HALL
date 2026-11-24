@@ -9,7 +9,8 @@ import { bus, type HitPart } from '../core/EventBus';
 import { ctx } from '../game/ctx';
 import type { Entity } from '../entities/Entity';
 import { PART_KEYS as PART_ORDER } from '../entities/BlockyCharacter';
-import { surfaceAt } from '../world/MapData';
+import { currentMap } from '../world/maps/registry';
+import { SURFACE_COLOR, surfaceCode } from '../world/surfaces';
 import { makeRng } from '../core/Rng';
 
 const S = CFG.combat.spread;
@@ -97,14 +98,11 @@ export function castShot(origin: THREE.Vector3, dir: THREE.Vector3, tMin: number
 
 const pFire = new THREE.Vector3(), vCam = new THREE.Vector3(), vShot = new THREE.Vector3(), pTarget = new THREE.Vector3();
 const tmp = new THREE.Vector3(), muzzle = new THREE.Vector3(), endV = new THREE.Vector3(), recoilOut = { dPitch: 0, dYaw: 0 };
-const SURFACE_COLOR = { tile: 0x9a9a9a, carpet: 0x1f3a73, wood: 0x7c5c46 } as const;
 
 /** Acak tembakan deterministik (seed match × entitas × tembakan ke-n per nyawa) → prediksi klien = hasil host. */
 export function shotRandom(e: Entity): () => number {
   return makeRng((ctx.net.seed ^ Math.imul(e.id + 1, 0x9e3779b1) ^ Math.imul(e.weapon.shotsFired + 1, 0x85ebca77)) >>> 0);
 }
-
-const SURF_IDX = { tile: 0, carpet: 1, wood: 2 } as const;
 
 /** Satu peluru: spread → raycast → damage → recoil → event 'shot' + VFX. */
 export function fireOne(e: Entity) {
@@ -155,7 +153,7 @@ export function fireOne(e: Entity) {
   if (ctx.net.onShot) {
     const body = hit?.kind === 'body' && hit.victim;
     ctx.net.onShot(e, !hit ? 0 : body ? 2 : 1, end, hit ? hit.normal : null,
-      hit && !body ? SURF_IDX[surfaceAt(hit.point.x, hit.point.y, hit.point.z)] : 0, body ? hit.victim!.id : 0,
+      hit && !body ? surfaceCode(currentMap().surfaceAt(hit.point.x, hit.point.y, hit.point.z)) : 0, body ? hit.victim!.id : 0,
       body ? Math.max(0, PART_ORDER.indexOf(hit.partKey as never)) : 0);
   }
 
@@ -169,7 +167,7 @@ export function fireOne(e: Entity) {
       ctx.teams.applyDamage(hit.victim, e, dmg, hit.part, w.def.id, vShot, false);
       bus.emit('impact', { position: hit.point, normal: hit.normal, material: 'body' });
     } else {
-      const mat = surfaceAt(hit.point.x, hit.point.y, hit.point.z);
+      const mat = currentMap().surfaceAt(hit.point.x, hit.point.y, hit.point.z);
       ctx.vfx.decal(hit.point, hit.normal);
       ctx.vfx.chips(hit.point, hit.normal, SURFACE_COLOR[mat], 4);
       ctx.vfx.puff(hit.point, hit.normal, SURFACE_COLOR[mat]);

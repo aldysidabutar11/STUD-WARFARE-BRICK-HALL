@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BOXES, SPAWN_SLOTS, STAIRS, obstaclesAtLevel } from '../src/world/MapData';
 import { NavGraph } from '../src/world/NavGraph';
+import { BRICKHALL_NAV } from '../src/world/maps/brickhall';
 
 type R2 = { x: [number, number]; z: [number, number] };
 const dist2 = (r: R2, x: number, z: number) =>
@@ -8,9 +9,9 @@ const dist2 = (r: R2, x: number, z: number) =>
 
 const CAPSULE = 0.8;
 const obst = { 0: obstaclesAtLevel(0), 10: obstaclesAtLevel(10) };
-const clearance = (lvl: 0 | 10, x: number, z: number) => {
+const clearance = (lvl: number, x: number, z: number) => {
   let m = Infinity, who = '';
-  for (const o of obst[lvl]) { const d = dist2(o, x, z); if (d < m) { m = d; who = `${o.x}/${o.z}`; } }
+  for (const o of obst[lvl as 0 | 10]) { const d = dist2(o, x, z); if (d < m) { m = d; who = `${o.x}/${o.z}`; } }
   return { m, who };
 };
 /** Titik di lantai 2 harus ditopang permukaan Y = 10 (bukan void). */
@@ -63,7 +64,7 @@ describe('MapData', () => {
 });
 
 describe('NavGraph', () => {
-  const g = new NavGraph();
+  const g = new NavGraph(BRICKHALL_NAV);
   it('counts', () => {
     expect(g.nodes.length).toBe(192);   // v2: +ruang spawn bawah, lorong, arsip (126 − F_VOID + 68)
     expect(g.dropCount).toBe(8);

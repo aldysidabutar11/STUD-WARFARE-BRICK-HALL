@@ -1,5 +1,6 @@
 // src/ui/Menus.ts — menu utama, atur match, loadout, pengaturan (tab), kontrol + ubah tombol, pause, hasil (GDD §13.1–13.2, §14)
-// + navigasi gamepad (D-pad/A/B) untuk semua menu.
+// + navigasi gamepad (D-pad/A/B) untuk semua menu. + multi-map: kartu pilihan map (denah prosedural, ui/MapThumb) di Atur Match
+// & setelan host room (Acak = diundi saat match dimulai); nama map di menu utama, layar hasil (dan banner awal match di Game).
 import { SCOPES, SCOPE_ORDER, WEAPONS, WEAPON_ORDER, scopeAllowed, type ScopeId, type WeaponId } from '../config/weaponsData';
 import { effectiveZoom } from '../combat/Damage';
 import { ACTIONS, DEFAULT_BINDS, PAD, PAD_HELP, isBindable, keyLabel, rebind, type Action } from '../core/Bindings';
@@ -9,7 +10,10 @@ import { Crosshair, XH_MODES, XH_PRESETS, XH_SHAPES } from './Crosshair';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import { ctx } from '../game/ctx';
-import { cleanName, formatRoomCode, parseRoomCode, type Lobby, type RoomSettings, type SlotView } from '../game/Lobby';
+import { cleanName, formatRoomCode, parseRoomCode, type Lobby, type MapChoice, type RoomSettings, type SlotView } from '../game/Lobby';
+import { MAPS } from '../world/maps/registry';
+import { MAP_IDS, type MapId } from '../world/maps/types';
+import { mapFacts, paintThumbs, thumbHTML } from './MapThumb';
 import type { Team } from '../entities/BlockyCharacter';
 import type { JoinFail } from '../net/Session';
 import { onlineConfigured } from '../net/Signaling';
@@ -36,7 +40,18 @@ export interface MenuApi {
   roomAct(a: RoomAction): void;
   joinRoom(code: string, name: string): Promise<{ ok: true } | { ok: false; reason: JoinFail }>;
   netInfo(): NetInfo;
+  /** Pilihan map main solo / Latihan (setelan): disimpan & map langsung dimuat di menu ('random' = diundi saat Mulai). */
+  selectMap(choice: MapChoice): void;
+  /** Pilihan map yang BERLAKU untuk main solo / Latihan (?map= uji menimpa setelan sampai pemain memilih kartu). */
+  mapChoice(): MapChoice;
+  /** Map yang sedang dimuat (= map match yang sedang / baru saja dimainkan). */
+  mapId(): MapId;
 }
+
+/** Urutan kartu pilihan map: semua map lalu "Acak". */
+const MAP_CHOICES: readonly MapChoice[] = [...MAP_IDS, 'random'];
+const choiceName = (c: MapChoice) => (c === 'random' ? 'Acak' : MAPS[c].name);
+const MODE_NAME: Record<string, string> = { tdm: 'Team Deathmatch', elim: 'Eliminasi', practice: 'Latihan' };
 
 /** Escape teks bebas untuk innerHTML (nama sudah dibersihkan cleanName, ini lapisan kedua). */
 const esc = (t: string) => t.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -50,6 +65,8 @@ const FIXED_KEYS: [string, string][] = [
 const el = (html: string) => { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild as HTMLElement; };
 const norm = (v: number, a: number, b: number) => Math.max(0.08, Math.min(1, (v - a) / (b - a)));
 const FOCUSABLE = 'button:not(:disabled), select, input[type=range], .wcard, .mode';
+/** Lebar gambar denah kartu map (px CSS, 16:9): besar = Atur Match, kecil = setelan host room. */
+const THUMB = { big: 208, small: 132 };
 
 export class Menus {
   private root = document.getElementById('ui') as HTMLDivElement;
@@ -76,12 +93,14 @@ export class Menus {
   }
 
   showMain() {
+    const mc = this.api.mapChoice();
     const m = this.mount('main', `<div class="card main"><h1>STUD WARFARE</h1><div class="sub">BRICK HALL</div>
       <div class="btns"><button class="primary" data-a="play">▶ Main</button><button data-a="room">👥 Main Bareng (Room)</button>
-      <button data-a="practice">◎ Latihan Menembak</button>
+      <button data-a="practice">◎ Latihan Menembak <small class="bsub">· ${esc(mc === 'random' ? 'map acak' : MAPS[mc].name)}</small></button>
       <button data-a="loadout">Loadout</button><button data-a="settings">Pengaturan</button><button data-a="controls">Kontrol</button>
       <button data-a="fs">Layar Penuh</button></div>
-      <div class="note">Biru di Selatan menghadap Utara. Mode: Team Deathmatch atau Eliminasi melawan bot, atau Main Bareng di room (5 lawan 5, slot kosong diisi bot). Gamepad didukung.</div></div>`);
+      <div class="note">Biru di Selatan menghadap Utara. Mode: Team Deathmatch atau Eliminasi melawan bot, atau Main Bareng di room (5 lawan 5, slot kosong diisi bot).
+        ${MAP_IDS.length} map: ${MAP_IDS.map(id => MAPS[id].name).join(' & ')} — pilih di ▶ Main (Latihan memakai map yang sama). Gamepad didukung.</div></div>`);
     this.on(m, 'play', () => this.showMatchSetup(() => this.showMain()));
     this.on(m, 'room', () => (this.api.room() ? this.showRoom() : this.showLobbyHome(() => this.showMain())));
     this.on(m, 'practice', () => this.api.play(true));
@@ -97,6 +116,9 @@ export class Menus {
     const opt = (k: keyof Settings, list: readonly number[], fmt: (v: number) => string) =>
       `<select data-k="${k}">${list.map(v => `<option value="${v}" ${s[k] === v ? 'selected' : ''}>${fmt(v)}</option>`).join('')}</select>`;
     const m = this.mount('setup', `<div class="card setup"><h2>Atur Match</h2>
+      <div class="sec">Map</div>
+      <div class="maps">${MAP_CHOICES.map(c => this.mapCard(c, this.api.mapChoice() === c, 'data-map', true)).join('')}</div>
+      <div class="sec">Mode</div>
       <div class="modes">
         <div class="mode" data-m="tdm" tabindex="0"><b>Team Deathmatch</b><span>Respawn 4 s. Tim pertama mencapai target kill, atau skor tertinggi saat waktu habis, menang.</span></div>
         <div class="mode" data-m="elim" tabindex="0"><b>Eliminasi</b><span>Tanpa respawn dalam ronde (2:00). Habisi tim lawan; yang mati menonton rekan. Menang ronde terbanyak.</span></div>
@@ -117,6 +139,14 @@ export class Menus {
     };
     m.querySelectorAll<HTMLElement>('.mode').forEach(x => x.addEventListener('click', () => { this.api.click(); setMode(x.dataset.m as 'tdm' | 'elim'); }));
     setMode(s.mode);
+    // map: langsung disimpan & dimuat di menu (latar menu = pratinjau map); "Acak" diundi saat Mulai
+    paintThumbs(m);
+    m.querySelectorAll<HTMLButtonElement>('[data-map]').forEach(b => b.addEventListener('click', () => {
+      const c = b.dataset.map as MapChoice;
+      s.map = c;
+      m.querySelectorAll<HTMLElement>('[data-map]').forEach(x => x.classList.toggle('sel', x.dataset.map === c));
+      this.api.selectMap(c);
+    }));
     this.bindInputs(m, s);
     this.on(m, 'start', () => { this.api.applySettings(s); this.api.play(false); });
     this.on(m, 'back', back);
@@ -215,6 +245,8 @@ export class Menus {
         <button data-a="copy">Salin Link</button>${this.netBadge(net)}</div>
       <div class="teams">${teamCol('blue')}${teamCol('red')}</div>
       <div class="host-set"><h3>Setelan host${host ? '' : ' <small>(hanya host yang bisa mengubah)</small>'}</h3>
+        <div class="maps small">${MAP_CHOICES.map(c => this.mapCard(c, st.map === c, 'data-rmap', false, !host)).join('')}
+          <div class="map-now"><span>Map</span><b>${esc(choiceName(st.map))}</b><small>${esc(st.map === 'random' ? 'diundi host saat Mulai' : mapFacts(MAPS[st.map]))}</small></div></div>
         <div class="modes">
           <div class="mode ${st.mode === 'tdm' ? 'sel' : ''}" data-m="tdm" tabindex="0"><b>Team Deathmatch</b><span>Respawn 4 s, target kill / skor tertinggi.</span></div>
           <div class="mode ${st.mode === 'elim' ? 'sel' : ''}" data-m="elim" tabindex="0"><b>Eliminasi</b><span>Tanpa respawn dalam ronde, menang ronde terbanyak.</span></div>
@@ -244,6 +276,10 @@ export class Menus {
       if (!host) return;
       this.api.click(); act({ type: 'settings', patch: { mode: x.dataset.m as RoomSettings['mode'] } });
     }));
+    paintThumbs(m);
+    m.querySelectorAll<HTMLButtonElement>('[data-rmap]').forEach(b => b.addEventListener('click', () => {
+      if (host && b.dataset.rmap !== st.map) act({ type: 'settings', patch: { map: b.dataset.rmap as MapChoice } });
+    }));
     m.querySelectorAll<HTMLSelectElement>('select[data-rk]').forEach(se => se.addEventListener('change', () => {
       const k = se.dataset.rk as keyof RoomSettings, v = se.value;
       act({ type: 'settings', patch: { [k]: v === 'true' ? true : v === 'false' ? false : /^\d+$/.test(v) ? Number(v) : v } as Partial<RoomSettings> });
@@ -265,9 +301,9 @@ export class Menus {
   refreshRoom() {
     if (this.current !== 'room') return;
     const f = document.activeElement as HTMLElement | null;
-    const key = f?.dataset.rk ?? f?.dataset.a ?? f?.dataset.move ?? null;
+    const key = f?.dataset.rk ?? f?.dataset.a ?? f?.dataset.move ?? f?.dataset.rmap ?? null;
     this.showRoom();
-    if (key) (this.root.querySelector(`[data-rk="${key}"],[data-a="${key}"],[data-move="${key}"]`) as HTMLElement | null)?.focus();
+    if (key) (this.root.querySelector(`[data-rk="${key}"],[data-a="${key}"],[data-move="${key}"],[data-rmap="${key}"]`) as HTMLElement | null)?.focus();
   }
 
   /** Ping teman di layar room (diperbarui di tempat tiap ±2 s, tanpa menggambar ulang room). */
@@ -282,6 +318,16 @@ export class Menus {
       el.className = 'ping ' + (ms < N.pingGood ? 'good' : bad ? 'bad' : 'mid');
       el.title = bad ? 'Ping tinggi — bisa terasa delay. Coba jaringan lain atau pilih host yang lebih dekat.' : 'Ping ke host';
     });
+  }
+
+  /** Kartu pilihan map: denah prosedural (16:9) + nama; kartu besar juga ringkasan & deskripsi. disabled = klien room (tampil saja). */
+  private mapCard(c: MapChoice, sel: boolean, attr: string, big: boolean, disabled = false): string {
+    const w = big ? THUMB.big : THUMB.small, h = Math.round((w * 9) / 16), name = choiceName(c);
+    const facts = c === 'random' ? `${MAP_IDS.length} map · diundi tiap match` : mapFacts(MAPS[c]);
+    const desc = c === 'random' ? 'Map diundi setiap match dimulai. Main Lagi / Ulangi memakai map yang sama.' : MAPS[c].desc;
+    return `<button class="mapcard${big ? '' : ' small'}${sel ? ' sel' : ''}" ${attr}="${c}" ${disabled ? 'disabled' : ''} title="${esc(`${name} — ${desc}`)}">` +
+      thumbHTML(c, w, h) +
+      `<b>${esc(name)}</b>${big ? `<i>${esc(facts)}</i><span>${esc(desc)}</span>` : ''}</button>`;
   }
 
   private netBadge(n: NetInfo): string {
@@ -424,7 +470,7 @@ export class Menus {
       const keep = this.api.settings();
       this.api.applySettings(validate({ ...DEFAULTS, binds: keep.binds, weapon: keep.weapon, scope: keep.scope, mode: keep.mode,
         scoreLimit: keep.scoreLimit, timeLimit: keep.timeLimit, roundsToWin: keep.roundsToWin, difficulty: keep.difficulty,
-        allies: keep.allies, enemies: keep.enemies, preset: keep.preset }));
+        allies: keep.allies, enemies: keep.enemies, preset: keep.preset, map: keep.map }));
       this.showSettings(back);
     });
     this.on(m, 'back', back);
@@ -572,6 +618,7 @@ export class Menus {
     const head = '<tr><th>Nama</th><th>K</th><th>D</th><th>A</th><th>K/D</th><th>Skor</th><th>Akurasi</th><th>% HS</th><th>Damage</th><th>Streak</th></tr>';
     const unit = ctx.match.mode === 'elim' ? ' (ronde)' : '';
     const m = this.mount('results', `<div class="card"><h1 style="color:${color}">${title}</h1>
+      <div class="res-map">${esc(MAPS[this.api.mapId()].name)} · ${MODE_NAME[ctx.match.mode] ?? ''}</div>
       <div class="sub">BIRU ${ctx.teams.scores.blue} — ${ctx.teams.scores.red} MERAH${unit}</div>
       ${mvp ? `<div class="mvp">★ MVP: <b>${esc(mvp.name)}</b> — ${mvp.stats.score} poin</div>` : ''}
       <div class="scoreboard on" style="position:static;transform:none;min-width:0;background:none;border:none;padding:0">

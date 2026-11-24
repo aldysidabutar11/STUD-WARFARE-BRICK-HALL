@@ -80,6 +80,8 @@ export class PostFX {
   }
 
   setBloom(on: boolean) { if (this.bloom) this.bloom.enabled = on; }
+  /** Ambang luminans & kekuatan bloom (per map — lihat Atmosphere.bloom). */
+  setBloomTuning(threshold: number, strength: number) { if (this.bloom) { this.bloom.threshold = threshold; this.bloom.strength = strength; } }
   setSsao(on: boolean) { if (this.ao) this.ao.enabled = on; }
 
   /** Render satu frame; ukuran target mengikuti drawing buffer (resolusi dinamis mengubah pixel ratio). */

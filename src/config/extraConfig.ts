@@ -102,6 +102,9 @@ export const XCFG = {
     errReroll: 0.4, errSlerp: 8, fireDevHip: 2.5, fireDevAds: 1.2,
     // v2 (rombak map): + jalur arsip (lantai 1 beratap); bobot GDD lama: jembatan .35, barat .20, timur .20, lantai .25
     lanes: { bridge: 0.30, west: 0.15, east: 0.15, floor: 0.20, archive: 0.20 }, lanePerTeamMax: 2,
+    // Steel Yard (map kedua): sayap (Lorong Kontainer → Pos Jaga), dalam (Bangkai Mobil → Tengah → Pos Jaga), tengah (Lorong
+    // Tengah → Gudang Spool → Menara), apit (celah Apit → Gudang Spool → Menara) — sisi W/E = sisi bot (maps/steelyard/nav.ts)
+    lanesSteelYard: { sayap: 0.30, dalam: 0.25, tengah: 0.25, apit: 0.20 },
     grenadeMin: 8, grenadeMax: 24, grenadeAllyClear: 8, grenadeCooldown: 6,
     arriveRadius: 1.2, separation: 2.0, stuckDist: 0.5, stuckJump: 1.5, stuckRepath: 3.0, stairCost: 1.2,
     thinkEveryFixedSteps: 6,

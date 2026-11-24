@@ -40,6 +40,10 @@
 - Preset ULTRA di luar §15 (CFG.render.presets tetap verbatim): `presetOf()` di src/config/presets.ts; tipe `Preset` dilebarkan jadi interface.
 - Tampilan karakter = desain pengguna (Karakter/*.png, HANYA acuan; tidak dimuat game): Biru = pasukan taktis, Merah = gerilyawan,
   masing-masing pria/wanita. Dibangun 100% prosedural di src/entities/CharacterArt.ts (lihat "Fitur pasca-MVP").
+- Multi-map (Brick Hall + Steel Yard, lihat "Multi-map & Steel Yard"): modul game membaca data map HANYA lewat `currentMap()`
+  (src/world/maps/registry.ts; Physics lewat maps/current.ts agar tidak impor melingkar) — jangan impor data Brick Hall langsung.
+  Steel Yard = layout ORISINAL (gaya "halaman kontainer gurun" hanya inspirasi, bukan replika map game lain); peti 2.8 u, bukan 3.0
+  dari brief (3.0 jatuh di pita cover terlarang GDD §4.4 2.95–3.75; tumpukan 2 = 5.6).
 
 ## Cara kerja per fase
 1. Baca bagian GDD yang disebut.
@@ -174,7 +178,7 @@
     XCFG.bots.lanes = bridge .30 / west .15 / east .15 / floor .20 / archive .20 (GDD: .35/.20/.20/.25 — disetujui sebagai bagian rework map).
   - Terukur (TDM, bot Normal, node v1 yang sama): visibilitas rata-rata 43.7% → 22.7%, pasangan terlihat > 40 u 39% → 26.7%,
     kill/menit 37 → 20, median jarak kill 53 → 24 u, spawn→kontak median 2.4 → 2.8 s; bot keluar spawn bawah (3 sekaligus) 2–5 s, 0 bot macet.
-  - Belum dikerjakan: ide 7 (map kedua) — butuh layout, nav graph, rute bot & test sendiri; tunggu persetujuan/tema dari pengguna.
+  - Ide 7 (map kedua) = Steel Yard — lihat "Multi-map & Steel Yard".
 - Kehalusan frame (laporan pengguna: "FPS 60–80 tapi rasanya tidak seperti 60–80"):
   - Akar masalah (terukur, layar laptop 90 Hz): preset HIGH butuh GPU ±11 ms = batas vsync 11.1 ms → ±28% frame tampil 2 vsync
     (22.2 ms) berselang-seling (judder); FPS rata-rata 70 tapi terasa patah. Resolusi dinamis GDD §2.3 (17.5/13 ms) dirancang untuk 60 Hz
@@ -257,21 +261,126 @@
     Alasan: paket gratis dijeda setelah ±7 hari tanpa aktivitas DATABASE; signaling Realtime tidak dihitung. CRON_SECRET opsional.
   - Input: keydown di kolom teks (input non-range / textarea) tidak dicegah & tidak jadi input game (Spasi bisa diketik).
 
+- Multi-map & Steel Yard (permintaan pengguna: map kedua "Steel Yard" — halaman kontainer di gurun, "detail dan lengkap"; dikerjakan
+  bertahap: F1 fondasi → C1 denah/nav/test, C2 visual, C3 UI/online → I1 integrasi & uji browser):
+  - Kontrak `src/world/maps/types.ts`: `MapDef` (id, name, desc, bounds, boxes, stairs, spawnSlots, nav: NavTemplate, lanes: LaneDef[],
+    surfaceAt, zoneName, practice, menuCam, envProbe, atmosphere, props? (buku — hanya BH), build()) + `BuiltMap` (group, sun, hemi, light,
+    shelves, dust, shafts, triangles, colliders, dispose()). `registry.ts` (MAPS, MAP_IDS urut menu, mapInfo, isMapId, DEFAULT_MAP,
+    setCurrentMap) · `current.ts` (modul daun currentMap()) · `brickhall.ts` (template nav BH dipindah dari NavGraph, lane = XCFG.bots.lanes,
+    latihan/menuCam/envProbe/atmosphere) · `shared.ts` (addBoxColliders, cuboidCollider, removeColliders, disposeTree, rotYQuat).
+  - Konsumen `currentMap()`: surfaceAt (Ballistics, GrenadeK400, Physics.surfaceBelow), boxes (TacticalBot drop, Minimap, LightBake),
+    spawnSlots (SpawnSystem: indeks [...upper, ...ground], lantai kosong dilewati), zoneName/stairs (Minimap), nav (`new NavGraph(def.nav)`,
+    NavNode.level = number), lanes (BotDirector: Lane = id string, tak dikenal → jalur pertama), practice/menuCam/envProbe/atmosphere (Game).
+  - `Box.rotY` (radian, putar di pusat balok): collider Rapier, MeshBuckets.addBox (UV ikut sumbu lokal), LightBake (OBB ke grid), Minimap.
+    BH tidak memakainya. LightBake `BakeSource` mode indoor (BH identik bit-per-bit) / outdoor (langit dari keterbukaan + pantul permukaan
+    yang kena matahari).
+  - Permukaan `'sand' | 'metal'` (EventBus SurfaceMaterial): langkah (Recipes), warna tumbukan (world/surfaces.ts — Ballistics & NetMatch),
+    pantulan granat; jaringan `grenade:bounce` = 3 bit material | kecepatan×2 (5 bit). Langkah boneka remote (NetMatch) kini
+    `physics.surfaceBelow` (dulu selalu 'tile').
+  - Game: `loadMap(id, force)` SINKRON (bersihkan granat/senjata dibuang/vfx/debris → props.dispose → map.dispose (mesh, collider, lampu,
+    tekstur) → setCurrentMap → latar/kabut dari atmosphere → build → Props → world.step → peta lingkungan di envProbe (luar ruang far 2000)
+    → NavGraph + validate → minimap.setMap → debugPanel.buildNav → applyVisual/warmup); `prepareMap` (layar "Memuat map…" + afterPaint, token
+    membatalkan yang lama); `selectMap(choice)` (simpan settings.map, hapus override ?map=); `defaultMapId()` = ?map= ?? pickMap(settings.map);
+    `play(mode, roster, net, mapId?)` (offline: map lain → overlay + muat, kunci mouse diminta selagi masih gestur klik; online: mapId ??
+    map aktif, dimuat sinkron); Main Lagi / Ulangi = map yang sama. Boot memuat settings.map (bawaan brickhall); `?map=` untuk uji.
+  - UI/online (C3): `Lobby` MapChoice ('brickhall'|'steelyard'|'random'), pickMap, RoomSettings.map (hanya host; setSettings menolak patch
+    yang berisi kunci/nilai tak dikenal secara utuh; fromState memvalidasi map/kode room/id pemain /^p\d+$/ unik). `NetStart.map`
+    (parseStart: hilang/'random'/tak dikenal → brickhall). Acak diundi host; host memuat map (overlay) → cek ulang room → start{map} →
+    play. Klien: preload map pilihan host saat lobby berubah (`preloadRoomMap`); 'start' dengan map lain → overlay + pesan host diantre
+    (`netHold`) → play → antrean diputar. Menus: Atur Match bagian MAP (3 kartu: denah kanvas `ui/MapThumb.ts` — Biru kiri/Merah kanan,
+    fakta "Luar ruang · 1 lantai · 30 × 40 m"), kartu kecil di Setelan host room, hasil "Steel Yard · Team Deathmatch", banner hitung mundur
+    nama map + mode, label tombol Latihan = `MenuApi.mapChoice()` (?map= ?? settings.map).
+  - Steel Yard `src/world/maps/steelyard/`: `index.ts` (MapDef); `layout.ts` (C1: data kuadran SW/sumbu → cermin `mirrorPose` (cermin X:
+    rotY → π − θ, Z: −θ, XZ: π + θ — pintu kontainer & moncong mobil ikut terbalik benar), `deriveBoxes` murni → SY_BOXES, SY_DIMS satu
+    sumber dimensi (visual CDIM/PDIM = SY_DIMS), SY_SPAWNS 10/tim lantai 'ground' (5 per sudut; 'upper' kosong), syZoneName, sySurfaceAt,
+    SY_PRACTICE, SY_MENU_CAM, SY_ENV_PROBE); `nav.ts` (template 30 node → 104 node / 134 edge, 68 cover; lane sayap .30 / dalam .25 /
+    tengah .25 / apit .20 = XCFG.bots.lanesSteelYard; sisi W/E = sisi bot); `build.ts` + `visual/` (C2: geo.ts bucket per material berkoordinat dunia,
+    textures.ts kanvas, materials.ts SATU shader uber (uSyMode 0 biasa / 1 mask cat-karat-debu / 2 tanah) → 2 program, containers.ts,
+    props.ts, fence.ts, ground.ts (tekstur makro dilukis dari denah, tanah luar sampai cakrawala + bukit pasir, genangan), sky.ts (1 draw
+    call: gradien, matahari, awan, 3 lapis gunung + mesa bertingkat, tanah jauh berkabut), backdrop.ts (tumpukan kontainer, gantry crane,
+    gudang seng, tiang lampu; BACKDROP_SEED), dust.ts).
+  - Denah: 84 × 112 u, pagar 9 u (14 bentang: terpal kendur, PAGAR_W1 & PAGAR_E4 panel seng). 30 entri kontainer = 32 kontainer
+    (8 × 10 ft, 22 × 20 ft, 2 × 40 ft; 8 terbuka, 8 miring, Menara 2 × 2 tumpuk 2 = 14.4 u), 82 prop (4 sedan, 24 drum, 16 tumpukan peti,
+    …), 12 genangan. Spawn: Biru sudut SW/SE, Merah NW/NE, di balik GERBANG miring (rotY −0.18), 2 jalan keluar per sudut, 0 garis pandang
+    slot ↔ slot musuh. Garis tengah hanya bisa diseberangi di 4 titik (Pos Jaga W/E, samping Menara W/E). Tinggi pelindung patuh §4.4:
+    palet 0.4, tumpukan palet 2.0, barrier 2.2, drum 2.4, spool 2.6, peti 2.8 / 5.6, mobil 4.2, kontainer 7.2 / 14.4.
+  - Visual: matahari sore TEPAT dari Barat (z = 0) elevasi ±40° (simetris cermin Z), matahari ×0.82, hemi 0.72×, IBL difus ×0.5, kabut
+    0xa39a88 / 0.0025; bayangan kontainer/palet/peti/pagar seng lewat balok PROXY (colorWrite false, depthFunc Never) — mesh detail tidak
+    melempar bayangan; LOW: bayangan matahari benda area main + pagar dilukis ke tekstur tanah (latar luar pagar tidak, sama dengan MEDIUM+).
+    Tekstur kanvas di-cache sisi CPU antar-muat (±12 MB), memori GPU tetap dilepas.
+  - Perbaikan I1: (1) garis lurus potong far 300 u di cakrawala (kamera menu/tempat tinggi) → tanah luar dilebur ke rumus "tanah jauh"
+    langit antara kedalaman 234…291 u (uniform uSyFade di shader uber, `setFarFade`); (2) bloom HIGH+ per map `Atmosphere.bloom` +
+    `PostFX.setBloomTuning` — SY ambang 1.6 (BH tetap XCFG 0.85): langit siang ±0.8–1.2 linear membuat seluruh langit berpendar jadi
+    kabut putih; (3) genangan PBR 0x2a2620 (dasar cokelat membuat pantulan ungu); (4) collider latar padat di luar pagar (tumpukan
+    kontainer + gudang sampai lis atap, `Foot.col`, tidak masuk SY_BOXES) + sySurfaceAt luar pagar y > 0.1 = 'metal' → peluru/granat
+    yang lewat di atas pagar berhenti & memercik; (5) data contoh `syShowcase` C2 dihapus; (6) panel debug Stress Test & spawn dummy
+    khusus Brick Hall (koordinat BH); (7) label Latihan & kartu terpilih mengikuti ?map=.
+  - Terukur (Playwright, Iris Xe, 1717×965 CSS, MEDIUM): BH vs HEAD — frame menu beku (menuT 1.234, ctx.time 12.5) hash PNG SAMA di
+    MEDIUM/HIGH/LOW (draw 30/46/19, segitiga 152 224/152 752/78 046), collider 256, nav 192; BH TDM 40 s: 0 macet, draw maks 131 (HEAD 135).
+    SY TDM (bot Normal): frame median 11.1 ms (vsync 90 Hz, p95 11.3), GPU p50 6.3 / p90 6.4 ms, draw rata 99–102 / maks 116–123, segitiga
+    maks 135k; 60 s: 16 kill, median jarak kill 15.5 u (p90 25, maks 41), 0 bot macet (> 5 s diam saat PATROL/INVESTIGATE), 0 keluar map,
+    9/9 bot bergerak. LOW 11.1 ms (GPU 4.4), HIGH 11.1 ms (GPU 7.2, resolusi 0.9, draw ≤ 205), ULTRA 22 ms (GPU 22.5, resolusi 0.6).
+    Muat SY 747 ms saat boot (tekstur pertama ±190 ms, bake medan ±200 ms), ganti map 495–650 ms; ganti BH ↔ SY 5× tanpa reload: collider
+    179 ↔ 400, body 0 ↔ 144, geometri 51 ↔ 53, tekstur 24 ↔ 19, program 51 ↔ 64 stabil, 0 error. Eliminasi SY: 1 ronde selesai ±65 s.
+    Latihan SY: 12 dummy di tanah (2 bergerak), 16–76 u dari spawn. Online 2 jendela: host pilih SY → klien preload; Mulai → keduanya SY,
+    posisi sendiri klien = host (0.000 u), boneka median 0.35 u (interp 61 ms, 30 Hz); klien di BH saat 'start' SY → overlay, 11 pesan
+    diantre, main ±0.56 s kemudian, posisi cocok. Garis pandang (C1, Rapier, mata 4.4): 9.5% pasangan terlihat, > 60 u 0.26%, median 14.5 u.
+  - Perbaikan review (X1):
+    - Ganti map gagal di tengah (WebGL hilang/kehabisan memori): `Game.loadedId` = map yang BENAR-BENAR terbangun (diisi di akhir loadMap,
+      null sejak mulai membongkar); `mapId` getter = loadedId (null setelah gagal) → play/prepareMap/startRoom/startNetClient/preload
+      memuat ulang, bukan main di map tanpa collider (ctx.map tidak di-null-kan; dispose aman diulang). prepareMap menangkap error → false
+      (dulu janji menggantung → Mulai room online macet); playAfterLoad gagal → exitLock + menu utama. buildSteelYard membuat collider
+      PALING AKHIR (gagal di kanvas/bake tidak meninggalkan collider yatim). Diuji di browser (build disuntik gagal → prepareMap false,
+      mapId null, coba lagi memuat; play gagal → menu, play berikutnya memuat & mulai; collider 400 ↔ 227 stabil).
+    - Antrean pesan klien selama memuat map = `net/HoldQueue.ts` (murni, diuji): release → mulai match lalu putar antrean lewat run()
+      (pesan 'start' kedua di antrean ikut menahan sisa pesan); cancel saat keluar room / putus. Online 2 jendela: 11 pesan ditahan → SY.
+    - Pantulan granat: `MapDef.contactSurface` (SY true) → `GrenadeK400.bounceMaterial` raycast pendek dari pusat searah impuls benturan
+      ((v_lama + g·dt) − v_baru) → material di titik kontak (dinding kontainer/mobil = metal; dulu 'sand' karena pusat ≥ 0.25 u dari dinding).
+      Brick Hall tanpa flag → tetap pusat granat (identik).
+    - Jalur bot: `LaneDef.route(own, x?)` — SY: sisi W/E = sisi bot (spawn di sudut; dulu diundi → ±55 u sia-sia lewat halaman sendiri),
+      BH mengabaikan x (undian & urutan Math.random sama, diuji). 'dalam' kini lewat gang Pos Jaga (C_WING): penyeberangan garis tengah
+      C_WING .55 / C_TOWER .45 (dulu .30 / .70; terukur 45 s: 9 / 8 penyeberangan).
+    - Collider = visual: kabin mobil 3 tingkat (2.31/2.9/3.8/4.2, batas di luar pita §4.4; galat ≤ 0.35 u, dulu 1.26 u di depan kaca;
+      profil `SY_DIMS.carCabin` dipakai visual juga), barrier = kaki ±0.61 (0–0.8) + badan ±0.35 (0–2.2) (profil `SY_DIMS.jersey`), spool =
+      2 kotak (bintang 8 di dalam piringan) + visual selalu berlilit kabel (spool kosong dulu tembus pandang), kontainer terbuka + 4 tiang
+      sudut (`SY_DIMS.container.post` 0.42) & daun pintu = setengah lebar − tiang (dulu 0.43 u lebih panjang). Tumpukan terpal: VISUAL kini
+      mengisi tapak collider 4.4 × 3.4 × 2.6 (puncak 2.3–2.6, juntaian tegak, kelim 0.3 u di luar; dulu gundukan kecil) + salinan Merah =
+      cermin persis Biru (`layout.mirrorInfo`: benih id dasar + balik Z lokal). Collider SY 179 → 227.
+    - Serpihan papan: jari-jari 2.45 u & pagar ikut dicek (tidak menembus dinding tipis/pagar). Test baru: steelyard (collider ↔ visual,
+      jalur dari sudut, pantulan granat Rapier, syColliders dilepas tuntas), maps (Props.dispose, laneRoute x), net (HoldQueue).
+    - Tidak diubah: probe pantulan [0, 9.5, −18] (kosmetik; memindah mengubah IBL seluruh map).
+  - Revisi "terlalu rapat" (laporan pengguna 2026-11-25: sesak saat berlari): dibuang SEKAT, PEMBATAS, PETI_TG, PETI_GT, DRUM_SY/TG/GS/PG,
+    BAN_HM (masing-masing 4 salinan cermin); PETI_PG dipertahankan (satu-satunya jenis 'crate'). Terukur (grid 0.5 u, kapsul 0.8):
+    area pijak yang < 2 u dari halangan 50.5% → 33.9%, jarak bebas median 1.98 → 2.55 u, area pijak 49 → 61%; garis pandang mata
+    terlihat 10.5 → 22.9% (> 60 u 3.5%, median 24.9 u ≈ BH), spawn↔spawn 0 (Rapier, test); pelindung ≥ 2 u terjauh 8.9 u (test < 9.5,
+    dulu < 7); kontainer 34 → 22; segitiga 135k → 113k; bot TDM 40 s: 15 kill, 0 macet, 0 keluar map. JANGAN buang TENGAH/SISI juga
+    (> 60 u naik ke 9–12% → koridor sniper).
+  - Catatan/sisa: Denyut perlindungan spawn (emissive 0.5) tampak putih di bawah
+    matahari. Game.captureEnvironment mengompilasi tiap program 2× (varian render target + layar) — ±ratusan ms saat muat, semua map.
+    loadMap dua kali berturut-turut TANPA frame di antaranya → peringatan WebGL "Program object expected" (alur normal selalu ada frame).
+
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 157 test Vitest (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 231 test Vitest / 17 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
-  perintah/interpolasi/validasi pesan host) hijau; typecheck & build hijau;
+  perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
+  denah, cermin, collider, nav + validate, lane, garis pandang, permukaan, latar luar pagar, collider ↔ visual, pantulan granat),
+  pilihan map room/NetStart, antrean pesan klien saat memuat map (HoldQueue), Props/collider dilepas saat ganti map) hijau;
+  typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;
   di browser: TDM/Eliminasi/Latihan berjalan 0 error konsol; killcam → respawn 4 s; menonton rekan; gamepad tiruan (gerak/bidik/tembak/pause/menu);
-  map v2 (TDM, Iris Xe): frame median 11.1 ms (p95 13.1), draw call rata-rata 106 / maks 121, tris maks ±45k.
+  map v2 (TDM, Iris Xe): frame median 11.1 ms (p95 13.1), draw call rata-rata 106 / maks 121, tris maks ±45k;
+  Steel Yard: TDM/Eliminasi/Latihan, semua preset, ganti map tanpa reload, room online 2 jendela — lihat "Multi-map & Steel Yard".
 - Belum diverifikasi di perangkat acuan: prosedur 16.3 (Stress Test, panel ` → "Stress Test") di laptop Iris Xe; rasa mouse/gamepad asli.
-- Uji otomatis tanpa pointer lock: http://localhost:5173/?autostart=1 (atau =elim / =practice); window.__ctx / window.__game tersedia.
+- Uji otomatis tanpa pointer lock: http://localhost:5173/?autostart=1 (atau =elim / =practice) + `&map=steelyard|brickhall`;
+  window.__ctx / window.__game tersedia (`__game.prepareMap(id)` ganti map di menu, `__game.mapId`). Catatan: Mulai room menyimpan aturan
+  room (termasuk map) ke settings → setelah uji room, `?autostart` tanpa `&map=` bisa memuat map lain.
 - Uji online 2 jendela (Playwright, same context): host `?signal=local` → `window.open(url + '&popup=1')` untuk klien (tab terpisah tidak
   jalan — rAF tab tersembunyi berhenti); `__game.autoTest = true` + `Object.defineProperty(__game.input, 'captured', {get: () => true})`;
-  `__game.createRoom / joinRoom / roomAct / startRoom`; input lewat `input.down` / `input.rawMouse`. Modul (physics, bus) diambil dengan
+  `__game.createRoom / joinRoom / roomAct / startRoom` (map: `roomAct({type: 'settings', patch: {map: 'steelyard'}})`); input lewat
+  `input.down` / `input.rawMouse`; init script Playwright lewat `page.context().addInitScript` agar ikut ke popup. Modul (physics, bus) diambil dengan
   `import(url)` dari `performance.getEntriesByType('resource')` (URL ber-?t= setelah HMR).
 - Catatan teknis penting: lihat "Keputusan implementasi". Bot juga mempertimbangkan granat saat INVESTIGATE
   (posisi terakhir target tak terlihat, 8–24 u) karena duel di layout ini umumnya selesai sebelum target "hilang" di ENGAGE.

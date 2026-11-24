@@ -1,12 +1,29 @@
 // src/game/Lobby.ts — room / lobby untuk main bareng teman (permintaan pengguna): kode room, 2 tim × 5 slot, slot kosong diisi bot,
 // pindah tim, status siap, setelan host (mode, aturan, kesulitan bot, isi bot), acak tim, roster match. Logika MURNI (tanpa DOM/jaringan):
 // tahap 1 berjalan lokal (kamu + bot / teman simulasi); nanti server online cukup menyinkronkan objek ini (aksi yang sama, divalidasi server).
+// + multi-map: pilihan map room (host) / setelan solo — map tertentu atau 'random' (diundi saat match dimulai, host mengirim id konkret).
+import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import type { Difficulty } from '../config/extraConfig';
 import type { Team } from '../entities/BlockyCharacter';
+import { MAP_IDS, type MapId } from '../world/maps/types';
 
 const LB = XCFG.lobby;
 export type RoomMode = 'tdm' | 'elim';
+
+// ───────────────────────────── pilihan map (murni — tanpa mengimpor registry yang ikut memuat builder map)
+/** Pilihan map: map tertentu atau 'random' ("Acak": diundi setiap match dimulai; Main Lagi / Ulangi memakai map yang sama). */
+export type MapChoice = MapId | 'random';
+/** Map bawaan bila data tidak dikenal (= registry.DEFAULT_MAP). */
+export const BASE_MAP: MapId = 'brickhall';
+/** Id map yang dikenal build ini (data jaringan / localStorage divalidasi dengan ini). */
+export const isKnownMap = (v: unknown): v is MapId => typeof v === 'string' && (MAP_IDS as readonly string[]).includes(v);
+export const isMapChoice = (v: unknown): v is MapChoice => v === 'random' || isKnownMap(v);
+/** Pilihan → map konkret: 'random' diundi seragam dari semua map (rng ∈ [0, 1)); map tertentu → dirinya. */
+export function pickMap(choice: MapChoice, rng: () => number): MapId {
+  if (choice !== 'random') return choice;
+  return MAP_IDS[Math.min(MAP_IDS.length - 1, Math.max(0, Math.floor(rng() * MAP_IDS.length)))];
+}
 
 export interface LobbyPlayer {
   readonly id: string;
@@ -26,6 +43,33 @@ export interface RoomSettings {
   mode: RoomMode; scoreLimit: number; timeLimit: number; roundsToWin: number; difficulty: Difficulty;
   /** Slot kosong diisi bot (default: ya → selalu 5 lawan 5). */
   fillBots: boolean;
+  /** Map match (dipilih host; 'random' diundi host saat Mulai lalu id konkret dikirim di pesan 'start'). */
+  map: MapChoice;
+}
+
+const isInt = (v: unknown, lo: number, hi: number) => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+/** Nilai sah per kunci setelan room (patch host & data jaringan). Batas angka longgar (sama dengan net/start.parseStart). */
+const ROOM_CHECK: { readonly [K in keyof RoomSettings]: (v: unknown) => boolean } = {
+  mode: v => v === 'tdm' || v === 'elim',
+  scoreLimit: v => isInt(v, 1, 999), timeLimit: v => isInt(v, 1, 120), roundsToWin: v => isInt(v, 1, 15),
+  difficulty: v => v === 'easy' || v === 'normal' || v === 'hard',
+  fillBots: v => typeof v === 'boolean',
+  map: isMapChoice,
+};
+const ROOM_DEFAULTS: RoomSettings = { mode: 'tdm', scoreLimit: CFG.match.scoreLimit, timeLimit: CFG.match.timeLimit / 60,
+  roundsToWin: XCFG.elim.roundsToWin, difficulty: 'normal', fillBots: true, map: BASE_MAP };
+
+/** Patch setelan sah: setiap kunci dikenal & nilainya sah (satu nilai tak dikenal → seluruh patch ditolak). */
+export function validRoomPatch(patch: unknown): patch is Partial<RoomSettings> {
+  if (!patch || typeof patch !== 'object') return false;
+  return Object.entries(patch).every(([k, v]) => Object.prototype.hasOwnProperty.call(ROOM_CHECK, k) && ROOM_CHECK[k as keyof RoomSettings](v));
+}
+
+/** Setelan room dari jaringan (host → klien): nilai tidak sah / hilang → bawaan (map tak dikenal → Brick Hall). */
+export function cleanRoomSettings(raw: unknown): RoomSettings {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>, out = { ...ROOM_DEFAULTS } as Record<string, unknown>;
+  for (const k of Object.keys(ROOM_CHECK) as (keyof RoomSettings)[]) if (ROOM_CHECK[k](r[k])) out[k] = r[k];
+  return out as unknown as RoomSettings;
 }
 
 /** Satu baris slot tim untuk tampilan: pemain, bot pengisi, atau kosong. */
@@ -118,9 +162,9 @@ export class Lobby {
   /** Setelah match: semua selain host perlu menekan Siap lagi. */
   resetReady() { for (const p of this.players) p.ready = p.host; }
 
-  /** Ubah aturan — hanya host. */
+  /** Ubah aturan — hanya host; patch berisi kunci/nilai tak dikenal (mis. map yang tidak ada) ditolak utuh. */
   setSettings(byId: string, patch: Partial<RoomSettings>): boolean {
-    if (!this.find(byId)?.host) return false;
+    if (!this.find(byId)?.host || !validRoomPatch(patch)) return false;
     Object.assign(this.settings, patch);
     return true;
   }
@@ -174,11 +218,18 @@ export class Lobby {
       players: this.players.map(p => ({ ...p, local: false })) };
   }
 
-  /** Cermin room di klien dari data host; local = pemain dengan id meId. */
+  /** Cermin room di klien dari data host; local = pemain dengan id meId. Data jaringan divalidasi: kode room, setelan
+   *  (map tak dikenal → Brick Hall, lihat cleanRoomSettings), pemain (id "p<n>" unik, nama dibersihkan, tim biru/merah). */
   static fromState(s: LobbyState, meId: string): Lobby {
-    const L = new Lobby(s.code, { ...s.settings });
-    L.nextId = s.nextId;
-    for (const p of s.players) L.players.push({ ...p, local: p.id === meId });
+    const st = (s && typeof s === 'object' ? s : {}) as Partial<LobbyState>;
+    const L = new Lobby(parseRoomCode(String(st.code ?? '')) ?? '', cleanRoomSettings(st.settings));
+    L.nextId = isInt(st.nextId, 1, 1e6) ? st.nextId! : 1;
+    for (const p of (Array.isArray(st.players) ? st.players : []) as Partial<LobbyPlayer>[]) {
+      if (!p || typeof p !== 'object' || typeof p.id !== 'string' || !/^p\d{1,6}$/.test(p.id) || L.find(p.id)) continue;
+      L.players.push({ id: p.id, name: cleanName(String(p.name ?? '')) || 'Pemain', team: p.team === 'red' ? 'red' : 'blue',
+        ready: !!p.ready, host: !!p.host, local: p.id === meId, sim: !!p.sim, variant: p.variant === 'f' ? 'f' : 'm',
+        weapon: typeof p.weapon === 'string' ? p.weapon : undefined, scope: typeof p.scope === 'string' ? p.scope : undefined });
+    }
     return L;
   }
 }

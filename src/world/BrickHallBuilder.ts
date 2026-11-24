@@ -7,28 +7,19 @@ import type { Preset, PresetName } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import { gfxOf, isHigh } from '../config/presets';
 import {
-  BOXES, CARPETS, CORRIDOR_LAMPS, INTERIOR_FLOORS, SKYLIGHTS, STAIRS, STAIR_RISE, STAIR_RUN, STAIR_STEPS, WINDOWS, type Box, type Style,
+  BOXES, CARPETS, CORRIDOR_LAMPS, INTERIOR_FLOORS, SKYLIGHTS, STAIRS, STAIR_RISE, STAIR_RUN, STAIR_STEPS, WINDOWS, type Box, type OutdoorStyle,
+  type Style,
 } from './MapData';
 import * as TX from './StudTextureGen';
 import { MeshBuckets, type SlotMats } from './BoxBuilder';
 import { buildDecor } from './Decor';
 import * as SM from './SurfaceMaps';
-import { LightField, bakedMaterial } from './LightBake';
+import { LightField, bakedMaterial, brickHallBake } from './LightBake';
+import type { BuiltMap } from './maps/types';
+import { disposeTree, removeColliders } from './maps/shared';
 
 export interface ShelfInfo { index: number; id: string; cx: number; cz: number; alongX: boolean }
-export interface BuiltMap {
-  group: THREE.Group;
-  shelves: ShelfInfo[];
-  sun: THREE.DirectionalLight;
-  hemi: THREE.HemisphereLight;
-  triangles: number;
-  colliders: number;
-  /** Medan cahaya hasil bake (light probe karakter). */
-  light: LightField;
-  /** Debu melayang di berkas cahaya skylight (MEDIUM+), uniform uTime diperbarui Game. */
-  dust: THREE.Points | null;
-  shafts: THREE.Mesh | null;
-}
+export type { BuiltMap };
 
 const COL = {
   deck: 0x7c5c46, darkwood: 0x4a2c17, panel: 0x6b4226, plaster: 0xd8cbb3, shelf: 0x7a4a26,
@@ -58,7 +49,7 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, presetName: P
   // logam dekorasi (kuningan, besi, baja, tembaga, emas) memantulkan lingkungan
   const metalM = gfx.pbr ? new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: RG.metal, metalness: 0.85 }) : plainM;
   const set = (c: number): SlotMats => ({ top: [topM, c], side: [sideM, c], bottom: [botM, c] });
-  const STY: Record<Exclude<Style, 'hidden'>, SlotMats> = {
+  const STY: Record<Exclude<Style, 'hidden' | OutdoorStyle>, SlotMats> = {
     plaster: set(COL.plaster),
     ceiling: { top: [sideM, COL.darkwood], side: [sideM, COL.darkwood], bottom: [botM, COL.darkwood] },
     balc: { top: [topM, COL.deck], side: [bookM, 0xffffff], bottom: [botM, COL.deck] },
@@ -86,12 +77,14 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, presetName: P
 
   const solid = new MeshBuckets(XCFG.gfx.bake.subdiv);
   let colliders = 0;
+  /** Semua collider statis map ini (dilepas di dispose — ganti map tanpa reload). */
+  const cols: RAPIER.Collider[] = [];
 
   const cuboid = (min: ArrayLike<number>, max: ArrayLike<number>) => {
     const hx = (max[0] - min[0]) / 2, hy = (max[1] - min[1]) / 2, hz = (max[2] - min[2]) / 2;
     const c = world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz)
       .setTranslation(min[0] + hx, min[1] + hy, min[2] + hz).setCollisionGroups(GROUPS.STATIC));
-    colliders++;
+    colliders++; cols.push(c);
     return c;
   };
 
@@ -107,7 +100,7 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, presetName: P
     if (b.cat === 'rail') { cuboid(b.min, b.max); emitRail(solid, b, STY.rail); continue; }
     if (b.cat === 'shelf') { shelves.push(emitShelf(solid, b, STY.shelf, shelves.length, (mn, mx) => cuboid(mn, mx))); continue; }
     cuboid(b.min, b.max);
-    const sty = b.style === 'teampanel' ? TEAM_PANEL[(b.min[2] + b.max[2]) / 2 < 0 ? 'blue' : 'red'] : STY[b.style];
+    const sty = b.style === 'teampanel' ? TEAM_PANEL[(b.min[2] + b.max[2]) / 2 < 0 ? 'blue' : 'red'] : STY[b.style as Exclude<Style, 'hidden' | OutdoorStyle>];
     solid.addBox(b.min, b.max, sty, { bottom: b.min[1] <= 0.001, top: b.max[1] >= 28 });
   }
 
@@ -134,7 +127,7 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, presetName: P
       s.x[0], 0, s.zFoot, s.x[1], 0, s.zFoot, s.x[0], 0, s.zTop, s.x[1], 0, s.zTop, s.x[0], 10, s.zTop, s.x[1], 10, s.zTop,
     ]);
     const hull = RAPIER.ColliderDesc.convexHull(pts);
-    if (hull) { world.createCollider(hull.setCollisionGroups(GROUPS.STATIC)); colliders++; }
+    if (hull) { cols.push(world.createCollider(hull.setCollisionGroups(GROUPS.STATIC))); colliders++; }
     for (let i = 0; i < STAIR_STEPS; i++) {
       const za = s.zFoot + dir * STAIR_RUN * i, zb = s.zFoot + dir * STAIR_RUN * (i + 1);
       const y = STAIR_RISE * (i + 1);
@@ -157,7 +150,7 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, presetName: P
       bb.x - hx, bb.y - 0.1, bb.z, bb.x + hx, bb.y - 0.1, bb.z, bb.x - hx, bb.y + 0.1, bb.z, bb.x + hx, bb.y + 0.1, bb.z,
     ]);
     const hr = RAPIER.ColliderDesc.convexHull(hp);
-    if (hr) { world.createCollider(hr.setCollisionGroups(GROUPS.STATIC)); colliders++; }
+    if (hr) { cols.push(world.createCollider(hr.setCollisionGroups(GROUPS.STATIC))); colliders++; }
   }
 
   if (railGeos.length) {
@@ -214,7 +207,7 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, presetName: P
   for (const o of decor.objects) group.add(o);
   for (const m of nonShadow.build(false)) group.add(m);
   // bake cahaya (AO + langit + pantul) ke semua balok statis & lantai ubin → material salinan yang memodulasi cahaya tidak langsung
-  const light = new LightField();
+  const light = new LightField(brickHallBake());
   const bakedMats = new Map<THREE.Material, THREE.Material>();
   const bake = (m: THREE.Mesh) => {
     light.bakeGeometry(m.geometry);
@@ -261,7 +254,12 @@ export function buildBrickHall(scene: THREE.Scene, preset: Preset, presetName: P
   group.add(sun, sun.target, hemi);
 
   scene.add(group);
-  return { group, shelves, sun, hemi, triangles: solid.triangles + nonShadow.triangles, colliders, light, dust, shafts };
+  const dispose = () => {
+    disposeTree(group, bakedMats.keys());     // + material asli sebelum disalin bakedMaterial (tekstur bersama dilepas sekali)
+    removeColliders(cols);
+    physics.groundHandle = -1;
+  };
+  return { group, shelves, sun, hemi, triangles: solid.triangles + nonShadow.triangles, colliders, light, dust, shafts, dispose };
 }
 
 /** Plafon visual berlubang 6 skylight (collider tetap pejal). */

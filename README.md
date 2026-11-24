@@ -10,7 +10,7 @@ npm install
 npm run dev        # buka http://localhost:5173
 ```
 
-Klik **Main** → pilih mode → **Mulai**, lalu klik layar untuk mengunci mouse. Untuk performa terbaik di laptop Iris Xe: colok charger,
+Klik **Main** → pilih map & mode → **Mulai**, lalu klik layar untuk mengunci mouse. Untuk performa terbaik di laptop Iris Xe: colok charger,
 Power mode = Best performance, Chrome/Edge terbaru dengan hardware acceleration (cek `chrome://gpu` → WebGL2 *Hardware accelerated*).
 Bila masih berat: Pengaturan → Grafik → preset LOW atau Skala resolusi 70–85%. Di layar 90/120/144 Hz, F3 menampilkan % frame
 tepat waktu; bila preset berat tidak stabil di refresh penuh, pilih **Batas FPS ½ layar** (frame rata) — resolusi otomatis menyesuaikan.
@@ -24,10 +24,22 @@ tepat waktu; bila preset berat tidak stabil di refresh penuh, pilih **Batas FPS 
 ## Mode
 
 - **Team Deathmatch** — 5v5 vs bot, respawn 4 s; target kill 25/50/75/100 & batas waktu 5–20 menit (default GDD: 50 kill / 10:00).
+  Dua map: **Brick Hall** (perpustakaan dalam ruang) & **Steel Yard** (halaman kontainer di gurun) — lihat **Memilih map** di bawah.
 - **Eliminasi** — tanpa respawn dalam ronde 2:00; yang mati menonton rekan (klik kiri/Spasi ganti rekan); menang 3/4/5/7 ronde.
 - **Main Bareng (Room)** — main online dengan teman: buat room (kode + link), 2 tim × 5 slot, slot kosong diisi bot, pindah tim,
-  siap, setelan host (TDM / Eliminasi). Lihat **Main Bareng online** di bawah.
-- **Latihan Menembak** — 12 dummy (jembatan 10/40/70 u, lantai dasar, mezanin, 2 target bergerak), amunisi & granat tak terbatas, angka damage.
+  siap, setelan host (map, TDM / Eliminasi). Lihat **Main Bareng online** di bawah.
+- **Latihan Menembak** — di map pilihanmu: 12 dummy termasuk 2 target bergerak (Brick Hall: jembatan 10/40/70 u, lantai dasar,
+  mezanin; Steel Yard: tersebar 15–70 u dari gerbang Biru), amunisi & granat tak terbatas, angka damage.
+
+## Memilih map
+
+- **Main sendiri / Latihan** — **Main → Atur Match → bagian MAP**: kartu **Brick Hall**, **Steel Yard**, atau **Acak** (diundi tiap
+  match dimulai). Setiap kartu menampilkan denah mini (Biru kiri, Merah kanan), jenis & ukuran map. Klik kartu = langsung tersimpan dan
+  map dimuat di belakang menu (layar "Memuat map…" sebentar), jadi latar menu sekaligus pratinjau map. Tombol **Latihan Menembak** di
+  menu utama memakai map yang sama (namanya tertulis di tombol). **Main Lagi** / **Ulangi** = map yang sama dengan match tadi.
+- **Main Bareng** — hanya **host** yang memilih map (kartu kecil di *Setelan host*); teman melihat pilihan host dan map ikut dimuat di
+  perangkat mereka. "Acak" diundi oleh host saat **Mulai** — semua pemain selalu main di map yang sama.
+- Ganti map tidak perlu memuat ulang halaman (penting untuk room online). Uji cepat: `?map=steelyard` (atau `brickhall`) di URL.
 
 ## Map: Brick Hall (v2)
 
@@ -40,6 +52,27 @@ Perpustakaan dua lantai 60 × 100 u: jembatan kembar di lantai 2, rotunda bertia
 - **Identitas & orientasi** — sisi Selatan biru / Utara merah (panel, karpet, spanduk, lentera), ikon di puncak rak tinggi
   (Bola Dunia, Teleskop, Ksatria, Jam Pasir), dan nama area di bawah radar (mis. *Jembatan Barat · Biru*, *Arsip Timur · Merah*, *Aula Ksatria*).
 
+## Map: Steel Yard
+
+Halaman kontainer terbengkalai di gurun, satu lantai, luar ruang, 84 × 112 u (±30 × 40 m) di dalam pagar tiang kayu bertutup terpal
+(tinggi 9 u, tidak bisa keluar). Denah orisinal & simetris 4 kuadran — Biru di dua sudut Selatan, Merah di dua sudut Utara.
+
+- **Spawn** — 5 slot di tiap sudut, terlindung kontainer gerbang yang sedikit miring; tiap sudut punya 2 jalan keluar dan tidak ada
+  garis pandang langsung ke spawn musuh.
+- **Empat jalur** — *Sayap* (Lorong Kontainer terbuka dua ujung di sepanjang pagar, pelataran terbuka di sampingnya → Tumpukan Palet →
+  Pos Jaga), *Dalam* (Bangkai Mobil → Tengah → gang Pos Jaga), *Tengah* (Lorong Tengah ber-pintu terbuka → Gudang Spool → Menara Kontainer
+  2 × 2 tumpuk dua di pusat), *Apit* (sisi timur Bangkai Mobil → samping Lorong Tengah). Garis tengah hanya bisa diseberangi di 4 titik;
+  pelindung tinggi (kontainer) & rendah (palet, barrier beton, spool, drum, peti) tersebar cukup lega untuk berlari — dari mana pun
+  pelindung terdekat ≤ ±9 u. Jarak pandang khas ±25 u (setara Brick Hall), tanpa koridor sniper panjang.
+- **Detail** — 22 kontainer 10/20/40 kaki (bergelombang, pintu dengan batang pengunci, berkarat & berdebu; sebagian terbuka, miring,
+  bertumpuk), 4 bangkai sedan berdebu (ban kempes, kaca pecah), palet, spool kabel, peti, drum, ban, tumpukan terpal, genangan air
+  yang memantulkan langit, pagar terpal kendur yang sobek di beberapa tempat + dua bentang panel seng. Di luar pagar: tumpukan
+  kontainer, gantry crane, gudang seng, tiang lampu sorot, bukit pasir, mesa bertingkat & pegunungan di cakrawala, langit berawan
+  dengan matahari sore dari Barat (adil untuk kedua tim).
+- **Suara & efek** — langkah di pasir/beton, logam (dalam/atas kontainer, mobil), kayu (palet, peti), kain (terpal); percikan peluru
+  & pantulan granat mengikuti permukaannya. Nama area di bawah radar, mis. *Lorong Kontainer Barat · Biru*, *Bangkai Mobil Timur · Merah*,
+  *Menara Kontainer*, *Pos Jaga Barat*.
+
 ## Grafik
 
 Gaya blocky tetap, tapi pencahayaan & material dibuat realistis (semua prosedural, tanpa file gambar):
@@ -47,6 +80,7 @@ tone mapping ala film, cahaya skylight & jendela yang "dipanggang" (sudut & kolo
 kabut tipis, material PBR dengan stud/nat/serat timbul (normal map prosedural), pantulan lantai & logam, berkas cahaya + debu melayang,
 kepulan debu saat peluru kena permukaan. Preset: **LOW** · **MEDIUM** (laptop Iris Xe, 60 fps) · **HIGH** (+ bloom, grading, kilat
 moncong) · **ULTRA** (+ SSAO, MSAA, bayangan 4096 — untuk GPU kuat). Tiap efek bisa dimatikan di Pengaturan → Grafik.
+Steel Yard di laptop Iris Xe (MEDIUM, 10 karakter): ±90 FPS (terkunci ke layar 90 Hz), GPU ±6.4 ms, maks ±116 draw call / 135 ribu segitiga.
 
 ## Kontrol utama (bisa diubah di menu Kontrol)
 

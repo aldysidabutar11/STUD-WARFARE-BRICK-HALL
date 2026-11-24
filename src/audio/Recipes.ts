@@ -68,6 +68,24 @@ export function footstep(mat: SurfaceMaterial, land = false): Recipe {
       osc(s, 'triangle', 1900 * p, 1900 * p, t0, 0.01).connect(env(s, out, t0, 0.2 * g, 0.001, 0.01));
       return 0.06;
     }
+    if (mat === 'sand') {
+      // beton berpasir/kerikil: gesekan lowpass lembut + 3 butir "kres" highpass acak + dentum rendah
+      noiseSrc(s, t0, 0.08).connect(filt(s, 'lowpass', 1300 * p, 0.8)).connect(env(s, out, t0, 0.55 * g, 0.004, 0.075));
+      for (let i = 0; i < 3; i++) {
+        const t = t0 + 0.004 + Math.random() * 0.045, f = (2600 + Math.random() * 2400) * p;
+        noiseSrc(s, t, 0.012).connect(filt(s, 'bandpass', f, 3)).connect(env(s, out, t, 0.28 * g, 0.0008, 0.012));
+      }
+      osc(s, 'sine', 95 * p, 70 * p, t0, 0.05).connect(env(s, out, t0, 0.3 * g, 0.003, 0.05));
+      return 0.1;
+    }
+    if (mat === 'metal') {
+      // lantai/atap kontainer baja: dentang berongga (parsial tak harmonis berdengung) + transien + dentum lantai
+      for (const [f, a, d] of [[210, 0.3, 0.22], [537, 0.16, 0.16], [913, 0.09, 0.11]] as const)
+        osc(s, 'triangle', f * p, f * p * 0.985, t0, d).connect(env(s, out, t0, a * g, 0.002, d));
+      noiseSrc(s, t0, 0.02).connect(filt(s, 'bandpass', 2400 * p, 2)).connect(env(s, out, t0, 0.45 * g, 0.001, 0.02));
+      osc(s, 'sine', 140 * p, 85 * p, t0, 0.06).connect(env(s, out, t0, 0.4 * g, 0.002, 0.07));
+      return 0.24;
+    }
     osc(s, 'sine', 120 * p, 120 * p, t0, 0.05).connect(env(s, out, t0, 0.35 * g, 0.003, 0.05));
     noiseSrc(s, t0, 0.05).connect(filt(s, 'lowpass', 400 * p)).connect(env(s, out, t0, 0.5 * g, 0.003, 0.05));
     return 0.07;
@@ -94,8 +112,18 @@ export const pin: Recipe = (s, out, t0) => {
 };
 
 export const bounce = (mat: SurfaceMaterial, speed: number): Recipe => (s, out, t0) => {
+  const a = Math.min(1, speed / 12);
+  if (mat === 'metal') {        // granat memantul di baja: denting berdengung
+    for (const [f, k, d] of [[1650, 1, 0.12], [2480, 0.55, 0.09]] as const) osc(s, 'triangle', f, f * 0.97, t0, d).connect(env(s, out, t0, a * 0.8 * k, 0.001, d));
+    return 0.14;
+  }
+  if (mat === 'sand') {         // di tanah berdebu: debam tumpul + desir pasir
+    osc(s, 'sine', 260, 170, t0, 0.04).connect(env(s, out, t0, a * 0.8, 0.002, 0.04));
+    noiseSrc(s, t0, 0.05).connect(filt(s, 'lowpass', 900)).connect(env(s, out, t0, a * 0.4, 0.002, 0.05));
+    return 0.07;
+  }
   const f = mat === 'tile' ? 1400 : 600;
-  osc(s, 'triangle', f, f * 0.9, t0, 0.03).connect(env(s, out, t0, Math.min(1, speed / 12), 0.001, 0.03));
+  osc(s, 'triangle', f, f * 0.9, t0, 0.03).connect(env(s, out, t0, a, 0.001, 0.03));
   return 0.05;
 };
 
@@ -140,7 +168,12 @@ export const spawnChime: Recipe = (s, out, t0) => {
   return 0.32;
 };
 export const impactTick = (mat: SurfaceMaterial | 'book' | 'body'): Recipe => (s, out, t0) => {
-  const f = mat === 'tile' ? 2600 : mat === 'book' ? 900 : 1500;
+  if (mat === 'metal') {        // peluru kena baja: "ting" pendek
+    osc(s, 'sine', 3300, 3150, t0, 0.07).connect(env(s, out, t0, 0.22, 0.0008, 0.07));
+    noiseSrc(s, t0, 0.025).connect(filt(s, 'bandpass', 4200, 2)).connect(env(s, out, t0, 0.3, 0.001, 0.025));
+    return 0.09;
+  }
+  const f = mat === 'tile' ? 2600 : mat === 'book' ? 900 : mat === 'sand' ? 700 : 1500;
   noiseSrc(s, t0, 0.03).connect(filt(s, 'bandpass', f, 2)).connect(env(s, out, t0, 0.35, 0.001, 0.03));
   return 0.04;
 };

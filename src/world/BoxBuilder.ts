@@ -35,6 +35,8 @@ const _c = new THREE.Color();
 export class MeshBuckets {
   private buckets = new Map<THREE.Material, Bucket>();
   triangles = 0;
+  /** Putaran Y aktif untuk addQuad (diisi addBox dengan rotY ≠ 0): posisi & normal diputar di (cx, cz). */
+  private xf: { cx: number; cz: number; c: number; s: number } | null = null;
 
   /** maxCell > 0: muka yang lebih panjang dari maxCell dipecah jadi kisi (cahaya bake per verteks bergradasi halus). */
   constructor(readonly maxCell = 0) {}
@@ -54,11 +56,17 @@ export class MeshBuckets {
     const l1 = Math.hypot(p[3] - p[0], p[4] - p[1], p[5] - p[2]), l3 = Math.hypot(p[9] - p[0], p[10] - p[1], p[11] - p[2]);
     const nu = this.maxCell > 0 ? Math.max(1, Math.ceil(l1 / this.maxCell - 1e-6)) : 1;
     const nv = this.maxCell > 0 ? Math.max(1, Math.ceil(l3 / this.maxCell - 1e-6)) : 1;
+    const xf = this.xf;
+    // R_y(θ) di pusat (cx, cz): x' = cx + dx·cos + dz·sin, z' = cz − dx·sin + dz·cos (konvensi rotation.y three.js)
+    const nx = xf ? n[0] * xf.c + n[2] * xf.s : n[0], nz = xf ? -n[0] * xf.s + n[2] * xf.c : n[2];
     for (let j = 0; j <= nv; j++) for (let i = 0; i <= nu; i++) {
       const a = i / nu, c = j / nv;
-      for (let k = 0; k < 3; k++) b.pos.push(p[k] + (p[3 + k] - p[k]) * a + (p[9 + k] - p[k]) * c);
+      const x = p[0] + (p[3] - p[0]) * a + (p[9] - p[0]) * c, y = p[1] + (p[4] - p[1]) * a + (p[10] - p[1]) * c;
+      const z = p[2] + (p[5] - p[2]) * a + (p[11] - p[2]) * c;
+      if (xf) { const dx = x - xf.cx, dz = z - xf.cz; b.pos.push(xf.cx + dx * xf.c + dz * xf.s, y, xf.cz - dx * xf.s + dz * xf.c); }
+      else b.pos.push(x, y, z);
       b.uv.push(uv[0] + (uv[2] - uv[0]) * a + (uv[6] - uv[0]) * c, uv[1] + (uv[3] - uv[1]) * a + (uv[7] - uv[1]) * c);
-      b.nrm.push(n[0], n[1], n[2]); b.col.push(_c.r, _c.g, _c.b);
+      b.nrm.push(nx, n[1], nz); b.col.push(_c.r, _c.g, _c.b);
     }
     for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) {
       const v0 = base + j * (nu + 1) + i, v1 = v0 + 1, v3 = v0 + nu + 1, v2 = v3 + 1;
@@ -67,7 +75,13 @@ export class MeshBuckets {
     this.triangles += 2 * nu * nv;
   }
 
-  addBox(min: ArrayLike<number>, max: ArrayLike<number>, s: SlotMats, skip: { bottom?: boolean; top?: boolean; sides?: boolean } = {}) {
+  /** rotY (radian, opsional): balok diputar di pusatnya (OBB, lihat MapData.Box). UV mengikuti sumbu LOKAL balok. */
+  addBox(min: ArrayLike<number>, max: ArrayLike<number>, s: SlotMats, skip: { bottom?: boolean; top?: boolean; sides?: boolean } = {}, rotY = 0) {
+    if (rotY) {
+      this.xf = { cx: (min[0] + max[0]) / 2, cz: (min[2] + max[2]) / 2, c: Math.cos(rotY), s: Math.sin(rotY) };
+      try { this.addBox(min, max, s, skip, 0); } finally { this.xf = null; }
+      return;
+    }
     const [x0, y0, z0] = [min[0], min[1], min[2]], [x1, y1, z1] = [max[0], max[1], max[2]];
     if (!skip.top) this.addQuad(s.top, [x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0], [0, 1, 0], [x0, -z0, x0, -z1, x1, -z1, x1, -z0]);
     if (!skip.bottom) this.addQuad(s.bottom, [x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1], [0, -1, 0], [x0, z0, x1, z0, x1, z1, x0, z1]);

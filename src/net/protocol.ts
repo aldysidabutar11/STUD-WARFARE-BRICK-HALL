@@ -125,6 +125,11 @@ export interface ShotFx { shooter: number; x: number; y: number; z: number; kind
 /** Efek kosmetik lain: 1 melee swing / 2 melee hit / 3 melee wall / 4 pantulan granat / 5 reload / 6 dryfire / 7 pin. */
 export interface MiscFx { type: number; ent: number; a: number; x: number; y: number; z: number }
 
+/** Pantulan granat (MiscFx type 4, byte `a`): 3 bit kode material (world/surfaces SURFACES) | kecepatan ×2 (5 bit, maks 15.5 u/s —
+ *  di atas 12 u/s volume suara pantul sudah penuh, lihat Recipes.bounce). */
+export const packBounce = (matCode: number, speed: number) => (matCode & 7) | (Math.max(0, Math.min(31, Math.round(speed * 2))) << 3);
+export const unpackBounce = (a: number) => ({ mat: a & 7, speed: (a >> 3) / 2 });
+
 export interface MatchInfo { state: number; sb: number; sr: number; timeLeft: number; countdown: number; round: number }
 
 export interface Snapshot {

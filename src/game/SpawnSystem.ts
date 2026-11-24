@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
-import { SPAWN_SLOTS, type SpawnFloor } from '../world/MapData';
+import type { SpawnFloor } from '../world/MapData';
+import { currentMap } from '../world/maps/registry';
 import { physics } from '../physics/Physics';
 import { bus } from '../core/EventBus';
 import { ctx } from './ctx';
@@ -13,21 +14,27 @@ const FLOORS: SpawnFloor[] = ['upper', 'ground'];
 
 export class SpawnSystem {
   /**
-   * v2 (permintaan pengguna): lantai spawn (1 = ruang spawn bawah, 2 = ruang spawn atas) dipilih ACAK tiap respawn.
+   * v2 (permintaan pengguna): lantai spawn (Brick Hall: 1 = ruang spawn bawah, 2 = ruang spawn atas) dipilih ACAK tiap respawn.
    * Di lantai itu: lewati slot terisi (karakter dalam 1.6 u), pilih slot dengan jarak minimum terbesar ke musuh ber-LOS
-   * (§12). Bila semua slot lantai itu terisi → lantai lainnya. Mengembalikan indeks global (0–4 atas, 5–9 bawah).
+   * (§12). Bila semua slot lantai itu terisi (atau map tidak punya lantai itu, mis. Steel Yard tanpa 'upper') → lantai lainnya.
+   * Mengembalikan indeks global = indeks di [...upper, ...ground] (Brick Hall: 0–4 atas, 5–9 bawah).
    */
   pickSlot(e: Entity): number {
+    const slots = currentMap().spawnSlots[e.team], off = [0, slots.upper.length];
     const first = Math.random() < 0.5 ? 0 : 1;
     for (const f of [first, 1 - first]) {
-      const i = this.bestOn(e, SPAWN_SLOTS[e.team][FLOORS[f]]);
-      if (i >= 0) return f * 5 + i;
+      const i = this.bestOn(e, slots[FLOORS[f]]);
+      if (i >= 0) return off[f] + i;
     }
-    return first * 5 + Math.floor(Math.random() * 5);
+    const f = slots[FLOORS[first]].length ? first : 1 - first;
+    return off[f] + Math.floor(Math.random() * slots[FLOORS[f]].length);
   }
 
   /** Posisi slot dari indeks global. */
-  slotPos(e: Entity, gi: number): [number, number, number] { return SPAWN_SLOTS[e.team][FLOORS[gi >= 5 ? 1 : 0]][gi % 5]; }
+  slotPos(e: Entity, gi: number): [number, number, number] {
+    const slots = currentMap().spawnSlots[e.team], nu = slots.upper.length;
+    return gi < nu ? slots.upper[gi] : slots.ground[gi - nu];
+  }
 
   private bestOn(e: Entity, slots: [number, number, number][]): number {
     let best = -1, bestVal = -Infinity;

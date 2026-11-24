@@ -2,7 +2,8 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CFG } from '../config/gameConfig';
 import { QUERY } from './groups';
-import { surfaceAt } from '../world/MapData';
+// map aktif lewat modul daun `current` (BUKAN registry): registry → builder map → Physics akan membentuk import melingkar
+import { currentMap } from '../world/maps/current';
 import type { SurfaceMaterial } from '../core/EventBus';
 
 export { RAPIER };
@@ -11,6 +12,7 @@ export interface V3 { x: number; y: number; z: number }
 
 class PhysicsWorld {
   world!: RAPIER.World;
+  /** Collider lantai aula Brick Hall (langkah kaki 'tile'); −1 = tidak ada (map lain memakai surfaceAt map aktif). */
   groundHandle = -1;
   private ray!: RAPIER.Ray;
   private ball!: RAPIER.Ball;
@@ -68,7 +70,7 @@ class PhysicsWorld {
     r.dir.x = 0; r.dir.y = -1; r.dir.z = 0;
     const hit = this.world.castRay(r, 0.8, true, undefined, QUERY.LOS);
     if (hit && hit.collider.handle === this.groundHandle) return 'tile';
-    return surfaceAt(x, y, z);
+    return currentMap().surfaceAt(x, y, z);
   }
 
   get zeroVec() { return this.zero; }

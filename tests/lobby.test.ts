@@ -1,12 +1,15 @@
 // tests/lobby.test.ts — room / lobby main bareng (permintaan pengguna): 5v5, slot kosong diisi bot, pindah tim, siap, setelan host,
-// kode room & link, nama aman, roster match. Logika murni game/Lobby.ts (tahap 1: lokal, server menyusul).
+// kode room & link, nama aman, roster match, pilihan map (multi-map: map tertentu / Acak). Logika murni game/Lobby.ts.
 import { describe, expect, it } from 'vitest';
-import { Lobby, cleanName, formatRoomCode, makeRoomCode, parseRoomCode, type RoomSettings } from '../src/game/Lobby';
+import {
+  Lobby, cleanName, cleanRoomSettings, formatRoomCode, isMapChoice, makeRoomCode, parseRoomCode, pickMap, validRoomPatch, type RoomSettings,
+} from '../src/game/Lobby';
+import { MAP_IDS } from '../src/world/maps/types';
 import { XCFG } from '../src/config/extraConfig';
 import { makeRng } from '../src/core/Rng';
 import { validate } from '../src/ui/Settings';
 
-const S = (): RoomSettings => ({ mode: 'tdm', scoreLimit: 50, timeLimit: 10, roundsToWin: 5, difficulty: 'normal', fillBots: true });
+const S = (): RoomSettings => ({ mode: 'tdm', scoreLimit: 50, timeLimit: 10, roundsToWin: 5, difficulty: 'normal', fillBots: true, map: 'brickhall' });
 /** Room dengan host + n teman (teman masuk bergantian ke tim yang lebih sedikit). */
 function room(n: number) {
   const L = new Lobby('K7RB2X', S());
@@ -121,5 +124,54 @@ describe('Room: tim, siap, host', () => {
     expect(all.filter(e => e.kind === 'friend')).toHaveLength(friends.length);
     expect(all.filter(e => e.kind === 'bot')).toHaveLength(10 - 1 - friends.length);
     expect(r.red.find(e => e.kind === 'you')?.name).toBe('Aldy');
+  });
+});
+
+describe('Pilihan map (multi-map): room & setelan', () => {
+  it('host memilih map (tertentu / Acak); pemain lain tidak bisa; nilai tak dikenal ditolak utuh', () => {
+    const { L, host, friends } = room(2);
+    expect(L.settings.map).toBe('brickhall');
+    expect(L.setSettings(friends[0].id, { map: 'steelyard' })).toBe(false);               // bukan host
+    expect(L.settings.map).toBe('brickhall');
+    expect(L.setSettings(host.id, { map: 'steelyard' })).toBe(true);
+    expect(L.settings.map).toBe('steelyard');
+    expect(L.setSettings(host.id, { map: 'random' })).toBe(true);
+    expect(L.settings.map).toBe('random');
+    for (const bad of ['atlantis', 'Steelyard', '', 42, null, { id: 'brickhall' }])
+      expect(L.setSettings(host.id, { map: bad } as never)).toBe(false);
+    expect(L.setSettings(host.id, { mode: 'elim', map: 'nuketown' } as never)).toBe(false);  // satu nilai salah → patch ditolak utuh
+    expect(L.settings).toMatchObject({ map: 'random', mode: 'tdm' });
+    expect(L.setSettings(host.id, { hack: true } as never)).toBe(false);                    // kunci tak dikenal
+    expect(validRoomPatch({ scoreLimit: 75, fillBots: false, map: 'brickhall' })).toBe(true);
+    expect(validRoomPatch({ scoreLimit: 2.5 })).toBe(false);
+    expect(validRoomPatch({ difficulty: 'insane' })).toBe(false);
+  });
+  it('map ikut toState → JSON → fromState (cermin klien); data rusak dari jaringan → bawaan aman', () => {
+    const { L, host } = room(1);
+    L.setSettings(host.id, { map: 'steelyard', mode: 'elim' });
+    const C = Lobby.fromState(JSON.parse(JSON.stringify(L.toState())), L.players[1].id);
+    expect(C.settings).toEqual(L.settings);
+    L.setSettings(host.id, { map: 'random' });
+    expect(Lobby.fromState(JSON.parse(JSON.stringify(L.toState())), host.id).settings.map).toBe('random');
+    const st = JSON.parse(JSON.stringify(L.toState()));
+    st.settings.map = 'atlantis'; st.settings.mode = 'ctf'; st.settings.scoreLimit = -3; st.settings.fillBots = 'ya';
+    st.code = '<img src=x>'; st.players.push({ id: '"><b>', name: 'X' }, { id: 'p1', name: 'dobel' });
+    const bad = Lobby.fromState(st, host.id);
+    expect(bad.settings).toMatchObject({ map: 'brickhall', mode: 'tdm', scoreLimit: 50, fillBots: true, roundsToWin: 5, difficulty: 'normal' });
+    expect(bad.code).toBe('');                                                               // bukan kode room sah
+    expect(bad.players.map(p => p.id)).toEqual(['p1', 'p2']);                                // id aneh & ganda dibuang
+    expect(cleanRoomSettings(undefined)).toMatchObject({ map: 'brickhall', mode: 'tdm' });
+  });
+  it('Acak diundi seragam dari semua map; map tertentu tetap; setelan lokal menerima Acak', () => {
+    const rng = makeRng(11), seen = new Map<string, number>();
+    for (let i = 0; i < 400; i++) { const m = pickMap('random', rng); seen.set(m, (seen.get(m) ?? 0) + 1); }
+    expect([...seen.keys()].sort()).toEqual([...MAP_IDS].sort());                            // hanya id konkret, semua muncul
+    for (const n of seen.values()) expect(n).toBeGreaterThan(400 / MAP_IDS.length * 0.7);
+    expect(pickMap('random', () => 0.999999)).toBe(MAP_IDS[MAP_IDS.length - 1]);
+    expect(pickMap('steelyard', () => 0)).toBe('steelyard');
+    expect([isMapChoice('random'), isMapChoice('brickhall'), isMapChoice('atlantis'), isMapChoice(undefined)]).toEqual([true, true, false, false]);
+    expect(validate({ map: 'random' } as never).map).toBe('random');
+    expect(validate({ map: 'steelyard' } as never).map).toBe('steelyard');
+    expect(validate({ map: 'atlantis' } as never).map).toBe('brickhall');
   });
 });

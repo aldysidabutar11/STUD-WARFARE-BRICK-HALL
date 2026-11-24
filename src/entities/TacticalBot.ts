@@ -10,7 +10,7 @@ import type { Entity } from './Entity';
 import type { TriggerInput } from '../combat/WeaponSystem';
 import type { GrenadeInput } from '../combat/GrenadeK400';
 import type { NavEdge } from '../world/NavGraph';
-import { BOXES } from '../world/MapData';
+import { currentMap } from '../world/maps/registry';
 import { WEAPONS } from '../config/weaponsData';
 import { canMelee } from '../combat/Melee';
 import { moveFeel } from './moveFeel';
@@ -31,7 +31,8 @@ export class TacticalBot {
   private prev: BotState = 'PATROL';
   stateT = 0;
   readonly diff: BotDifficultyDef;
-  lane: Lane = 'bridge';
+  /** Id jalur dari MapDef.lanes ('' = belum dibagi → laneRoute memakai jalur pertama map). */
+  lane: Lane = '';
   private route: string[] = [];
   private routeIdx = 0;
   private exploreT = 0;
@@ -213,7 +214,7 @@ export class TacticalBot {
 
   // ─────────────────────────── rute & path
   private startRoute() {
-    this.route = laneRoute(this.lane, this.e.team === 'blue' ? 'S' : 'N');
+    this.route = laneRoute(this.lane, this.e.team === 'blue' ? 'S' : 'N', this.e.pos.x);
     this.routeIdx = 0; this.exploreT = 0;
     this.nextRouteNode();
   }
@@ -248,7 +249,7 @@ export class TacticalBot {
     const edge = this.edges[this.pathIdx];
     if (edge && edge.kind === 'drop') {
       const shelfId = nav.dropInfo.get(edge);
-      const box = BOXES.find(b => b.id === shelfId);
+      const box = currentMap().boxes.find(b => b.id === shelfId);
       if (box) {
         const A = nav.nodes[edge.a];
         const shelf = new THREE.Vector3((box.min[0] + box.max[0]) / 2, 4, (box.min[2] + box.max[2]) / 2);

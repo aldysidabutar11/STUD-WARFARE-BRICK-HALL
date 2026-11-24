@@ -1,44 +1,74 @@
-// src/ui/Minimap.ts — radar berputar (GDD §1 "Pasca-MVP: minimap"). Peta statis dirender sekali dari manifest MapData,
-// lalu digambar dengan transformasi yaw pemain. Musuh muncul bila menembak (senjata tanpa peredam), terlihat pemain,
-// atau dilaporkan bot rekan setim (BotDirector).
+// src/ui/Minimap.ts — radar berputar (GDD §1 "Pasca-MVP: minimap"). Peta statis dirender sekali dari data map AKTIF (MapDef:
+// batas, balok + rotY, tangga, slot spawn) dan dibangun ulang saat ganti map (setMap), lalu digambar dengan transformasi yaw
+// pemain. Musuh muncul bila menembak (senjata tanpa peredam), terlihat pemain, atau dilaporkan bot rekan setim (BotDirector).
 import * as THREE from 'three';
 import { XCFG } from '../config/extraConfig';
 import { CFG } from '../config/gameConfig';
-import { BOXES, STAIRS, SPAWN_SLOTS, zoneName, type Box } from '../world/MapData';
+import type { Box } from '../world/MapData';
+import { currentMap, type MapDef } from '../world/maps/registry';
 import { physics } from '../physics/Physics';
 import { bus } from '../core/EventBus';
 import { ctx } from '../game/ctx';
 import type { Entity } from '../entities/Entity';
 
 const RD = XCFG.radar;
-const X0 = -31, Z0 = -51, W = 62, H = 102;
 const _eye = new THREE.Vector3(), _head = new THREE.Vector3();
 
-function buildMapImage(): HTMLCanvasElement {
-  const S = RD.pxPerUnit, c = document.createElement('canvas');
+/** Palet radar: dalam ruang (Brick Hall, nilai lama) / luar ruang (tanah berdebu, kontainer baja). */
+const PAL = {
+  indoor: { floor: '#2b1e14', upper: '#6a4a2e', stair: '#4d3522', wall: '#0e0906', pillar: '#3b2616', shelf: '#8a5a2e', cover: '#a9824f', rail: '#d9b56a' },
+  outdoor: { floor: '#3a3226', upper: '#6a5a40', stair: '#4d4232', wall: '#131210', pillar: '#3b3328', shelf: '#7d6a4a', cover: '#a99a78', rail: '#d9c58a' },
+};
+
+/** Gambar peta statis map `def` (1 unit = RD.pxPerUnit px; asal kanvas = (X0, Z0) = sudut batas − 1 u). */
+function buildMapImage(def: MapDef, X0: number, Z0: number, W: number, H: number): HTMLCanvasElement {
+  const S = RD.pxPerUnit, c = document.createElement('canvas'), P = def.atmosphere.outdoor ? PAL.outdoor : PAL.indoor;
   c.width = W * S; c.height = H * S;
   const g = c.getContext('2d')!;
-  const rect = (b: Box, fill: string) => { g.fillStyle = fill; g.fillRect((b.min[0] - X0) * S, (b.min[2] - Z0) * S, (b.max[0] - b.min[0]) * S, (b.max[2] - b.min[2]) * S); };
-  g.fillStyle = '#2b1e14'; g.fillRect((-30 - X0) * S, (-50 - Z0) * S, 60 * S, 100 * S);                // lantai dasar
-  for (const b of BOXES) if (b.cat === 'mass' || b.cat === 'bridge') rect(b, '#6a4a2e');            // lantai 2 (Y 10)
-  for (const s of STAIRS) {                                                                           // tangga: garis anak tangga
+  // balok berputar (rotY): persegi diputar di pusatnya (kanvas: x → kanan, z → bawah ⇒ sudut kanvas = −rotY)
+  const rect = (b: Box, fill: string) => {
+    g.fillStyle = fill;
+    if (!b.rotY) { g.fillRect((b.min[0] - X0) * S, (b.min[2] - Z0) * S, (b.max[0] - b.min[0]) * S, (b.max[2] - b.min[2]) * S); return; }
+    const w = (b.max[0] - b.min[0]) * S, h = (b.max[2] - b.min[2]) * S;
+    g.save();
+    g.translate(((b.min[0] + b.max[0]) / 2 - X0) * S, ((b.min[2] + b.max[2]) / 2 - Z0) * S);
+    g.rotate(-b.rotY);
+    g.fillRect(-w / 2, -h / 2, w, h);
+    g.restore();
+  };
+  const bx = def.bounds.x, bz = def.bounds.z;
+  g.fillStyle = P.floor; g.fillRect((bx[0] - X0) * S, (bz[0] - Z0) * S, (bx[1] - bx[0]) * S, (bz[1] - bz[0]) * S);   // lantai dasar
+  for (const b of def.boxes) if (b.cat === 'mass' || b.cat === 'bridge') rect(b, P.upper);                           // lantai 2 (Y 10)
+  for (const s of def.stairs) {                                                                                      // tangga: garis anak tangga
     const z0 = Math.min(s.zFoot, s.zTop), z1 = Math.max(s.zFoot, s.zTop);
-    g.fillStyle = '#4d3522'; g.fillRect((s.x[0] - X0) * S, (z0 - Z0) * S, (s.x[1] - s.x[0]) * S, (z1 - z0) * S);
+    g.fillStyle = P.stair; g.fillRect((s.x[0] - X0) * S, (z0 - Z0) * S, (s.x[1] - s.x[0]) * S, (z1 - z0) * S);
     g.strokeStyle = 'rgba(255,230,190,0.25)'; g.lineWidth = 1;
     for (let z = z0; z < z1; z += 1.43) { g.beginPath(); g.moveTo((s.x[0] - X0) * S, (z - Z0) * S); g.lineTo((s.x[1] - X0) * S, (z - Z0) * S); g.stroke(); }
   }
-  // ruang spawn diberi warna tim
-  g.fillStyle = 'rgba(61,142,224,0.35)'; g.fillRect((-9.4 - X0) * S, (-50 - Z0) * S, 18.8 * S, 6.9 * S);
-  g.fillStyle = 'rgba(224,72,61,0.35)'; g.fillRect((-9.4 - X0) * S, (43.1 - Z0) * S, 18.8 * S, 6.9 * S);
-  for (const b of BOXES) {
-    const h = b.max[1] - b.min[1];
-    if (b.id === 'GROUND' || b.id === 'CEILING' || b.min[1] > 10.5 || h < 1.5) continue;              // plafon/lintel/rel tipis
-    if (b.cat === 'shell' || b.cat === 'wall' || b.cat === 'spawn') rect(b, '#0e0906');
-    else if (b.cat === 'pillar') rect(b, '#3b2616');
-    else if (b.cat === 'shelf') rect(b, '#8a5a2e');
-    else if (b.cat === 'cover' || b.cat === 'prop') rect(b, '#a9824f');
+  // area spawn diberi warna tim: tapak balok kategori 'spawn' di sisi tim (Brick Hall: ruang spawn), atau — bila map tidak
+  // punya — kotak 6 × 6 u di sekitar tiap slot (satu path → tanpa tumpukan alfa)
+  for (const [team, fill, sgn] of [['blue', 'rgba(61,142,224,0.35)', -1], ['red', 'rgba(224,72,61,0.35)', 1]] as const) {
+    const rooms = def.boxes.filter(b => b.cat === 'spawn' && Math.sign(b.min[2] + b.max[2]) === sgn);
+    g.fillStyle = fill;
+    if (rooms.length) {
+      const x0 = Math.min(...rooms.map(b => b.min[0])), x1 = Math.max(...rooms.map(b => b.max[0]));
+      const z0 = Math.min(...rooms.map(b => b.min[2])), z1 = Math.max(...rooms.map(b => b.max[2]));
+      g.fillRect((x0 - X0) * S, (z0 - Z0) * S, (x1 - x0) * S, (z1 - z0) * S);
+    } else {
+      g.beginPath();
+      for (const [x, , z] of [...def.spawnSlots[team].upper, ...def.spawnSlots[team].ground]) g.rect((x - 3 - X0) * S, (z - 3 - Z0) * S, 6 * S, 6 * S);
+      g.fill();
+    }
   }
-  for (const b of BOXES) if (b.cat === 'rail') rect(b, '#d9b56a');
+  for (const b of def.boxes) {
+    const h = b.max[1] - b.min[1];
+    if (b.max[1] <= 0.01 || b.min[1] > 10.5 || h < 1.5) continue;                                     // tanah, plafon/lintel/rel tipis
+    if (b.cat === 'shell' || b.cat === 'wall' || b.cat === 'spawn') rect(b, P.wall);
+    else if (b.cat === 'pillar') rect(b, P.pillar);
+    else if (b.cat === 'shelf') rect(b, P.shelf);
+    else if (b.cat === 'cover' || b.cat === 'prop') rect(b, P.cover);
+  }
+  for (const b of def.boxes) if (b.cat === 'rail') rect(b, P.rail);
   return c;
 }
 
@@ -55,6 +85,9 @@ export class Minimap {
   /** Nama area di bawah radar (callout/orientasi, v2). */
   private zone = document.createElement('div');
   private zoneText = '';
+  /** Asal kanvas peta (sudut batas map − 1 u) & map yang sedang digambar. */
+  private X0 = 0; private Z0 = 0;
+  private def: MapDef;
 
   constructor(parent: HTMLElement) {
     this.el.className = 'minimap';
@@ -62,7 +95,8 @@ export class Minimap {
     this.el.append(this.canvas, this.zone);
     parent.appendChild(this.el);
     this.g = this.canvas.getContext('2d')!;
-    this.img = buildMapImage();
+    this.def = currentMap();
+    this.img = this.buildImage(this.def);
     this.resize();
     addEventListener('resize', () => this.resize());
     bus.on('shot', (e) => this.shotT.set(e.shooterId, ctx.time));
@@ -75,6 +109,18 @@ export class Minimap {
 
   reset() { this.shotT.clear(); this.spotT.clear(); }
 
+  /** Ganti map: gambar ulang peta statis dari MapDef baru. */
+  setMap(def: MapDef) {
+    if (def === this.def) return;
+    this.def = def; this.img = this.buildImage(def);
+    this.zoneText = ''; this.zone.textContent = ''; this.reset();
+  }
+
+  private buildImage(def: MapDef): HTMLCanvasElement {
+    this.X0 = def.bounds.x[0] - 1; this.Z0 = def.bounds.z[0] - 1;
+    return buildMapImage(def, this.X0, this.Z0, def.bounds.x[1] - def.bounds.x[0] + 2, def.bounds.z[1] - def.bounds.z[0] + 2);
+  }
+
   private vis = true;
   setVisible(v: boolean) { if (v !== this.vis) { this.vis = v; this.el.style.display = v ? 'block' : 'none'; } }
 
@@ -83,13 +129,13 @@ export class Minimap {
     if (!focus || !player || !this.vis) return;
     this.frame++;
     if (this.frame % 10 === 0) {
-      const z = zoneName(focus.renderPos.x, focus.renderPos.y, focus.renderPos.z);
+      const z = this.def.zoneName(focus.renderPos.x, focus.renderPos.y, focus.renderPos.z);
       if (z !== this.zoneText) { this.zoneText = z; this.zone.textContent = z; }
     }
     if (this.frame % 6 === 0 && player.alive) this.spot(player);
     if (this.frame % 2) return; // gambar 30 Hz
     const g = this.g, size = this.canvas.width, R = size / 2 - 2 * this.dpr, C = size / 2;
-    const k = R / RD.range, S = RD.pxPerUnit, c = Math.cos(yaw), s = Math.sin(yaw);
+    const k = R / RD.range, S = RD.pxPerUnit, c = Math.cos(yaw), s = Math.sin(yaw), X0 = this.X0, Z0 = this.Z0;
     const px = focus.renderPos.x, pz = focus.renderPos.z;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, size, size);
@@ -136,8 +182,9 @@ export class Minimap {
     const nx = C - s * (R - 9 * this.dpr), ny = C + c * (R - 9 * this.dpr); // arah +Z (Utara) di layar
     g.fillStyle = '#f5cd30'; g.font = `bold ${11 * this.dpr}px Segoe UI, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText('U', nx, ny);
-    // titik spawn tim pemain (orientasi)
-    const sp = SPAWN_SLOTS[player.team].upper[2];
+    // titik spawn tim pemain (orientasi): slot ke-3 lantai pertama yang ada (Brick Hall: ruang spawn atas)
+    const ss = this.def.spawnSlots[player.team], fl = ss.upper.length ? ss.upper : ss.ground, sp = fl[Math.min(2, fl.length - 1)];
+    if (!sp) return;
     const [bx, by] = toScreen(sp[0], sp[2]);
     if (Math.hypot(bx - C, by - C) < R - 6 * this.dpr) { g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(bx - 2 * this.dpr, by - 2 * this.dpr, 4 * this.dpr, 4 * this.dpr); }
   }

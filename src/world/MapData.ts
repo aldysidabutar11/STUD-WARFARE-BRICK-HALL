@@ -7,10 +7,15 @@ export type Mirror = '-' | 'X' | 'Z' | 'XZ';
 export type Style = 'hidden' | 'plaster' | 'ceiling' | 'balc' | 'base' | 'deck' | 'darkwood' | 'panel' | 'table'
   | 'crate' | 'tower' | 'rail' | 'shelf'
   // v2 (rombak map atas permintaan pengguna): rak tinggi/lemari bersisi buku, dinding arsip, panel berwarna tim (Z<0 biru, Z>0 merah)
-  | 'stack' | 'arcwall' | 'teampanel';
+  | 'stack' | 'arcwall' | 'teampanel'
+  // multi-map (map luar ruang, mis. Steel Yard): label permukaan generik — dipakai builder map itu sendiri (Brick Hall tidak)
+  | OutdoorStyle;
+export type OutdoorStyle = 'steel' | 'fence' | 'concrete' | 'timber' | 'rubber' | 'vehicle' | 'fabric';
 
-export interface Row { id: string; cat: Cat; x: [number, number]; y: [number, number]; z: [number, number]; m: Mirror; style: Style }
-export interface Box { id: string; cat: Cat; min: [number, number, number]; max: [number, number, number]; style: Style }
+/** rotY (opsional, radian): putaran balok di PUSATNYA terhadap sumbu Y (konvensi three.js). x/z = rentang LOKAL sebelum diputar. */
+export interface Row { id: string; cat: Cat; x: [number, number]; y: [number, number]; z: [number, number]; m: Mirror; style: Style; rotY?: number }
+/** min/max = kotak LOKAL (sebelum diputar) — dengan rotY ≠ 0 balok diputar rotY radian di pusat (min+max)/2 (OBB). */
+export interface Box { id: string; cat: Cat; min: [number, number, number]; max: [number, number, number]; style: Style; rotY?: number }
 
 const R = (id: string, cat: Cat, x: [number, number], y: [number, number], z: [number, number], m: Mirror, style: Style): Row =>
   ({ id, cat, x, y, z, m, style });
@@ -105,22 +110,60 @@ export const ROWS: Row[] = [
 const mirrorXId = (id: string) => /_W$/.test(id) ? id.replace(/_W$/, '_E') : /_[SN]W$/.test(id) ? id.replace(/W$/, 'E') : id + '_E';
 const mirrorZId = (id: string) => /_S([WE]?)$/.test(id) ? id.replace(/_S([WE]?)$/, '_N$1') : id + '_N';
 
-/** Ekspansi aturan mirror: X (x0,x1)→(−x1,−x0) _W→_E; Z (z0,z1)→(−z1,−z0) _S→_N; XZ empat salinan. */
+/** Ekspansi aturan mirror: X (x0,x1)→(−x1,−x0) _W→_E; Z (z0,z1)→(−z1,−z0) _S→_N; XZ empat salinan.
+ *  Balok berputar (rotY): cermin satu sumbu membalik arah putaran (rotY → −rotY); cermin X lalu Z = putar 180° (rotY tetap). */
 export function expandRows(rows: Row[]): Box[] {
   const out: Box[] = [];
   for (const r of rows) {
-    const variants: { id: string; x: [number, number]; z: [number, number] }[] = [{ id: r.id, x: r.x, z: r.z }];
-    if (r.m === 'X' || r.m === 'XZ') variants.push({ id: mirrorXId(r.id), x: [-r.x[1], -r.x[0]], z: r.z });
+    const variants: { id: string; x: [number, number]; z: [number, number]; flip: boolean }[] = [{ id: r.id, x: r.x, z: r.z, flip: false }];
+    if (r.m === 'X' || r.m === 'XZ') variants.push({ id: mirrorXId(r.id), x: [-r.x[1], -r.x[0]], z: r.z, flip: true });
     if (r.m === 'Z' || r.m === 'XZ') {
       const n = variants.length;
       for (let i = 0; i < n; i++) {
         const v = variants[i];
-        variants.push({ id: mirrorZId(v.id), x: v.x, z: [-r.z[1], -r.z[0]] });
+        variants.push({ id: mirrorZId(v.id), x: v.x, z: [-r.z[1], -r.z[0]], flip: !v.flip });
       }
     }
-    for (const v of variants) out.push({ id: v.id, cat: r.cat, min: [v.x[0], r.y[0], v.z[0]], max: [v.x[1], r.y[1], v.z[1]], style: r.style });
+    for (const v of variants) {
+      const b: Box = { id: v.id, cat: r.cat, min: [v.x[0], r.y[0], v.z[0]], max: [v.x[1], r.y[1], v.z[1]], style: r.style };
+      if (r.rotY) b.rotY = v.flip ? -r.rotY : r.rotY;
+      out.push(b);
+    }
   }
   return out;
+}
+
+/** Cermin satu balok (berputar atau tidak) terhadap bidang x = 0 ('X') / z = 0 ('Z') / keduanya ('XZ'). Id tidak diubah. */
+export function mirrorBox(b: Box, axis: 'X' | 'Z' | 'XZ'): Box {
+  const mx = axis !== 'Z', mz = axis !== 'X';
+  const out: Box = { ...b,
+    min: [mx ? -b.max[0] : b.min[0], b.min[1], mz ? -b.max[2] : b.min[2]],
+    max: [mx ? -b.min[0] : b.max[0], b.max[1], mz ? -b.min[2] : b.max[2]] };
+  if (b.rotY) out.rotY = mx !== mz ? -b.rotY : b.rotY; else delete out.rotY;
+  return out;
+}
+
+/** 4 sudut tapak (x, z) balok di dunia (urutan: −x−z, +x−z, +x+z, −x+z lokal) — memperhitungkan rotY. */
+export function boxCorners(b: Box): [number, number][] {
+  const cx = (b.min[0] + b.max[0]) / 2, cz = (b.min[2] + b.max[2]) / 2, hx = (b.max[0] - b.min[0]) / 2, hz = (b.max[2] - b.min[2]) / 2;
+  const c = Math.cos(b.rotY ?? 0), s = Math.sin(b.rotY ?? 0);
+  // R_y(θ): lokal (lx, lz) → dunia (lx·cos + lz·sin, −lx·sin + lz·cos)
+  return ([[-hx, -hz], [hx, -hz], [hx, hz], [-hx, hz]] as const).map(([lx, lz]) => [cx + lx * c + lz * s, cz - lx * s + lz * c] as [number, number]);
+}
+
+/** AABB dunia (x, z) dari tapak balok (sama dengan min/max bila tanpa rotY). */
+export function boxAabbXZ(b: Box): { x: [number, number]; z: [number, number] } {
+  if (!b.rotY) return { x: [b.min[0], b.max[0]], z: [b.min[2], b.max[2]] };
+  const p = boxCorners(b);
+  return { x: [Math.min(...p.map(q => q[0])), Math.max(...p.map(q => q[0]))], z: [Math.min(...p.map(q => q[1])), Math.max(...p.map(q => q[1]))] };
+}
+
+/** Jarak 2D titik (x, z) ke tapak balok (0 bila di dalam) — mendukung rotY. */
+export function distToBoxXZ(b: Box, x: number, z: number): number {
+  const cx = (b.min[0] + b.max[0]) / 2, cz = (b.min[2] + b.max[2]) / 2, hx = (b.max[0] - b.min[0]) / 2, hz = (b.max[2] - b.min[2]) / 2;
+  const c = Math.cos(b.rotY ?? 0), s = Math.sin(b.rotY ?? 0), dx = x - cx, dz = z - cz;
+  const lx = dx * c - dz * s, lz = dx * s + dz * c;   // dunia → lokal (R_y(−θ))
+  return Math.hypot(Math.max(Math.abs(lx) - hx, 0), Math.max(Math.abs(lz) - hz, 0));
 }
 
 export const BOXES: Box[] = expandRows(ROWS);

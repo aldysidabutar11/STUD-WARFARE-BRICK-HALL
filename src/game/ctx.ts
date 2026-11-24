@@ -3,7 +3,7 @@ import type { Engine } from '../core/Engine';
 import type { Input } from '../core/Input';
 import type { Props } from '../world/Props';
 import type { NavGraph } from '../world/NavGraph';
-import type { BuiltMap } from '../world/BrickHallBuilder';
+import type { BuiltMap } from '../world/maps/types';
 import type { CameraRig } from '../entities/CameraRig';
 import type { Viewmodel } from '../entities/Viewmodel';
 import type { Entity } from '../entities/Entity';

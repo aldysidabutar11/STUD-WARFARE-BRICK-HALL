@@ -5,49 +5,117 @@
 //   • pantul  : cahaya hangat dari bercak lantai/permukaan yang kena matahari lewat skylight (arah matahari §4.7)
 // Disimpan per verteks (atribut `bake` = ao, langit, pantul). Shader map HANYA memodulasi cahaya tidak langsung (hemisphere + IBL)
 // → matahari & bayangannya tetap dinamis. Grid cahaya juga jadi "light probe" karakter (gelap di arsip, terang di bawah skylight).
+// Multi-map: data map lewat BakeSource (balok + OBB rotY, tangga, sumber cahaya). Mode INDOOR (Brick Hall — hasil identik dengan
+// versi sebelum multi-map) atau OUTDOOR (langit terbuka: visibilitas langit dari grid okupansi + AO + pantul permukaan yang kena
+// matahari).
 import * as THREE from 'three';
 import { XCFG } from '../config/extraConfig';
-import { BOXES, SKYLIGHTS, STAIRS, WINDOWS } from './MapData';
+import { BOXES, SKYLIGHTS, STAIRS, WINDOWS, boxAabbXZ, type Box, type Stair } from './MapData';
 
 const GB = XCFG.gfx.bake;
-const BX0 = -31, BY0 = -1.5, BZ0 = -51, BX1 = 31, BY1 = 30, BZ1 = 51;
-/** Arah datang cahaya matahari (dari posisi matahari 40, 55, 0 ke titik asal). */
-const SUN_DIR = new THREE.Vector3(-40, -55, 0).normalize();
+
+/** Data map untuk bake cahaya. Koordinat dunia; sunDir = arah DATANG sinar matahari (dari matahari ke titik). */
+export interface BakeSource {
+  /** Batas grid bake (sudut min/maks). Di luar grid dianggap udara — beri tepi ±1 u di luar map. */
+  min: [number, number, number];
+  max: [number, number, number];
+  /** Balok padat (rotY didukung: dirasterisasi sebagai OBB). */
+  boxes: readonly Box[];
+  /** Ramp tangga (padat di bawah permukaan miring). */
+  stairs: readonly Stair[];
+  sunDir: [number, number, number];
+  /** Ruang dalam: cahaya langit hanya masuk lewat lubang skylight di plafon & jendela tinggi (Brick Hall). */
+  indoor?: {
+    /** Id balok plafon yang dilubangi skylight. */
+    ceilingId: string;
+    skylights: readonly { x: number; z: number; size: number }[];
+    /** Y sel sumber langit di bawah lubang (dua lapis sel: cj(skyY) − 1 … cj(skyY)). */
+    skyY: number;
+    /** Y awal sinar matahari yang masuk lewat skylight (tepat di bawah plafon). */
+    rayY: number;
+    windows: readonly { x: number; z: number; y: readonly [number, number]; width: number }[];
+    /** |X| sel udara di depan jendela (sisi dalam dinding). */
+    windowInX: number;
+  };
+  /** Luar ruang: langit terbuka. Sumber langit = sel udara yang melihat langit tegak lurus, kuatnya = keterbukaan (8 sinar
+   *  miring); sumber pantul = sel udara tepat di atas permukaan atas (tanah, atap kontainer) yang kena matahari. */
+  outdoor?: {
+    /** Kekuatan pantul tanah/atap yang kena matahari (0..1) — warna & pengali global ada di BAKE_UNIFORMS.uBounce. */
+    bounce: number;
+    /** Jarak cek keterbukaan (u, bawaan 24) & elevasi sinar miring (derajat, bawaan 40). */
+    openDist?: number;
+    openElevDeg?: number;
+    /** Nilai langit sel yang semua sinar miringnya terhalang (bawaan 0.3; terbuka penuh = 1). */
+    openMin?: number;
+  };
+}
+
+/** Sumber bake Brick Hall (nilai yang sama persis dengan versi sebelum multi-map). */
+export function brickHallBake(): BakeSource {
+  return {
+    min: [-31, -1.5, -51], max: [31, 30, 51],
+    boxes: BOXES, stairs: STAIRS,
+    sunDir: [-40, -55, 0],                 // dari posisi matahari (40, 55, 0) ke titik asal
+    indoor: { ceilingId: 'CEILING', skylights: SKYLIGHTS, skyY: 27.5, rayY: 27.9, windows: WINDOWS, windowInX: 29.4 },
+  };
+}
 
 class Grid<T extends Uint8Array | Float32Array> {
   readonly nx: number; readonly ny: number; readonly nz: number;
   readonly d: T;
-  constructor(readonly c: number, make: (n: number) => T) {
-    this.nx = Math.ceil((BX1 - BX0) / c); this.ny = Math.ceil((BY1 - BY0) / c); this.nz = Math.ceil((BZ1 - BZ0) / c);
+  readonly x0: number; readonly y0: number; readonly z0: number;
+  constructor(readonly c: number, src: BakeSource, make: (n: number) => T) {
+    this.x0 = src.min[0]; this.y0 = src.min[1]; this.z0 = src.min[2];
+    this.nx = Math.ceil((src.max[0] - this.x0) / c); this.ny = Math.ceil((src.max[1] - this.y0) / c); this.nz = Math.ceil((src.max[2] - this.z0) / c);
     this.d = make(this.nx * this.ny * this.nz);
   }
   idx(i: number, j: number, k: number) { return (k * this.ny + j) * this.nx + i; }
   inside(i: number, j: number, k: number) { return i >= 0 && j >= 0 && k >= 0 && i < this.nx && j < this.ny && k < this.nz; }
-  ci(x: number) { return Math.floor((x - BX0) / this.c); }
-  cj(y: number) { return Math.floor((y - BY0) / this.c); }
-  ck(z: number) { return Math.floor((z - BZ0) / this.c); }
+  ci(x: number) { return Math.floor((x - this.x0) / this.c); }
+  cj(y: number) { return Math.floor((y - this.y0) / this.c); }
+  ck(z: number) { return Math.floor((z - this.z0) / this.c); }
 }
 
-const inHole = (x: number, z: number) => SKYLIGHTS.some(s => Math.abs(x - s.x) < s.size / 2 && Math.abs(z - s.z) < s.size / 2);
-
-/** Grid okupansi halus dari manifest balok (+ ramp tangga); plafon berlubang di skylight. */
-function occupancy(): Grid<Uint8Array> {
-  const g = new Grid(GB.aoCell, n => new Uint8Array(n));
+/** Grid okupansi halus dari manifest balok (+ ramp tangga, + OBB untuk balok berputar); plafon berlubang di skylight. */
+function occupancy(src: BakeSource): Grid<Uint8Array> {
+  const g = new Grid(GB.aoCell, src, n => new Uint8Array(n));
+  const holes = src.indoor?.skylights ?? [];
+  const inHole = (x: number, z: number) => holes.some(s => Math.abs(x - s.x) < s.size / 2 && Math.abs(z - s.z) < s.size / 2);
   const fill = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, skipHoles = false) => {
     const e = 0.01, c = g.c;
     const i0 = Math.max(0, g.ci(x0 + e)), i1 = Math.min(g.nx - 1, g.ci(x1 - e));
     const j0 = Math.max(0, g.cj(y0 + e)), j1 = Math.min(g.ny - 1, g.cj(y1 - e));
     const k0 = Math.max(0, g.ck(z0 + e)), k1 = Math.min(g.nz - 1, g.ck(z1 - e));
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
-      if (skipHoles && inHole(BX0 + (i + 0.5) * c, BZ0 + (k + 0.5) * c)) continue;
+      if (skipHoles && inHole(g.x0 + (i + 0.5) * c, g.z0 + (k + 0.5) * c)) continue;
       for (let j = j0; j <= j1; j++) g.d[g.idx(i, j, k)] = 1;
     }
   };
-  for (const b of BOXES) fill(b.min[0], b.min[1], b.min[2], b.max[0], b.max[1], b.max[2], b.id === 'CEILING');
-  for (const s of STAIRS) {                     // ramp: padat di bawah permukaan miring
+  // balok berputar: sel yang pusatnya di dalam OBB yang dilebarkan ½ sel (setara aturan "sel bersinggungan" untuk balok sejajar
+  // sumbu → dinding tipis 0.15 u tetap tertangkap)
+  const fillObb = (b: Box, rotY: number) => {
+    const e = 0.01, c = g.c, ab = boxAabbXZ(b);
+    const cx = (b.min[0] + b.max[0]) / 2, cz = (b.min[2] + b.max[2]) / 2;
+    const hx = (b.max[0] - b.min[0]) / 2 + c / 2 - e, hz = (b.max[2] - b.min[2]) / 2 + c / 2 - e;
+    const co = Math.cos(rotY), si = Math.sin(rotY);
+    const i0 = Math.max(0, g.ci(ab.x[0] - c / 2)), i1 = Math.min(g.nx - 1, g.ci(ab.x[1] + c / 2));
+    const j0 = Math.max(0, g.cj(b.min[1] + e)), j1 = Math.min(g.ny - 1, g.cj(b.max[1] - e));
+    const k0 = Math.max(0, g.ck(ab.z[0] - c / 2)), k1 = Math.min(g.nz - 1, g.ck(ab.z[1] + c / 2));
+    for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
+      const dx = g.x0 + (i + 0.5) * c - cx, dz = g.z0 + (k + 0.5) * c - cz;
+      if (Math.abs(dx * co - dz * si) > hx || Math.abs(dx * si + dz * co) > hz) continue;   // dunia → lokal (R_y(−θ))
+      for (let j = j0; j <= j1; j++) g.d[g.idx(i, j, k)] = 1;
+    }
+  };
+  const ceilingId = src.indoor?.ceilingId;
+  for (const b of src.boxes) {
+    if (b.rotY) fillObb(b, b.rotY);
+    else fill(b.min[0], b.min[1], b.min[2], b.max[0], b.max[1], b.max[2], b.id === ceilingId);
+  }
+  for (const s of src.stairs) {                 // ramp: padat di bawah permukaan miring
     const len = Math.abs(s.zTop - s.zFoot), zMin = Math.min(s.zFoot, s.zTop), zMax = Math.max(s.zFoot, s.zTop);
     for (let k = g.ck(zMin); k <= g.ck(zMax); k++) {
-      const z = BZ0 + (k + 0.5) * g.c, top = 10 * Math.min(1, Math.abs(z - s.zFoot) / len);
+      const z = g.z0 + (k + 0.5) * g.c, top = 10 * Math.min(1, Math.abs(z - s.zFoot) / len);
       fill(s.x[0], 0, z - g.c / 2, s.x[1], top, z + g.c / 2);
     }
   }
@@ -55,8 +123,8 @@ function occupancy(): Grid<Uint8Array> {
 }
 
 /** Grid kasar (1 u) padat bila ≥ separuh sub-sel halus padat (dinding tipis tetap menghalangi; pagar tidak). */
-function coarseSolid(fine: Grid<Uint8Array>): Grid<Uint8Array> {
-  const g = new Grid(GB.cell, n => new Uint8Array(n)), r = Math.round(GB.cell / GB.aoCell);
+function coarseSolid(fine: Grid<Uint8Array>, src: BakeSource): Grid<Uint8Array> {
+  const g = new Grid(GB.cell, src, n => new Uint8Array(n)), r = Math.round(GB.cell / GB.aoCell);
   for (let k = 0; k < g.nz; k++) for (let j = 0; j < g.ny; j++) for (let i = 0; i < g.nx; i++) {
     let n = 0;
     for (let a = 0; a < r; a++) for (let b = 0; b < r; b++) for (let cc = 0; cc < r; cc++) {
@@ -77,18 +145,18 @@ for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <
 }
 
 /**
- * Medan cahaya: jarak geodesik lewat udara dari sumber → nilai = kuat_sumber · exp(−d/λ). Dijkstra berbucket (bobot bulat).
- * sources: [indeks sel, kekuatan 0..1].
+ * Medan cahaya: jarak geodesik lewat udara dari sumber → nilai = kuat_sumber · exp(−d/λ). Dijkstra berbucket (bobot bulat,
+ * hasil tidak bergantung urutan sumber). sources(emit): panggil emit(indeks sel, kekuatan 0..1) untuk tiap sumber.
  */
-function propagate(solid: Grid<Uint8Array>, sources: [number, number][], lambda: number): Float32Array {
+function propagate(solid: Grid<Uint8Array>, sources: (emit: (i: number, v: number) => void) => void, lambda: number): Float32Array {
   const n = solid.d.length, dist = new Float32Array(n).fill(Infinity);
   const scale = 10 / solid.c, maxD = Math.ceil(4 * lambda * scale);
   const buckets: number[][] = [];
   const push = (d: number, i: number) => { (buckets[d] ??= []).push(i); };
-  for (const [i, v] of sources) {
+  sources((i, v) => {
     const d0 = Math.max(0, Math.round(-lambda * Math.log(Math.max(0.02, v)) * scale));
     if (d0 < dist[i]) { dist[i] = d0; push(d0, i); }
-  }
+  });
   const { nx, ny } = solid;
   for (let d = 0; d <= maxD; d++) {
     const list = buckets[d];
@@ -119,54 +187,119 @@ export interface LightSample { sky: number; bounce: number }
 export class LightField {
   private fine: Grid<Uint8Array>;
   private solid: Grid<Uint8Array>;
-  private sky: Float32Array;
-  private bounce: Float32Array;
+  private sky!: Float32Array;
+  private bounce!: Float32Array;
+  /** Nilai di luar grid / di dalam benda padat (indoor: gelap; outdoor: langit terbuka). */
+  private readonly outside: LightSample;
+  readonly outdoor: boolean;
   readonly ms: number;
 
-  constructor() {
+  /** Tanpa argumen = Brick Hall (kompatibel dengan versi lama & tests/lightbake.test.ts). */
+  constructor(src: BakeSource = brickHallBake()) {
     const t0 = performance.now();
-    this.fine = occupancy();
-    this.solid = coarseSolid(this.fine);
+    this.outdoor = !!src.outdoor;
+    this.outside = { sky: this.outdoor ? 1 : 0, bounce: 0 };
+    this.fine = occupancy(src);
+    this.solid = coarseSolid(this.fine, src);
+    const sunDir = new THREE.Vector3(...src.sunDir).normalize();
+    if (src.outdoor) this.bakeOutdoor(src.outdoor, sunDir);
+    else if (src.indoor) this.bakeIndoor(src.indoor, sunDir);
+    else { this.sky = new Float32Array(this.solid.d.length); this.bounce = new Float32Array(this.solid.d.length); }
+    this.ms = performance.now() - t0;
+  }
+
+  /** Indoor (Brick Hall): langit lewat skylight & jendela, pantul dari bercak matahari skylight. */
+  private bakeIndoor(I: NonNullable<BakeSource['indoor']>, sunDir: THREE.Vector3) {
     const s = this.solid;
     // sumber langit: tepat di bawah lubang skylight + di depan jendela tinggi
     const sky: [number, number][] = [];
-    const jTop = s.cj(27.5);
-    for (const L of SKYLIGHTS) for (let x = L.x - L.size / 2 + 0.5; x < L.x + L.size / 2; x += s.c)
+    const jTop = s.cj(I.skyY);
+    for (const L of I.skylights) for (let x = L.x - L.size / 2 + 0.5; x < L.x + L.size / 2; x += s.c)
       for (let z = L.z - L.size / 2 + 0.5; z < L.z + L.size / 2; z += s.c) {
         const i = s.ci(x), k = s.ck(z);
         for (let j = jTop - 1; j <= jTop; j++) if (s.inside(i, j, k) && !s.d[s.idx(i, j, k)]) sky.push([s.idx(i, j, k), 1]);
       }
-    for (const w of WINDOWS) for (let y = w.y[0]; y <= w.y[1]; y += s.c) for (let z = w.z - w.width / 2; z <= w.z + w.width / 2; z += s.c) {
-      const i = s.ci(w.x < 0 ? -29.4 : 29.4), j = s.cj(y), k = s.ck(z);
+    for (const w of I.windows) for (let y = w.y[0]; y <= w.y[1]; y += s.c) for (let z = w.z - w.width / 2; z <= w.z + w.width / 2; z += s.c) {
+      const i = s.ci(w.x < 0 ? -I.windowInX : I.windowInX), j = s.cj(y), k = s.ck(z);
       if (s.inside(i, j, k) && !s.d[s.idx(i, j, k)]) sky.push([s.idx(i, j, k), GB.windowSky]);
     }
-    this.sky = propagate(s, sky, GB.skyLambda);
+    this.sky = propagate(s, emit => { for (const [i, v] of sky) emit(i, v); }, GB.skyLambda);
     // sumber pantul: titik jatuh sinar matahari yang masuk lewat skylight (sel udara tepat sebelum menabrak permukaan)
     const bounce: [number, number][] = [];
     const f = this.fine, p = new THREE.Vector3(), q = new THREE.Vector3();
-    for (const L of SKYLIGHTS) for (let x = L.x - L.size / 2 + 0.25; x < L.x + L.size / 2; x += 0.5)
+    for (const L of I.skylights) for (let x = L.x - L.size / 2 + 0.25; x < L.x + L.size / 2; x += 0.5)
       for (let z = L.z - L.size / 2 + 0.25; z < L.z + L.size / 2; z += 0.5) {
-        p.set(x, 27.9, z);
+        p.set(x, I.rayY, z);
         for (let t = 0; t < 80; t += 0.35) {
-          q.copy(p).addScaledVector(SUN_DIR, t);
+          q.copy(p).addScaledVector(sunDir, t);
           const i = f.ci(q.x), j = f.cj(q.y), k = f.ck(q.z);
           if (!f.inside(i, j, k)) break;
           if (f.d[f.idx(i, j, k)]) {
-            q.addScaledVector(SUN_DIR, -0.6);
+            q.addScaledVector(sunDir, -0.6);
             const ci = s.ci(q.x), cj = s.cj(q.y), ck = s.ck(q.z);
             if (s.inside(ci, cj, ck) && !s.d[s.idx(ci, cj, ck)]) bounce.push([s.idx(ci, cj, ck), 1]);
             break;
           }
         }
       }
-    this.bounce = propagate(s, bounce, GB.bounceLambda);
-    this.ms = performance.now() - t0;
+    this.bounce = propagate(s, emit => { for (const [i, v] of bounce) emit(i, v); }, GB.bounceLambda);
+  }
+
+  /** Outdoor: langit dari keterbukaan tiap sel udara + pantul dari permukaan atas yang kena matahari. */
+  private bakeOutdoor(O: NonNullable<BakeSource['outdoor']>, sunDir: THREE.Vector3) {
+    const s = this.solid, c = s.c, nx = s.nx, ny = s.ny, nz = s.nz;
+    // puncak padat per kolom (indeks j; −1 = kolom kosong)
+    const top = new Int16Array(nx * nz).fill(-1);
+    let maxTop = -1;
+    for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++)
+      for (let j = ny - 1; j >= 0; j--) if (s.d[s.idx(i, j, k)]) { top[k * nx + i] = j; if (j > maxTop) maxTop = j; break; }
+    const yTop = s.y0 + (maxTop + 1) * c;          // di atas Y ini tidak ada benda padat → sinar bebas
+    /** Sinar dari (x, y, z) searah (dx, dy, dz) (|d| = 1) menabrak sel padat dalam jarak maks? Keluar grid / di atas yTop = bebas. */
+    const hits = (x: number, y: number, z: number, dx: number, dy: number, dz: number, max: number) => {
+      for (let t = c; t <= max; t += c) {
+        const py = y + dy * t;
+        if (py >= yTop) return false;
+        const i = s.ci(x + dx * t), j = s.cj(py), k = s.ck(z + dz * t);
+        if (!s.inside(i, j, k)) return false;
+        if (s.d[s.idx(i, j, k)]) return true;
+      }
+      return false;
+    };
+    const el = THREE.MathUtils.degToRad(O.openElevDeg ?? 40), ce = Math.cos(el), se = Math.sin(el);
+    const dist = O.openDist ?? 24, vMin = O.openMin ?? 0.3;
+    const AZ: [number, number][] = [];
+    for (let a = 0; a < 8; a++) AZ.push([Math.cos(a * Math.PI / 4) * ce, Math.sin(a * Math.PI / 4) * ce]);
+    // langit: sel udara di atas puncak kolomnya melihat langit tegak lurus → sumber; kekuatan = keterbukaan 8 sinar miring
+    this.sky = propagate(s, emit => {
+      for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) {
+        const x = s.x0 + (i + 0.5) * c, z = s.z0 + (k + 0.5) * c;
+        for (let j = top[k * nx + i] + 1; j < ny; j++) {
+          const y = s.y0 + (j + 0.5) * c;
+          let v = 1;
+          if (y < yTop) {
+            let free = 0;
+            for (const [dx, dz] of AZ) if (!hits(x, y, z, dx, se, dz, dist)) free++;
+            v = vMin + (1 - vMin) * free / AZ.length;
+          }
+          emit(s.idx(i, j, k), v);
+        }
+      }
+    }, GB.skyLambda);
+    // pantul: sel udara tepat di atas permukaan atas (tanah, atap) yang melihat matahari
+    const tx = -sunDir.x, ty = -sunDir.y, tz = -sunDir.z, far = Math.hypot(s.nx, s.ny, s.nz) * c;
+    this.bounce = propagate(s, emit => {
+      for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) {
+        const j = top[k * nx + i] + 1;
+        if (j <= 0 || j >= ny) continue;
+        if (!hits(s.x0 + (i + 0.5) * c, s.y0 + (j + 0.5) * c, s.z0 + (k + 0.5) * c, tx, ty, tz, far)) emit(s.idx(i, j, k), O.bounce);
+      }
+    }, GB.bounceLambda);
   }
 
   /** Interpolasi trilinear medan kasar di titik (sel padat diabaikan & bobot dinormalkan). */
   sample(x: number, y: number, z: number, out: LightSample): LightSample {
     const s = this.solid, c = s.c;
-    const fx = (x - BX0) / c - 0.5, fy = (y - BY0) / c - 0.5, fz = (z - BZ0) / c - 0.5;
+    const fx = (x - s.x0) / c - 0.5, fy = (y - s.y0) / c - 0.5, fz = (z - s.z0) / c - 0.5;
     const i0 = Math.floor(fx), j0 = Math.floor(fy), k0 = Math.floor(fz), tx = fx - i0, ty = fy - j0, tz = fz - k0;
     let w = 0, sk = 0, bo = 0;
     for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) for (let cc = 0; cc < 2; cc++) {
@@ -177,7 +310,7 @@ export class LightField {
       const ww = (a ? tx : 1 - tx) * (b ? ty : 1 - ty) * (cc ? tz : 1 - tz);
       w += ww; sk += ww * this.sky[id]; bo += ww * this.bounce[id];
     }
-    out.sky = w > 1e-4 ? sk / w : 0; out.bounce = w > 1e-4 ? bo / w : 0;
+    out.sky = w > 1e-4 ? sk / w : this.outside.sky; out.bounce = w > 1e-4 ? bo / w : this.outside.bounce;
     return out;
   }
 

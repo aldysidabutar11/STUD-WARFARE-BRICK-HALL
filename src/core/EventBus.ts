@@ -3,7 +3,8 @@ import type * as THREE from 'three';
 import type { WeaponId } from '../config/weaponsData';
 
 export type HitPart = 'head' | 'upper' | 'lower' | 'limb';
-export type SurfaceMaterial = 'wood' | 'tile' | 'carpet';
+/** Material permukaan (langkah kaki, tumbukan peluru, pantulan granat). sand/metal: map luar ruang (Steel Yard). */
+export type SurfaceMaterial = 'wood' | 'tile' | 'carpet' | 'sand' | 'metal';
 export type MatchStateName = 'MENU' | 'LOADOUT' | 'COUNTDOWN' | 'PLAYING' | 'ROUND_END' | 'ENDED' | 'RESULTS';
 export type KillWeapon = WeaponId | 'k400' | 'fall' | 'melee' | 'knife';
 /** Jenis serangan jarak dekat: pukul popor (F) atau pisau (tebas/tusuk). */
