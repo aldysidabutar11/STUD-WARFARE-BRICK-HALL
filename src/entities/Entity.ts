@@ -59,6 +59,8 @@ export class Entity {
   remote: RemoteHuman | null = null;
   /** Klien online: entitas bukan milik kita — keadaan dari snapshot host (tanpa fisika/AI lokal). */
   puppet = false;
+  /** Online: ping ke host (ms); −1 = bot, −2 = host (papan skor). */
+  ping = -1;
   /** Debug: dummy/stress di posisi tetap (respawn di tempat). */
   dummyAt: THREE.Vector3 | null = null;
   lastAttacker = -1;

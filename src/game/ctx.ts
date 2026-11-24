@@ -36,6 +36,8 @@ export interface NetCtx {
   /** Host: rewind hitbox ke tick tampilan penembak remote (lag compensation); kembalikan false bila tidak dipakai. */
   rewind: ((shooter: Entity) => boolean) | null;
   restore: (() => void) | null;
+  /** Klien: serangan sendiri kena musuh menurut prediksi lokal → umpan balik instan (damage tetap dari host). */
+  predictHit: ((victim: Entity, attacker: Entity, dmg: number, part: import('../core/EventBus').HitPart) => void) | null;
 }
 
 export interface Ctx {
@@ -55,5 +57,5 @@ export interface Ctx {
 
 export const ctx = {
   time: 0, fixedIndex: 0, player: null,
-  net: { role: 'offline', seed: 1, onShot: null, rewind: null, restore: null },
+  net: { role: 'offline', seed: 1, onShot: null, rewind: null, restore: null, predictHit: null },
 } as unknown as Ctx;

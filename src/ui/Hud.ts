@@ -13,6 +13,8 @@ import type { Settings } from './Settings';
 import type { DroppedWeapon } from '../combat/WeaponDrops';
 import { Crosshair } from './Crosshair';
 
+/** Nama pemain dari jaringan → teks aman di innerHTML (nama juga sudah dibersihkan cleanName). */
+const escHtml = (t: string) => t.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const h = <K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = '') => {
   const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; return e;
 };
@@ -96,6 +98,8 @@ export class Hud {
   private killer = h('div', 'killer');
   private kc = h('div', 'kc', '<div class="bar top"></div><div class="bar bot"></div><div class="kc-t"><b>KILLCAM</b><span>Klik / Spasi untuk lewati</span></div>');
   private spec = h('div', 'spec');
+  /** Online: peringatan ping tinggi pemain ini. */
+  private pingWarn = h('div', 'ping-warn');
   private last: Record<string, string | number | boolean> = {};
   /** Rekan yang sedang ditonton (Eliminasi), diisi Game. */
   spectating: Entity | null = null;
@@ -114,7 +118,8 @@ export class Hud {
     }
     for (let i = 0; i < 4; i++) { const g = h('div', 'gw', '<i></i><b>!</b>'); g.style.display = 'none'; this.gw.push(g); }
     this.root.append(this.lens, this.dot, this.hurt, this.vign, this.xh, this.hm, this.ring, this.rbar, this.dmgWrap, this.hp, this.ammo, this.slots,
-      this.score, this.pips, this.feed, this.center, this.prompt, this.countdownEl, this.banner, this.killer, this.spec, this.kc, ...this.gw, this.board);
+      this.score, this.pips, this.feed, this.center, this.prompt, this.countdownEl, this.banner, this.killer, this.spec, this.kc, ...this.gw, this.board,
+      this.pingWarn);
     this.setVisible(false);
     bus.on('shot', (e) => { if (ctx.player && e.shooterId === ctx.player.id) this.xhc.kick(); }); // crosshair mekar saat menembak
     bus.on('hit', (e) => {
@@ -188,6 +193,8 @@ export class Hud {
 
   update(dt: number, p: Entity | null, spreadDeg: number, showBoard: boolean) {
     const kc = ctx.killcam, replay = !!kc?.replaying;
+    const pw = ctx.net.role === 'client' && p && p.ping >= XCFG.net.pingWarn ? `⚠ Ping ${p.ping} ms` : '';
+    if (this.last.pingWarn !== pw) { this.last.pingWarn = pw; this.pingWarn.textContent = pw; this.pingWarn.style.display = pw ? 'block' : 'none'; }
     this.root.classList.toggle('replay', replay);
     this.kc.style.display = replay ? 'block' : 'none';
     // hitmarker & indikator arah damage
@@ -388,13 +395,21 @@ export class Hud {
   private renderBoard() {
     if (performance.now() - this.boardAcc < 250) return;
     this.boardAcc = performance.now();
+    const online = ctx.net.role !== 'offline', N = XCFG.net;
+    const ping = (e: Entity) => {
+      if (!online) return '';
+      const v = e.ping;
+      const txt = v === -2 ? 'HOST' : v === -1 ? 'BOT' : v < 0 ? '…' : `${v}`;
+      const cls = v < 0 ? '' : v < N.pingGood ? 'good' : v < N.pingWarn ? 'mid' : 'bad';
+      return `<td class="ping ${cls}">${txt}</td>`;
+    };
     const rows = (team: 'blue' | 'red') => ctx.entities.filter(e => e.team === team).sort((a, b) => b.stats.score - a.stats.score).map(e => {
       const acc = e.stats.shots ? Math.round(100 * e.stats.hits / e.stats.shots) : 0;
       const hs = e.stats.hits ? Math.round(100 * e.stats.hsHits / e.stats.hits) : 0;
-      return `<tr class="${e.isPlayer ? 'me' : ''} ${e.alive ? '' : 'dead'}"><td>${e.name}</td><td>${e.stats.kills}</td><td>${e.stats.deaths}</td><td>${e.stats.assists}</td>` +
-        `<td>${e.stats.score}</td><td>${acc}%</td><td>${hs}%</td></tr>`;
+      return `<tr class="${e.isPlayer ? 'me' : ''} ${e.alive ? '' : 'dead'}"><td>${escHtml(e.name)}</td><td>${e.stats.kills}</td><td>${e.stats.deaths}</td><td>${e.stats.assists}</td>` +
+        `<td>${e.stats.score}</td><td>${acc}%</td><td>${hs}%</td>${ping(e)}</tr>`;
     }).join('');
-    const head = '<tr><th>Nama</th><th>K</th><th>D</th><th>A</th><th>Skor</th><th>Akurasi</th><th>% HS</th></tr>';
+    const head = `<tr><th>Nama</th><th>K</th><th>D</th><th>A</th><th>Skor</th><th>Akurasi</th><th>% HS</th>${online ? '<th>Ping</th>' : ''}</tr>`;
     const unit = ctx.match.mode === 'elim' ? ' ronde' : '';
     this.board.innerHTML = `<h3 class="b">BIRU — ${ctx.teams.scores.blue}${unit}</h3><table>${head}${rows('blue')}</table>` +
       `<h3 class="r">MERAH — ${ctx.teams.scores.red}${unit}</h3><table>${head}${rows('red')}</table>`;

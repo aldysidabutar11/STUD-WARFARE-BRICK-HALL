@@ -18,7 +18,9 @@ import { onlineConfigured } from '../net/Signaling';
 export type RoomAction = { type: 'team'; team: Team } | { type: 'ready'; ready: boolean } | { type: 'kick'; id: string }
   | { type: 'settings'; patch: Partial<RoomSettings> } | { type: 'shuffle' };
 /** Status koneksi room online untuk badge. */
-export interface NetInfo { role: 'host' | 'client'; state: 'connecting' | 'online' | 'error'; internet: boolean; label: string; peers: number }
+export interface NetInfo { role: 'host' | 'client'; state: 'connecting' | 'online' | 'error'; internet: boolean; label: string; peers: number;
+  /** Ping tiap teman ke host (ms) menurut id pemain room. */
+  pings: Record<string, number> }
 
 export interface MenuApi {
   play(practice?: boolean): void; resume(): void; quitToMenu(): void; replay(): void; fullscreen(): void;
@@ -193,7 +195,8 @@ export class Menus {
         const tag = p.id === me ? ' <small>(kamu)</small>' : p.sim ? ' <small>(simulasi)</small>' : '';
         const state = p.host ? '<span class="st host">HOST</span>' : `<span class="st ${p.ready ? 'ok' : ''}">${p.ready ? '✔ Siap' : '⏳ Belum siap'}</span>`;
         const kick = host && p.id !== me ? `<button class="x" data-kick="${p.id}" title="Keluarkan dari room">✕</button>` : '';
-        return `<div class="slot ${p.id === me ? 'me' : ''}"><span class="nm">${p.host ? '👑 ' : ''}${esc(p.name)}${tag}</span>${state}${kick}</div>`;
+        const ping = !p.host && !p.sim ? `<span class="ping" data-ping="${p.id}"></span>` : '';
+        return `<div class="slot ${p.id === me ? 'me' : ''}"><span class="nm">${p.host ? '👑 ' : ''}${esc(p.name)}${tag}</span>${ping}${state}${kick}</div>`;
       }
       if (sv.bot) return `<div class="slot bot"><span class="nm">🤖 ${sv.bot}</span><span class="st">BOT · ${diff}</span></div>`;
       return '<div class="slot empty"><span class="nm">— slot kosong —</span></div>';
@@ -232,6 +235,7 @@ export class Menus {
         ${host ? '' : `<button class="${mine.ready ? '' : 'primary'}" data-a="ready">${mine.ready ? 'Batal Siap' : '✔ Siap'}</button>`}
         <button data-a="loadout">Loadout</button><button data-a="leave">Keluar Room</button>
         <span class="room-status">${notice ? `<b>${esc(notice)}</b> · ` : ''}${client ? (mine.ready ? 'Siap — menunggu host memulai' : 'Tekan Siap bila sudah siap main') : chk.ok ? 'Semua siap — host bisa mulai' : chk.reason}</span></div></div>`);
+    this.updatePings(net.pings);
     // host: perubahan langsung tampil; klien: tampil setelah host menyiarkan room baru (refreshRoom)
     const act = (a: RoomAction) => { this.api.roomAct(a); if (!client) this.showRoom(); };
     m.querySelectorAll<HTMLElement>('[data-move]').forEach(b => b.addEventListener('click', () => act({ type: 'team', team: b.dataset.move as Team })));
@@ -264,6 +268,20 @@ export class Menus {
     const key = f?.dataset.rk ?? f?.dataset.a ?? f?.dataset.move ?? null;
     this.showRoom();
     if (key) (this.root.querySelector(`[data-rk="${key}"],[data-a="${key}"],[data-move="${key}"]`) as HTMLElement | null)?.focus();
+  }
+
+  /** Ping teman di layar room (diperbarui di tempat tiap ±2 s, tanpa menggambar ulang room). */
+  updatePings(pings: Record<string, number>) {
+    if (this.current !== 'room') return;
+    const N = XCFG.net;
+    this.root.querySelectorAll<HTMLElement>('[data-ping]').forEach((el) => {
+      const ms = pings[el.dataset.ping!];
+      if (ms === undefined) { el.textContent = ''; el.className = 'ping'; el.title = ''; return; }
+      const bad = ms >= N.pingWarn;
+      el.textContent = `${bad ? '⚠ ' : ''}${ms} ms`;
+      el.className = 'ping ' + (ms < N.pingGood ? 'good' : bad ? 'bad' : 'mid');
+      el.title = bad ? 'Ping tinggi — bisa terasa delay. Coba jaringan lain atau pilih host yang lebih dekat.' : 'Ping ke host';
+    });
   }
 
   private netBadge(n: NetInfo): string {

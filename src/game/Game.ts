@@ -177,8 +177,11 @@ export class Game {
         const p = ctx.player;
         if (!p) return '';
         const c = p.ctrl;
+        const cr = this.clientRep, net = cr
+          ? `\nnet klien: ping ${this.client?.pings[this.roomMe] ?? '…'} ms  interp ${cr.delayMs.toFixed(0)} ms  snapshot ${cr.snapHz.toFixed(0)} Hz  koreksi ${cr.diag.corrections}`
+          : this.hostRep ? `\nnet host: ${this.host?.connected ?? 0} teman  ping ${Object.values(this.host?.pings() ?? {}).join('/') || '…'} ms` : '';
         return `pos ${c.pos.x.toFixed(1)} ${c.pos.y.toFixed(2)} ${c.pos.z.toFixed(1)}  v ${c.speedH.toFixed(2)} u/s  vy ${c.velY.toFixed(2)}\n` +
-          `grounded ${c.grounded}  crouch ${c.crouched}  sprint ${c.sprinting}  hp ${p.hp}  view ${ctx.camRig.mode}`;
+          `grounded ${c.grounded}  crouch ${c.crouched}  sprint ${c.sprinting}  hp ${p.hp}  view ${ctx.camRig.mode}` + net;
       },
     });
     if (this.settings.showFps) this.stats.toggle(true);
@@ -441,7 +444,7 @@ export class Game {
   private endNet() {
     this.hostRep?.end();
     this.hostRep = null; this.clientRep = null; this.cmd = null;
-    ctx.net.role = 'offline'; ctx.net.onShot = null; ctx.net.rewind = null; ctx.net.restore = null;
+    ctx.net.role = 'offline'; ctx.net.onShot = null; ctx.net.rewind = null; ctx.net.restore = null; ctx.net.predictHit = null;
     this.loop?.setKeepAlive(false);
   }
 
@@ -472,6 +475,7 @@ export class Game {
       onCommands: (pid, cmds) => this.hostRep?.onCommands(pid, cmds),
       onPeerLeft: (pid) => this.hostRep?.onPeerLeft(pid),
       onLoadout: (pid, lo, v) => this.hostRep?.setLoadout(pid, lo, v),
+      onPings: () => this.menus.updatePings(this.netInfo().pings),
     }, iceServers(XCFG.net.ice));
     this.host = host; this.netState = 'connecting';
     host.open(code).then(
@@ -489,6 +493,7 @@ export class Game {
       onEvent: (msg) => { if (this.client === client) this.onNetEvent(msg); },
       onSnapshot: (snap) => { if (this.client === client) this.clientRep?.onSnapshot(snap); },
       onClosed: (reason) => { if (this.client === client) this.onClientClosed(reason); },
+      onPings: () => { if (this.client === client) this.menus.updatePings(this.netInfo().pings); },
     }, iceServers(XCFG.net.ice));
     this.client = client; this.netState = 'connecting';
     const r = await client.join(code, { name, variant: s.charVariant, weapon: s.weapon, scope: s.scope }, XCFG.net.connectTimeout, XCFG.net.helloTimeout);
@@ -508,7 +513,7 @@ export class Game {
   private netInfo() {
     const sig = (this.host ?? this.client)?.sig;
     return { role: this.client ? 'client' as const : 'host' as const, state: this.netState, internet: !!sig?.internet, label: sig?.label ?? '',
-      peers: this.host?.connected ?? 0 };
+      peers: this.host?.connected ?? 0, pings: this.host ? this.host.pings() : this.client ? this.client.pings : {} };
   }
 
   /** Aksi di layar room. Host: ubah room lalu siarkan; klien: kirim ke host (host yang memvalidasi & menyiarkan). */

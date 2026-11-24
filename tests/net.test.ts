@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   H, I, decodeCommands, decodeSnapshot, encodeCommands, encodeSnapshot, msgType, MSG, qPitch, qYaw, type Command, type EntState, type Snapshot,
 } from '../src/net/protocol';
-import { CommandHistory, CommandQueue, HostClock, InterpBuffer } from '../src/net/sync';
+import { CommandHistory, CommandQueue, HitLedger, HostClock, InterpBuffer, SnapStats } from '../src/net/sync';
 import { Lobby, type RoomSettings } from '../src/game/Lobby';
 import { parseStart } from '../src/net/start';
 
@@ -164,3 +164,51 @@ describe('Pesan mulai match dari host (divalidasi di klien)', () => {
     expect(parseStart({ seed: 1, ents: [ent(1)] })).toBeNull();                                    // tanpa aturan
   });
 });
+
+describe('Perbaikan ping: jeda interpolasi adaptif, ekstrapolasi pendek, hitmarker instan', () => {
+  const O = { min: 3, max: 12, safety: 1, window: 2, rise: 0.25, fall: 0.03 };
+  const feed = (st: SnapStats, n: number, every: number, late: (i: number) => number, t0 = 0, skip = -1) => {
+    for (let i = 0; i < n; i++) {
+      if (i === skip) continue;
+      st.onSnapshot(1000 + i * every, late(i), t0 + (i * every) / 60);
+    }
+  };
+  it('jaringan bagus (30 Hz, jitter kecil) → jeda turun ke ±3 tick (50 ms), pelan-pelan', () => {
+    const st = new SnapStats(O, 6);
+    feed(st, 60, 2, () => 0.1);
+    expect(st.interval).toBe(2);
+    expect(st.target).toBeCloseTo(3.1, 1);
+    st.update(10); expect(st.delay).toBeCloseTo(5.7, 5);            // turun maks 0.03 tick per tick waktu
+    for (let i = 0; i < 200; i++) st.update(1);
+    expect(st.delay).toBeCloseTo(3.1, 1);
+  });
+  it('jitter ±1.5 tick & paket hilang → jeda naik cepat (cegah pemain lain berhenti-jalan)', () => {
+    const st = new SnapStats(O, 3);
+    feed(st, 60, 2, (i) => (i % 5 === 0 ? 1.5 : 0.2), 0, 30);       // satu snapshot hilang
+    expect(st.target).toBeGreaterThanOrEqual(2 + 1.5 + 1 + 2 - 1e-9); // interval + p95 + cadangan + 1 interval (hilang)
+    st.update(4); expect(st.delay).toBeCloseTo(4, 5);                // naik 0.25 tick per tick
+    const late = new SnapStats(O, 3);
+    feed(late, 60, 2, () => 30);                                     // sangat buruk → dibatasi maks
+    expect(late.target).toBe(12);
+  });
+  it('snapshot telat → posisi diteruskan searah kecepatan maks 3 tick, lalu tahan', () => {
+    const b = new InterpBuffer(32, 60), out = ent(0);
+    b.push({ ...ent(5, { x: 0, vx: 6, z: 0, vz: -3 }), tick: 100 });
+    b.push({ ...ent(5, { x: 0.2, vx: 6, z: -0.1, vz: -3 }), tick: 102 });
+    b.sample(103, out, 3); expect(out.x).toBeCloseTo(0.3, 5); expect(out.z).toBeCloseTo(-0.15, 5);
+    b.sample(110, out, 3); expect(out.x).toBeCloseTo(0.5, 5);         // maks 3 tick (0.05 s × 6 u/s)
+    b.sample(110, out, 0); expect(out.x).toBe(0.2);                    // tanpa ekstrapolasi: tahan
+    b.push({ ...ent(5, { flags: 0, x: 9, vx: 6 }), tick: 104 });       // mati → tidak diteruskan
+    b.sample(108, out, 3); expect(out.x).toBe(9);
+  });
+  it('hitmarker prediksi: konfirmasi host yang cocok dilewati, yang tidak diprediksi tetap tampil, kedaluwarsa 1 s', () => {
+    const L = new HitLedger(1.0);
+    L.predict(7, 10.0); L.predict(7, 10.05); L.predict(8, 10.1);
+    expect(L.confirm(7, 10.12)).toBe(true);
+    expect(L.confirm(9, 10.13)).toBe(false);                           // host: kena yang tidak terprediksi → tampilkan
+    expect(L.confirm(8, 10.2)).toBe(true);
+    expect(L.confirm(7, 11.2)).toBe(false);                            // prediksi lama sudah kedaluwarsa
+    expect(L.pending).toBe(0);
+  });
+});
+

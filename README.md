@@ -99,9 +99,13 @@ Teman tersambung langsung ke host lewat **WebRTC** (P2P, kanal *unreliable* sepe
 "perkenalan" (tukar kode room & alamat koneksi, ±puluhan pesan per pemain): **Supabase Realtime** (paket gratis, tanpa kartu kredit).
 File game di-host gratis di **Vercel** (atau hosting statis lain).
 
-- Gerak kamu **diprediksi** di perangkatmu (respons instan), lalu dicocokkan dengan host; pemain lain digambar ±117 ms di belakang
-  agar mulus walau paket datang tidak rata. Host me-**rewind hitbox** ke apa yang kamu lihat saat menembak (lag compensation, maks 250 ms).
-- Host sebaiknya pemain dengan koneksi & laptop paling kuat (upload ±0.1–0.2 MB/s untuk 9 teman). Host jangan menutup tab selama main;
+- Gerak & tembakanmu **diprediksi** di perangkatmu (respons instan), lalu dicocokkan dengan host. Pemain lain digambar sedikit di
+  belakang agar mulus: jedanya **adaptif** (±50–75 ms di jaringan bagus, naik otomatis bila koneksi goyang/paket hilang); host
+  mengirim posisi 30×/detik. Host me-**rewind hitbox** ke apa yang kamu lihat saat menembak (lag compensation, maks 250 ms).
+- **Hitmarker & suara kena instan** dari tembakan/pisau sendiri; damage & kill tetap ditentukan host (tanpa tampil dobel).
+- **Ping** tiap teman tampil di room & papan skor (Tab): hijau < 80 ms, kuning < 150 ms, merah ≥ 150 ms + peringatan di layar.
+  Upload host tersumbat → teman itu otomatis menerima 15×/detik sampai lancar lagi. F3 menampilkan ping, jeda interpolasi & koreksi.
+- Host sebaiknya pemain dengan koneksi & laptop paling kuat (upload ±1.2–2.5 Mbps untuk 9 teman). Host jangan menutup tab selama main;
   pindah tab/aplikasi tetap aman (simulasi tetap jalan di latar belakang).
 - Teman keluar di tengah match → slotnya diambil alih bot. Host keluar → match berakhir, semua kembali ke room.
 - Belum tersedia saat online: buang/ambil senjata (G/E), mode Latihan.

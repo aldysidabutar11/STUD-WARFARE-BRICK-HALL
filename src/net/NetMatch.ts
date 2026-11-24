@@ -3,7 +3,8 @@
 //       snapshot 20 Hz per klien (+ keadaan gerak lengkapnya untuk rekonsiliasi), event penting lewat kanal reliable,
 //       lag compensation: riwayat hitbox per frame → tembakan remote diuji terhadap posisi yang DILIHAT penembak (maks 250 ms).
 // KLIEN: gerak sendiri diprediksi (KCC lokal) lalu dikoreksi dengan memutar ulang perintah yang belum dikonfirmasi; pemain lain &
-//        granat diinterpolasi ±117 ms di belakang; damage/kill/spawn/skor hanya dari host.
+//        granat diinterpolasi dengan jeda ADAPTIF (±50 ms jaringan bagus … 200 ms buruk); damage/kill/spawn/skor hanya dari host,
+//        tapi hitmarker & suara kena serangan sendiri tampil instan (prediksi, dikonfirmasi host tanpa ganda).
 import * as THREE from 'three';
 import { ctx } from '../game/ctx';
 import { bus, type GameEvents, type HitPart, type KillWeapon, type MatchStateName, type MeleeKind, type SurfaceMaterial } from '../core/EventBus';
@@ -19,7 +20,7 @@ import type { Slot } from '../combat/Slots';
 import { castShot } from '../combat/Ballistics';
 import type { ScopeId, WeaponId } from '../config/weaponsData';
 import type { Variant } from '../entities/CharacterArt';
-import { CommandHistory, CommandQueue, HostClock, InterpBuffer } from './sync';
+import { CommandHistory, CommandQueue, HitLedger, HostClock, InterpBuffer, SnapStats } from './sync';
 import {
   EF, H, I, MATCH_STATES, encodeCommands, encodeSnapshot, qAxis, qPitch, qYaw,
   type Command, type EntState, type MiscFx, type OwnState, type ShotFx, type Snapshot,
@@ -131,6 +132,11 @@ export class HostRep {
   private fx: MiscFx[] = [];
   private offs: (() => void)[] = [];
   private deathImp = new Map<number, { x: number; y: number; z: number; grenade: boolean }>();
+  /** Upload host tersumbat untuk klien tertentu → klien itu menerima snapshot 15 Hz sampai waktu ini (efek dibawa ke snapshot
+   *  berikutnya agar tidak hilang). */
+  private slowUntil = new Map<string, number>();
+  private carry = new Map<string, { shots: ShotFx[]; fx: MiscFx[] }>();
+  private baseN = 0;
 
   constructor(private net: NetHost) {}
 
@@ -237,10 +243,22 @@ export class HostRep {
       ents: ctx.entities.map(entState), nades: [] as Snapshot['nades'], shots: this.shots, fx: this.fx,
     };
     ctx.grenades.forEachNet((id, x, y, z, fuse, owner) => base.nades.push({ id: id & 0xffff, x, y, z, fuse, owner }));
+    const now = performance.now() / 1000, odd = (++this.baseN & 1) === 1;
     for (const pid of this.net.pids()) {
       const e = this.byPid.get(pid);
       if (!e?.remote) continue;
-      this.net.sendUnr(pid, encodeSnapshot({ ...base, ack: e.remote.queue.lastSeq, own: e.alive ? ownState(e) : null }));
+      if (this.net.backlog(pid) > NET.backlogSlow) this.slowUntil.set(pid, now + NET.slowHold);
+      let c = this.carry.get(pid);
+      if (odd && (this.slowUntil.get(pid) ?? 0) > now) {   // lewati snapshot ini untuk klien lambat; efeknya ikut snapshot berikut
+        if (!c) { c = { shots: [], fx: [] }; this.carry.set(pid, c); }
+        for (const x of base.shots) if (c.shots.length < NET.maxShotFx) c.shots.push(x);
+        for (const x of base.fx) if (c.fx.length < 32) c.fx.push(x);
+        continue;
+      }
+      const shots = c?.shots.length ? c.shots.concat(base.shots).slice(-NET.maxShotFx) : base.shots;
+      const fx = c?.fx.length ? c.fx.concat(base.fx).slice(-32) : base.fx;
+      if (c) { c.shots.length = 0; c.fx.length = 0; }
+      this.net.sendUnr(pid, encodeSnapshot({ ...base, shots, fx, ack: e.remote.queue.lastSeq, own: e.alive ? ownState(e) : null }));
     }
     this.shots = []; this.fx = [];
   }
@@ -248,9 +266,11 @@ export class HostRep {
   /** Per frame setelah animasi: riwayat hitbox (lag compensation). */
   frame(tick: number) { this.nowTick = tick; this.lag.record(tick); }
 
+  /** Statistik papan skor + ping tiap pemain (ms; −1 bot, −2 host, −3 belum terukur). */
   private sendStats() {
+    for (const e of ctx.entities) e.ping = e === ctx.player ? -2 : e.remote ? (this.net.ping(e.remote.pid) ?? -3) : -1;
     const s = ctx.entities.map(e => [e.id, e.stats.kills, e.stats.deaths, e.stats.assists, e.stats.score, e.stats.shots, e.stats.hits,
-      e.stats.hsHits, e.stats.hsKills, e.stats.damage, e.stats.bestStreak]);
+      e.stats.hsHits, e.stats.hsKills, e.stats.damage, e.stats.bestStreak, e.ping]);
     this.net.sendAll({ t: 'ev', e: 'stats', s });
   }
 
@@ -259,7 +279,8 @@ export class HostRep {
     const e = this.byPid.get(pid);
     if (!e) return;
     this.byPid.delete(pid);
-    e.remote = null;
+    this.slowUntil.delete(pid); this.carry.delete(pid);
+    e.remote = null; e.ping = -1;
     e.bot = new TacticalBot(e, ctx.settings.difficulty, 20 + e.id);
     if (e.alive) e.bot.onSpawn();
     const text = `${e.name} keluar — diganti bot`;
@@ -280,6 +301,11 @@ interface NadeTrack { a: { t: number; x: number; y: number; z: number }; b: { t:
 
 export class ClientRep {
   private readonly clock = new HostClock(60, 1.5);
+  /** Jeda interpolasi adaptif (diukur dari jitter & paket hilang aliran snapshot). */
+  private readonly snap = new SnapStats({ min: NET.interpMin, max: NET.interpMax, safety: NET.interpSafety, window: NET.interpWindow,
+    rise: NET.interpRise, fall: NET.interpFall }, NET.interpInit);
+  /** Kena hasil prediksi menunggu konfirmasi host. */
+  private readonly ledger = new HitLedger(NET.hitConfirmWindow);
   private readonly bufs = new Map<number, InterpBuffer>();
   private readonly hist = new CommandHistory<CtrlState>(256);
   private readonly extra: (CmdExtra | null)[] = new Array(256).fill(null);
@@ -303,7 +329,20 @@ export class ClientRep {
   /** Statistik diagnostik (overlay / uji). */
   readonly diag = { snaps: 0, corrections: 0, lastErr: 0 };
 
-  constructor(private net: NetClient) {}
+  constructor(private net: NetClient) {
+    ctx.net.predictHit = (v, a, dmg, part) => this.predictHit(v, a, dmg, part);
+  }
+
+  /** Jeda interpolasi saat ini (ms) & laju snapshot yang diterima (Hz) — overlay F3. */
+  get delayMs() { return (this.snap.delay / 60) * 1000; }
+  get snapHz() { return 60 / this.snap.interval; }
+
+  /** Serangan sendiri kena musuh (prediksi lokal; lag compensation host membuat hasilnya ±sama) → hitmarker & suara instan. */
+  private predictHit(v: Entity, a: Entity, dmg: number, part: HitPart) {
+    this.ledger.predict(v.id, performance.now() / 1000);
+    bus.emit('hit', { attackerId: a.id, victimId: v.id, part, damage: dmg, headshot: part === 'head', dist: a.pos.distanceTo(v.pos),
+      fromX: a.pos.x, fromZ: a.pos.z, predicted: true });
+  }
 
   /** Fixed step pemain lokal: perintah dari niat gerak (dikuantisasi sama dengan host). */
   command(it: MoveIntent, p: Entity): Command {
@@ -328,7 +367,10 @@ export class ClientRep {
     if (s.tick <= this.lastSnapTick) return;   // datang terlambat / tidak berurutan
     this.lastSnapTick = s.tick;
     this.diag.snaps = ++this.snapN;
-    this.clock.onSnapshot(s.tick, performance.now() / 1000);
+    const nowSec = performance.now() / 1000;
+    const late = this.clock.ready ? this.clock.tickAt(nowSec) - s.tick : 0;   // telat dibanding kedatangan tercepat (tick)
+    this.clock.onSnapshot(s.tick, nowSec);
+    this.snap.onSnapshot(s.tick, late, nowSec);
     const p = ctx.player;
     for (const es of s.ents) {
       if (p && es.id === p.id) {
@@ -384,11 +426,12 @@ export class ClientRep {
   /** Per frame (sebelum animasi): pemain lain & granat di posisi interpolasi; langkah kaki boneka; koreksi meluruh. */
   update(dt: number) {
     this.clock.update(dt);
-    this.renderTick = this.clock.ready ? this.clock.tickAt(performance.now() / 1000) - NET.interpTicks : 0;
+    this.snap.update(dt * 60);
+    this.renderTick = this.clock.ready ? this.clock.tickAt(performance.now() / 1000) - this.snap.delay : 0;
     for (const e of ctx.entities) {
       if (!e.puppet || !e.alive) continue;
       const b = this.bufs.get(e.id);
-      if (!b || !b.sample(this.renderTick, this.st)) continue;
+      if (!b || !b.sample(this.renderTick, this.st, NET.extrapTicks)) continue;
       this.applyPuppet(e, this.st);
     }
     for (const [id, tr] of this.nades) {
@@ -478,6 +521,8 @@ export class ClientRep {
       }
       case 'hit': {
         if (p && num('v') === p.id) p.lastDamageT = ctx.time;   // HP sendiri dari snapshot (absolut, tanpa hitung ganda)
+        // serangan sendiri yang sudah tampil saat prediksi → jangan tampil dua kali
+        if (p && num('a') === p.id && num('v') !== p.id && this.ledger.confirm(num('v'), performance.now() / 1000)) break;
         bus.emit('hit', { attackerId: num('a'), victimId: num('v'), part: m.p as HitPart, damage: num('d'), headshot: !!m.hs, dist: num('dist'),
           fromX: num('fx'), fromZ: num('fz') });
         break;
@@ -492,7 +537,8 @@ export class ClientRep {
           const e = ctx.byId.get(row[0]);
           if (!e) continue;
           const st = e.stats;
-          [st.kills, st.deaths, st.assists, st.score, st.shots, st.hits, st.hsHits, st.hsKills, st.damage, st.bestStreak] = row.slice(1);
+          [st.kills, st.deaths, st.assists, st.score, st.shots, st.hits, st.hsHits, st.hsKills, st.damage, st.bestStreak] = row.slice(1, 11);
+          e.ping = typeof row[11] === 'number' ? row[11] : -1;
         }
         break;
       case 'notice': ctx.hud.toast(String(m.text ?? '')); break;

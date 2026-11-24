@@ -221,8 +221,20 @@ export const XCFG = {
   net: {
     cmdEvery: 1,          // klien kirim perintah tiap tick (60 paket/s, ±6 KB/s) → antrean di host rata, jeda minimal ...
     cmdRedundancy: 3,     // ... berisi 3 perintah terakhir (tahan paket hilang di kanal unreliable)
-    snapEvery: 3,         // host kirim snapshot tiap 3 tick (20 Hz)
-    interpTicks: 7,       // pemain lain digambar ±117 ms di belakang (2 snapshot + jitter)
+    snapEvery: 2,         // host kirim snapshot tiap 2 tick (30 Hz) — permintaan pengguna "perbaikan ping"
+    // jeda interpolasi ADAPTIF (tick): interval snapshot + keterlambatan p95 (relatif kedatangan tercepat) + cadangan,
+    // + 1 interval bila ada paket hilang dalam `interpWindow` detik. Naik cepat (hindari macet), turun pelan (tanpa lompatan).
+    interpInit: 6,        // awal match (±100 ms) sampai ada data
+    interpMin: 3,         // ±50 ms (jaringan bagus)
+    interpMax: 12,        // ±200 ms (jaringan buruk)
+    interpSafety: 1,      // cadangan 1 tick
+    interpWindow: 2,      // detik riwayat jitter / paket hilang
+    interpRise: 0.25,     // perubahan jeda per tick waktu saat naik (cepat)
+    interpFall: 0.03,     // ... saat turun (pelan: ±3% waktu tampil lebih cepat — tak terasa)
+    extrapTicks: 3,       // snapshot telat → pemain lain diteruskan searah geraknya maks 3 tick (50 ms), bukan berhenti
+    backlogSlow: 16384,   // antrean kirim ke satu klien > 16 KB (upload host penuh) → klien itu 15 Hz selama slowHold detik
+    slowHold: 3,
+    backlogDrop: 49152,   // > 48 KB → snapshot dilewati (data basi lebih buruk daripada tidak ada)
     lagCompMax: 0.25,     // rewind hitbox maksimum (detik)
     lagCompHistory: 48,   // sampel riwayat hitbox (per frame host, jarak antar sampel ≥ ½ tick → ±0.4 s)
     idleCmd: 0.25,        // perintah telat → pemain remote ditahan; > 0.25 s tanpa perintah → dianggap diam (tombol dilepas)
@@ -232,6 +244,10 @@ export const XCFG = {
     smoothT: 0.12,        // koreksi posisi pemain lokal dihaluskan ±120 ms (visual)
     statsEvery: 1.0,      // sinkron statistik papan skor (detik)
     maxShotFx: 24,        // efek tembakan per snapshot
+    pingEvery: 2,         // detik: host mengukur ping tiap teman (ping/pong kanal reliable), disiarkan ke semua
+    pingWarn: 150,        // ms: ping ≥ 150 → merah + peringatan (room, papan skor, HUD)
+    pingGood: 80,         // ms: < 80 hijau, 80–150 kuning
+    hitConfirmWindow: 1.0,   // detik: kena hasil prediksi menunggu konfirmasi host (lebih lama → dianggap meleset)
     connectTimeout: 10,   // detik: batas total gabung (termasuk koneksi WebRTC)
     helloTimeout: 4,      // detik: host tidak menjawab kode room → "room tidak ditemukan"
     ice: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'],

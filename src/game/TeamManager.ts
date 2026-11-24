@@ -19,7 +19,12 @@ export class TeamManager {
   /** dir = arah datang (peluru) atau dorongan ledakan; grenadeImpulse diisi untuk kematian akibat granat. */
   applyDamage(victim: Entity, attacker: Entity | null, dmg: number, part: HitPart, weapon: KillWeapon,
     dir: THREE.Vector3, grenade: boolean, grenadeImpulse?: THREE.Vector3) {
-    if (ctx.net.role === 'client') return;                                 // online: damage hanya dihitung host
+    if (ctx.net.role === 'client') {                                       // online: damage hanya dihitung host
+      // serangan sendiri yang kena → hitmarker & suara instan (prediksi; host mengonfirmasi ±1 ping kemudian)
+      if (attacker && attacker === ctx.player && victim !== attacker && victim.alive && dmg > 0 && victim.protectT <= 0
+        && (victim.team !== attacker.team || CFG.combat.friendlyFire)) ctx.net.predictHit?.(victim, attacker, dmg, part);
+      return;
+    }
     if (!victim.alive || dmg <= 0) return;
     if (victim.protectT > 0) return;                                        // perlindungan spawn: kebal
     if (victim.isPlayer && ctx.debug.god) return;

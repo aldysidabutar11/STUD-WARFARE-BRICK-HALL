@@ -7,6 +7,7 @@ import { Peer } from './Peer';
 import { MSG, decodeCommands, decodeSnapshot, msgType, type Command, type Snapshot } from './protocol';
 import type { SignalMsg, Signaling } from './Signaling';
 import type { Team } from '../entities/BlockyCharacter';
+import { XCFG } from '../config/extraConfig';
 
 export interface Profile { name: string; variant: 'm' | 'f'; weapon: string; scope: string }
 export type JoinFail = 'notfound' | 'full' | 'started' | 'timeout' | 'failed';
@@ -29,15 +30,38 @@ export interface HostHooks {
   onPeerLeft(pid: string): void;
   /** Pemain mengganti loadout/karakter (room: sudah dicatat di Lobby; match: berlaku pada spawn berikutnya). */
   onLoadout(pid: string, lo: { weapon: WeaponId; scope: ScopeId }, variant: 'm' | 'f'): void;
+  /** Ping teman diperbarui (tiap XCFG.net.pingEvery detik). */
+  onPings(): void;
 }
 
-interface HostPeer { peer: Peer; pid: string | null }
+/** rtt = ping terhaluskan (ms), −1 = belum terukur. */
+interface HostPeer { peer: Peer; pid: string | null; rtt: number }
 
 export class NetHost {
   private readonly peers = new Map<string, HostPeer>();
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
   constructor(readonly sig: Signaling, private hooks: HostHooks, private ice: RTCIceServer[]) {}
 
-  async open(code: string) { await this.sig.join(code, (m) => this.onSignal(m)); }
+  async open(code: string) {
+    await this.sig.join(code, (m) => this.onSignal(m));
+    this.pingTimer ??= setInterval(() => this.pingRound(), XCFG.net.pingEvery * 1000);
+  }
+
+  /** Ping: kirim waktu lokal ke tiap teman (dibalas apa adanya → RTT), lalu siarkan ping terakhir semua teman. */
+  private pingRound() {
+    const now = performance.now();
+    for (const e of this.peers.values()) if (e.pid && e.peer.open) e.peer.sendRel({ t: 'png', ts: now });
+    const p = this.pings();
+    if (Object.keys(p).length) { this.sendAll({ t: 'pings', p }); this.hooks.onPings(); }
+  }
+
+  /** Ping tiap teman terhubung (ms, dibulatkan). */
+  pings(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const e of this.peers.values()) if (e.pid && e.peer.open && e.rtt >= 0) out[e.pid] = Math.round(e.rtt);
+    return out;
+  }
+  ping(pid: string): number | null { for (const e of this.peers.values()) if (e.pid === pid && e.rtt >= 0) return Math.round(e.rtt); return null; }
 
   /** Jumlah teman terhubung (sudah masuk room). */
   get connected() { let n = 0; for (const e of this.peers.values()) if (e.pid && e.peer.open) n++; return n; }
@@ -55,7 +79,7 @@ export class NetHost {
       let e = this.peers.get(m.from);
       if (!e) {
         const peer = new Peer(m.from, (k, d) => this.sig.send(m.from, k, d), this.ice, false);
-        e = { peer, pid: null };
+        e = { peer, pid: null, rtt: -1 };
         this.peers.set(m.from, e);
         this.wire(m.from, e);
       }
@@ -91,6 +115,11 @@ export class NetHost {
       return;
     }
     if (!e.pid) return;
+    if (msg.t === 'pong') {
+      const rtt = performance.now() - Number(msg.ts);
+      if (rtt >= 0 && rtt < 10000) e.rtt = e.rtt < 0 ? rtt : e.rtt * 0.6 + rtt * 0.4;
+      return;
+    }
     if (msg.t === 'act') {
       const p = L.find(e.pid);
       if (!p) return;
@@ -118,10 +147,13 @@ export class NetHost {
   /** Pesan reliable ke semua klien di room. */
   sendAll(msg: Record<string, unknown>) { for (const e of this.peers.values()) if (e.pid) e.peer.sendRel(msg); }
 
-  /** Biner unreliable ke satu klien (dilewati bila antrean kirimnya menumpuk). */
+  /** Biner unreliable ke satu klien (dilewati bila antrean kirimnya menumpuk — data basi lebih buruk daripada tidak ada). */
   sendUnr(pid: string, buf: ArrayBuffer) {
-    for (const e of this.peers.values()) if (e.pid === pid && e.peer.backlog < 96 * 1024) e.peer.sendUnr(buf);
+    for (const e of this.peers.values()) if (e.pid === pid && e.peer.backlog < XCFG.net.backlogDrop) e.peer.sendUnr(buf);
   }
+
+  /** Byte yang masih antre dikirim ke satu klien (upload host tersumbat → kurangi laju snapshot klien itu). */
+  backlog(pid: string): number { for (const e of this.peers.values()) if (e.pid === pid) return e.peer.backlog; return 0; }
 
   /** id pemain room yang sedang terhubung. */
   pids(): string[] { const out: string[] = []; for (const e of this.peers.values()) if (e.pid && e.peer.open) out.push(e.pid); return out; }
@@ -131,6 +163,7 @@ export class NetHost {
   }
 
   close() {
+    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
     this.sendAll({ t: 'bye' });
     for (const e of [...this.peers.values()]) { e.peer.onClose = null; e.peer.close(); }
     this.peers.clear();
@@ -146,11 +179,15 @@ export interface ClientHooks {
   onSnapshot(s: Snapshot): void;
   /** Koneksi berakhir: 'host' (host keluar / room ditutup), 'kicked', 'lost'. */
   onClosed(reason: 'host' | 'kicked' | 'lost'): void;
+  /** Ping semua pemain diperbarui host. */
+  onPings(): void;
 }
 
 export class NetClient {
   pid: string | null = null;
   lobby: Lobby | null = null;
+  /** Ping tiap pemain room ke host (ms), dari host. */
+  pings: Record<string, number> = {};
   private peer: Peer | null = null;
   private hostId: string | null = null;
   private ended = false;
@@ -186,6 +223,11 @@ export class NetClient {
               this.lobby = Lobby.fromState(msg.state as never, this.pid);
               finish({ ok: true });
               this.hooks.onLobby();
+            } else if (msg.t === 'png') peer.sendRel({ t: 'pong', ts: msg.ts });
+            else if (msg.t === 'pings' && msg.p && typeof msg.p === 'object') {
+              const p: Record<string, number> = {};
+              for (const [k, v] of Object.entries(msg.p as Record<string, unknown>)) if (typeof v === 'number' && Number.isFinite(v)) p[k] = Math.max(0, Math.round(v));
+              this.pings = p; this.hooks.onPings();
             } else if (msg.t === 'start') this.hooks.onStart(msg);
             else if (msg.t === 'ev') this.hooks.onEvent(msg);
             else if (msg.t === 'bye') this.end('host');

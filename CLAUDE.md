@@ -220,11 +220,18 @@
     `sync.ts` (HostClock, InterpBuffer, CommandHistory, CommandQueue: perintah telat → pemain remote DITAHAN (tanpa mengarang masukan),
     antrean > cmdCatchUp → 2 perintah/tick, idle > 0.25 s → masukan nol); `start.ts` (susunan match + `parseStart` memvalidasi pesan host);
     `NetMatch.ts` (HostRep: perintah → niat gerak sebelum KCC, senjata remote SETELAH world.step lewat `game/PlayerActions.driveWeapons`
-    (aturan senjata sama persis dengan pemain lokal), snapshot 20 Hz per klien (ack + keadaan sendiri), event reliable spawn (+loadout/varian)
+    (aturan senjata sama persis dengan pemain lokal), snapshot 30 Hz per klien (ack + keadaan sendiri; antrean kirim klien > backlogSlow
+    → klien itu 15 Hz selama slowHold s, efek tembakan dibawa ke snapshot berikut), event reliable spawn (+loadout/varian)
     / kill / assist / hit (hanya penyerang & korban) / mstate / boom / stats tiap 1 s / notice / abort, lag compensation = riwayat
     matrixWorld hitbox per frame (jarak ≥ ½ tick, label `fixedIndex − 1 + alpha`) di-rewind ke viewTick penembak ≤ 250 ms;
     ClientRep: perintah per tick (dikirim tiap tick + 2 sebelumnya), rekonsiliasi (setState host + putar ulang `quiet`), koreksi visual
-    `smooth` meluruh 120 ms, boneka diinterpolasi 7 tick di belakang, efek tembakan/granat/suara dari snapshot, HP sendiri dari snapshot).
+    `smooth` meluruh 120 ms, boneka diinterpolasi dengan jeda ADAPTIF `SnapStats` (interval median + keterlambatan p95 + 1 tick
+    + 1 interval bila paket hilang, 3…12 tick, naik cepat/turun pelan) + ekstrapolasi ≤ 3 tick saat snapshot telat, efek tembakan/
+    granat/suara dari snapshot, HP sendiri dari snapshot; serangan sendiri yang kena → `ctx.net.predictHit` (dari TeamManager.applyDamage
+    di klien) → 'hit' {predicted} instan, `HitLedger` melewati konfirmasi host yang sudah tampil (prediksi meleset → tampil saat konfirmasi)).
+  - Ping (permintaan pengguna "perbaikan ping"): NetHost ping/pong reliable tiap XCFG.net.pingEvery s (EMA), siaran 'pings' →
+    room (chip per pemain, `Menus.updatePings` tanpa menggambar ulang), `Entity.ping` lewat 'stats' (−1 bot, −2 host, −3 belum terukur)
+    → kolom Ping papan skor online, peringatan HUD `.ping-warn` ≥ pingWarn (150 ms), overlay F3 (ping, interp, Hz snapshot, koreksi).
   - Game: `ctx.net.role` offline|host|client (+ seed spread `shotRandom` = seed ^ id ^ tembakan ke-n per nyawa → spread prediksi = host).
     Room yang dibuat selalu membuka NetHost; Mulai dengan ≥ 1 teman terhubung → match online (id entitas per slot: Biru 1…5, Merah 6…10;
     pesan 'start' dulu, lalu spawn tersiar); tanpa teman → match lokal seperti biasa. Klien: semua entitas lain `puppet` (tanpa KCC/AI),
@@ -239,6 +246,8 @@
   - Terukur (2 jendela Chromium, signaling antar-tab): gabung ±0.8 s; posisi klien = host (< 0.002 u); koreksi prediksi: f32 → 7 per
     5 s gerak menempel rak, f64 → 1 per 8 s; dengan `?netlag=55&netjitter=15&netloss=2` (ping ±120 ms) 0 koreksi; tembak target strafe
     12 u: kena 98% dengan lag compensation vs 86% tanpa; keep-alive: rAF host dimatikan → tetap 59 tick/s & 19.9 snapshot/s.
+    Perbaikan ping: 30 Hz; jeda interpolasi 56–74 ms (jaringan lokal) / 88–107 ms (ping ±140, jitter 15, hilang 2%) — dulu tetap 117 ms;
+    hitmarker prediksi ≤ 1 ms setelah tembakan, 8–9 dari 9 kena terprediksi, 0 ganda; mode hemat upload → 14 Hz lalu kembali 29–30 Hz.
     Supabase asli (project milik pengguna; URL + publishable key di `.env.local`, di-.gitignore — jangan ditulis ke file yang di-commit):
     room siap ±2.1 s (termasuk memuat chunk Supabase), gabung ±1.9 s, WebRTC tersambung, 20 snapshot/s, "Host menutup room." sampai.
     Belum diuji: dua perangkat/jaringan berbeda (NAT sungguhan), 3+ pemain, TURN; deploy Vercel (env harus diisi sebelum build).
@@ -246,7 +255,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 153 test Vitest (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 157 test Vitest (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host) hijau; typecheck & build hijau;

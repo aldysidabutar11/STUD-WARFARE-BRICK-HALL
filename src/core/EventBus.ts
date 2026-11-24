@@ -13,7 +13,9 @@ export interface GameEvents {
   /** end = titik kena (dunia/tubuh) atau ujung jangkauan — dipakai tracer killcam. */
   shot: { shooterId: number; weaponId: WeaponId; origin: THREE.Vector3; dir: THREE.Vector3; end: THREE.Vector3 };
   hit: { attackerId: number; victimId: number; part: HitPart; damage: number; headshot: boolean; dist: number;
-    fromX: number; fromZ: number };
+    fromX: number; fromZ: number;
+    /** Klien online: tembakan/pisau sendiri yang kena menurut prediksi lokal (host mengonfirmasi kemudian). */
+    predicted?: boolean };
   kill: { killerId: number; victimId: number; weaponId: KillWeapon; headshot: boolean };
   assist: { entityId: number; victimId: number };
   death: { entityId: number; impulse: THREE.Vector3; grenade: boolean };
