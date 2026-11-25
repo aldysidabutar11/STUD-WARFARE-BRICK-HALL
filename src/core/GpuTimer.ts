@@ -8,7 +8,7 @@ interface TimerExt { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number }
 const RING = 120;
 
 export class GpuTimer {
-  private readonly ext: TimerExt | null;
+  private ext: TimerExt | null;
   private readonly pending: WebGLQuery[] = [];
   private readonly free: WebGLQuery[] = [];
   private active: WebGLQuery | null = null;
@@ -23,8 +23,16 @@ export class GpuTimer {
   /** Rata-rata bergerak waktu GPU (ms). */
   avgMs = 0;
 
-  constructor(private readonly gl: WebGL2RenderingContext) {
+  constructor(private gl: WebGL2RenderingContext) {
     this.ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerExt | null;
+  }
+
+  /** Konteks WebGL pulih: query lama sudah tidak berlaku & ekstensi harus diminta ulang. */
+  restore(gl: WebGL2RenderingContext) {
+    this.gl = gl;
+    this.ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerExt | null;
+    this.pending.length = 0; this.free.length = 0; this.active = null;
+    this.reset();
   }
 
   get available() { return this.ext !== null; }

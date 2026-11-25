@@ -8,6 +8,7 @@ import { XCFG } from '../config/extraConfig';
 import { SCOPE_ORDER, WEAPONS, WEAPON_ORDER, scopeAllowed, type ScopeId, type WeaponId } from '../config/weaponsData';
 import { physics } from '../physics/Physics';
 import { Engine } from '../core/Engine';
+import { blackbox } from '../core/BlackBox';
 import { GameLoop } from '../core/GameLoop';
 import { Input } from '../core/Input';
 import { PAD } from '../core/Bindings';
@@ -86,6 +87,13 @@ export class Game {
   inMatch = false;
   paused = false;
   autoTest = false;
+  /** Muat ulang yang disengaja game (ganti preset / grafis tidak pulih): lewati pengaman "Yakin keluar?". */
+  private allowUnload = false;
+  /** Kotak hitam: waktu konteks grafis hilang, timer tombol muat ulang, nomor match di halaman ini, cuplikan performa. */
+  private gfxLostAt = 0;
+  private gfxTimer = 0;
+  private matchNo = 0;
+  private bbPerfT = 0; private bbFrames = 0;
   mode: GameMode = 'tdm';
   /** Room main bareng (tahap 1: lokal) + id pemain ini; roster = susunan match yang sedang/terakhir dimainkan dari room. */
   private room: Lobby | null = null;
@@ -144,6 +152,16 @@ export class Game {
     const engine = this.engine = new Engine(canvas, this.settings.preset);
     const high = isHigh(this.settings.preset);
     ctx.engine = engine;
+    engine.onContextLost = () => this.onGfxLost();
+    engine.onContextRestored = () => this.onGfxRestored();
+    {
+      // kotak hitam: identitas sesi (versi bundle, preset, GPU, browser) untuk laporan teknis
+      const gl = engine.renderer.getContext(), dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      const gpu = String(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+      const build = [...document.querySelectorAll<HTMLScriptElement>('script[type="module"][src]')]
+        .map(sc => sc.src.split('/').pop() ?? '').find(n => n.startsWith('index-')) ?? 'dev';   // produksi: index-HASH.js
+      blackbox.info(`versi ${build} · preset ${this.settings.preset} · GPU ${gpu} · ${navigator.userAgent}`);
+    }
     ctx.settings = this.settings;
     ctx.debug = { god: false, noclip: false, showNav: false, botLabels: false, dmgNumbers: false, colliders: false, slowmo: false };
     // map awal: setelan (default Brick Hall); ?map=… menimpa untuk uji
@@ -222,6 +240,14 @@ export class Game {
     document.addEventListener('visibilitychange', () => { if (document.hidden && this.inMatch && !this.paused) this.pause(); });
     // pindah ke aplikasi lain (alt-tab, klik jendela lain) → selalu pause, juga saat main pakai controller
     window.addEventListener('blur', () => { if (this.inMatch && !this.paused && ctx.match.state !== 'RESULTS') this.pause(); });
+    // pengaman keluar halaman: refresh (F5 / Ctrl+R) / tutup tab / tombol kembali di tengah match atau saat room online → browser
+    // bertanya dulu (dialog bawaan, teksnya tidak bisa diubah). Laporan pengguna 2026-11-25: host ter-refresh di tengah Eliminasi →
+    // semua teman terlempar. Ctrl+W/T tidak bisa dicegah lewat keydown, tapi dialog ini tetap muncul.
+    window.addEventListener('beforeunload', (e) => {
+      if (!this.unloadGuarded()) return;
+      blackbox.log('keluar-halaman', 'dialog "Yakin keluar?" ditampilkan');
+      e.preventDefault(); e.returnValue = '';
+    });
     bus.on('match:state', (e) => this.onMatchState(e.state));
     bus.on('kill', (e) => this.onKill(e));
     // pisau pemain: hentakan kamera tepat saat bilah menyapu/menyodok (dijadwalkan sedikit sebelum titik kena), + ekstra saat kena
@@ -504,6 +530,11 @@ export class Game {
       ctx.match.start(opts);
     }
     this.introBanner(opts);
+    this.matchNo++;
+    blackbox.state({ inMatch: true, role, mode, map: this.loadedId ?? '?', match: this.matchNo, room: role !== 'offline' });
+    blackbox.log('match-mulai', `#${this.matchNo} ${mode} · ${this.loadedId ?? '?'} · peran ${role}`
+      + (role === 'host' ? ` · ${this.host?.connected ?? 0} teman tersambung` : ''));
+    this.bbPerfT = performance.now(); this.bbFrames = 0;
     this.loop.setKeepAlive(role === 'host');   // tab host di belakang → simulasi tetap jalan
     ctx.hud.setVisible(true);
     this.applyVisual();
@@ -542,6 +573,7 @@ export class Game {
    *  (room tetap); klien keluar di tengah match = keluar room (slotnya diambil bot). */
   quitToMenu() {
     const midMatch = this.inMatch && ctx.match.state !== 'RESULTS';
+    if (this.inMatch) blackbox.log('keluar-ke-menu', midMatch ? `di tengah match (peran ${ctx.net.role})` : 'dari layar hasil');
     if (midMatch && ctx.net.role === 'host') this.host?.sendAll({ t: 'ev', e: 'abort' });
     if (midMatch && ctx.net.role === 'client') this.leaveRoom();
     this.endMatch();
@@ -551,6 +583,7 @@ export class Game {
 
   /** Bersihkan match (entitas, efek, replikasi) tanpa memilih menu. */
   private endMatch() {
+    if (this.inMatch) blackbox.log('match-selesai', `#${this.matchNo}`);
     this.inMatch = false; this.paused = false; this.stress = null;
     this.loop.timeScale = 1; this.slowmoEnd = 0;
     this.input.exitLock();
@@ -563,6 +596,7 @@ export class Game {
     document.body.classList.remove('dead');
     this.engine.showViewmodel = false;
     this.applyVisual();
+    blackbox.state({ inMatch: false, room: this.onlineRoom() });
   }
 
   private endNet() {
@@ -575,6 +609,7 @@ export class Game {
   /** Layar hasil → Main Lagi / pause → Ulangi: room online/lokal → mulai lagi dari room (host); solo → match yang sama.
    *  Map tetap map match ini (juga bila pilihannya 'Acak'). */
   private replay() {
+    blackbox.log('main-lagi', this.room ? 'room' : 'solo');
     if (this.room) { this.endMatch(); void this.startRoom(true); return; }
     this.play(this.mode, this.roster, null, this.mapId ?? undefined);
   }
@@ -582,6 +617,7 @@ export class Game {
   // ───────────────────────────────── room / lobby: host (room di browser ini) & klien (gabung lewat kode)
   private createRoom(name: string) {
     this.leaveRoom();
+    blackbox.log('room', 'buat room (host)'); blackbox.state({ role: 'host' });
     const s = this.settings;
     this.room = new Lobby(makeRoomCode(Math.random),
       { mode: s.mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit, roundsToWin: s.roundsToWin, difficulty: s.difficulty, fillBots: true, map: s.map });
@@ -598,7 +634,7 @@ export class Game {
       inMatch: () => this.inMatch,
       onLobbyChanged: () => this.menus.refreshRoom(),
       onCommands: (pid, cmds) => this.hostRep?.onCommands(pid, cmds),
-      onPeerLeft: (pid) => this.hostRep?.onPeerLeft(pid),
+      onPeerLeft: (pid) => { blackbox.log('teman-keluar', `${pid} terputus dari host${this.inMatch ? ' di tengah match (slot diambil bot)' : ''}`); this.hostRep?.onPeerLeft(pid); },
       onLoadout: (pid, lo, v) => this.hostRep?.setLoadout(pid, lo, v),
       onPings: () => this.menus.updatePings(this.netInfo().pings),
     }, iceServers(XCFG.net.ice));
@@ -633,10 +669,13 @@ export class Game {
     if (!r.ok) { this.client = null; return r; }
     this.netState = 'online';
     this.room = client.lobby; this.roomMe = client.pid!;
+    blackbox.log('room', 'gabung room sebagai teman (klien)'); blackbox.state({ room: true, role: 'client' });
     return r;
   }
 
   private leaveRoom() {
+    if (this.room) blackbox.log('room', 'keluar dari room');
+    blackbox.state({ room: false, role: 'offline' });
     this.cancelNetHold();
     if (this.client) { const c = this.client; this.client = null; c.leave(); }
     if (this.host) { const h = this.host; this.host = null; h.close(); }
@@ -780,6 +819,7 @@ export class Game {
   private onNetEvent(m: Record<string, unknown>) {
     if (m.e === 'abort') {
       if (!this.inMatch) return;
+      blackbox.log('host-mengakhiri', 'host keluar dari match lewat menu');
       this.endMatch();
       this.menus.showRoom('Host mengakhiri match');
       return;
@@ -789,11 +829,14 @@ export class Game {
 
   /** Klien: koneksi ke host berakhir. */
   private onClientClosed(reason: 'host' | 'kicked' | 'lost') {
+    blackbox.log('koneksi-host', reason === 'lost' ? 'koneksi ke host terputus (halaman host di-refresh/ditutup, atau jaringan putus)'
+      : reason === 'host' ? 'host menutup room' : 'dikeluarkan oleh host');
     this.cancelNetHold();
     this.client = null; this.room = null; this.roster = null;
     if (this.inMatch) this.endMatch();
     const msg = reason === 'host' ? 'Host menutup room.' : reason === 'kicked' ? 'Kamu dikeluarkan dari room oleh host.' : 'Koneksi ke host terputus.';
     this.menus.showLobbyHome(() => this.menus.showMain(), '', msg);
+    blackbox.state({ room: false, role: 'offline' });
   }
 
   /** Awal match: banner nama map + mode selama hitung mundur (Eliminasi: menggantikan banner "RONDE 1"); Latihan: pesan singkat. */
@@ -843,6 +886,8 @@ export class Game {
   }
 
   private onResults() {
+    blackbox.log('hasil', `#${this.matchNo} selesai normal (layar hasil)`);
+    blackbox.state({ inMatch: false, room: this.onlineRoom() });
     this.loop.timeScale = 1;
     this.input.exitLock();
     this.killcam.stop();
@@ -882,7 +927,90 @@ export class Game {
     ctx.audio.setVolumes(this.settings.volMaster / 100, this.settings.volSfx / 100, this.settings.volUi / 100);
     this.stats.toggle(this.settings.showFps);
     this.applyVisual();
-    if (reload) location.reload(); // antialias hanya bisa ditentukan saat WebGLRenderer dibuat
+    if (reload) {   // antialias hanya bisa ditentukan saat WebGLRenderer dibuat
+      this.allowUnload = true;
+      blackbox.closing('ganti preset grafis');
+      location.reload();
+    }
+  }
+
+  /** Refresh / tutup tab perlu dikonfirmasi: match berjalan, atau room online (host dengan teman / klien). Uji otomatis: tidak. */
+  private unloadGuarded(): boolean {
+    if (this.allowUnload || this.autoTest) return false;
+    return (this.inMatch && ctx.match.state !== 'RESULTS') || this.onlineRoom();
+  }
+  /** Sedang di room online: host dengan ≥ 1 teman tersambung, atau klien. */
+  private onlineRoom(): boolean { return (!!this.host && this.host.connected > 0) || !!this.client; }
+
+  // ───────────────────────────────── pemulihan grafis (konteks WebGL hilang → pulih di tempat, bukan muat ulang)
+  /** Konteks hilang: simulasi tetap jalan (host: room & teman aman); layar "Memulihkan grafis…"; > 10 s → tombol muat ulang. */
+  private onGfxLost() {
+    this.gfxLostAt = performance.now();
+    blackbox.log('grafis-hilang', `konteks WebGL hilang${this.inMatch ? ` di tengah match (peran ${ctx.net.role})` : ''}`);
+    const el = this.gfxOverlay();
+    el.innerHTML = '<div class="gr-t">Memulihkan grafis…</div><div class="gr-s">Game tetap berjalan — biasanya hanya beberapa detik.</div>';
+    el.classList.remove('hidden');
+    clearTimeout(this.gfxTimer);
+    this.gfxTimer = window.setTimeout(() => {
+      if (!this.engine.contextLost) return;
+      blackbox.log('grafis-hilang', `belum pulih setelah ${XCFG.gfx.recoverWaitS} s`);
+      const host = ctx.net.role === 'host' || (!!this.host && this.host.connected > 0);
+      el.innerHTML = '<div class="gr-t">Grafis belum pulih</div><div class="gr-s">Browser belum mengembalikan akses ke GPU.'
+        + (host ? ' Kamu host — memuat ulang akan memutus semua teman di room.' : '') + '</div>'
+        + '<button data-a="gr-reload">Muat ulang halaman</button>';
+      el.querySelector('button')?.addEventListener('click', () => {
+        this.allowUnload = true; blackbox.closing('grafis tidak pulih — dimuat ulang oleh pemain'); location.reload();
+      });
+      // mouse masih terkunci ke game (pointer lock): klik tidak akan sampai ke tombol & kursor tak terlihat → lepas kuncinya
+      this.input.exitLock();
+    }, XCFG.gfx.recoverWaitS * 1000);
+  }
+
+  /** Konteks pulih: three.js sudah membangun ulang state GL (listener-nya terpasang lebih dulu) → tangkap ulang peta lingkungan
+   *  (render target GPU ikut hilang) + kompilasi ulang shader lewat applyVisual. Match/room tidak tersentuh. */
+  private onGfxRestored() {
+    clearTimeout(this.gfxTimer);
+    const ms = Math.round(performance.now() - this.gfxLostAt);
+    try {
+      if (this.engine.gfx.env && this.loadedId) this.recaptureEnvironment();
+      this.applyVisual();
+      blackbox.log('grafis-pulih', `dipulihkan di tempat setelah ${ms} ms (tanpa muat ulang)`);
+    } catch (err) {
+      console.error('[grafis] pemulihan gagal', err);
+      blackbox.log('error', 'pemulihan grafis: ' + String(err));
+    }
+    this.gfxOverlay().classList.add('hidden');
+  }
+
+  private gfxOverlay(): HTMLElement {
+    let el = document.getElementById('gfx-recover');
+    if (!el) { el = document.createElement('div'); el.id = 'gfx-recover'; el.className = 'hidden'; document.body.appendChild(el); }
+    return el;
+  }
+
+  /** Kotak hitam: cuplikan performa tiap 60 s selama match (FPS, memori JS, sumber daya GPU, teman tersambung). */
+  private bbPerf() {
+    this.bbFrames++;
+    const t = performance.now(), span = t - this.bbPerfT;
+    if (span < 60_000) return;
+    const mem = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
+    const info = this.engine.renderer.info.memory;
+    blackbox.log('perf', `${Math.round(this.bbFrames * 1000 / span)} fps · memori JS ${mem ? Math.round(mem.usedJSHeapSize / 1048576) + ' MB' : '?'}`
+      + ` · geometri ${info.geometries} · tekstur ${info.textures}` + (ctx.net.role === 'host' ? ` · teman ${this.host?.connected ?? 0}` : ''));
+    this.bbPerfT = t; this.bbFrames = 0;
+  }
+
+  /** Peta lingkungan ditangkap ulang TANPA karakter & balok tubuh (sama seperti saat memuat map, sebelum ada entitas). */
+  private recaptureEnvironment() {
+    const hidden: THREE.Object3D[] = [];
+    const hide = (o: THREE.Object3D) => { if (o.visible) { o.visible = false; hidden.push(o); } };
+    for (const e of ctx.entities) hide(e.char.root);
+    hide(ctx.deathFx.root);
+    try {
+      try { this.envRT?.dispose(); } catch { /* sumber daya GPU lama sudah hilang bersama konteks */ }
+      this.envRT = null; this.envTex = null;
+      this.captureEnvironment(currentMap());
+    } finally { for (const o of hidden) o.visible = true; }
   }
 
   /** Terapkan pengaturan tampilan/kontrol yang tidak butuh muat ulang. */
@@ -1046,6 +1174,7 @@ export class Game {
   // ───────────────────────────────── per frame (§2.6)
   private update(dt: number, alpha: number, rawDt: number) {
     ctx.time += dt;
+    if (this.inMatch) this.bbPerf();
     const p = ctx.player, rig = ctx.camRig, inp = this.input, cam = this.engine.camera;
     if (this.slowmoEnd && performance.now() > this.slowmoEnd) { this.slowmoEnd = 0; this.loop.timeScale = 1; }
     if (this.menus.open && inp.padActive) this.menus.padNav(inp.pad);

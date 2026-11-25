@@ -2,8 +2,20 @@
 // ditambah pemetaan aksi yang bisa diubah (Bindings) dan gamepad standar (pasca-MVP).
 import { XCFG } from '../config/extraConfig';
 import { DEFAULT_BINDS, PAD_ACTION, type Action, type Binds } from './Bindings';
+import { blackbox } from './BlackBox';
 
 const PREVENT = new Set(['Tab', 'Space', 'Backquote', 'F3']);
+/** Pintasan browser yang memuat ulang / berpindah halaman / membuka UI browser — DICEGAH selama bermain (mouse terkunci): F1 bantuan,
+ *  F5 refresh, F6 bilah alamat, F7 caret browsing, F10 menu, plus semua kombinasi Ctrl/⌘/Alt (Ctrl+R refresh, Ctrl+S/P/F/D, Alt+←).
+ *  Laporan pengguna 2026-11-25: host ter-refresh di tengah Eliminasi → semua teman terlempar (dugaan Ctrl+R: kelingking melorot dari
+ *  Shift/sprint ke Ctrl saat menekan R/reload). Ctrl+W/T/N tidak bisa dicegah Chrome → pengaman beforeunload di Game. */
+const BROWSER_KEYS = new Set(['F1', 'F5', 'F6', 'F7', 'F10']);
+/** Label pintasan muat-ulang yang dicegah (dicatat ke kotak hitam), null = bukan pintasan muat ulang. */
+export function reloadCombo(e: { code: string; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): string | null {
+  if (e.code === 'F5') return (e.ctrlKey ? 'Ctrl+' : '') + 'F5';
+  if ((e.ctrlKey || e.metaKey) && e.code === 'KeyR') return (e.metaKey ? '⌘' : 'Ctrl') + (e.shiftKey ? '+Shift' : '') + '+R';
+  return null;
+}
 const NB = 17;
 const XP = XCFG.pad, XI = XCFG.input;
 
@@ -59,7 +71,9 @@ export class Input {
     };
     window.addEventListener('keydown', (e) => {
       if (typing(e)) return;
-      if (PREVENT.has(e.code) || (this.locked && (e.code.startsWith('Control') || e.code === 'KeyW' && e.ctrlKey))) e.preventDefault();
+      const browserKey = this.locked && (BROWSER_KEYS.has(e.code) || e.code.startsWith('Control') || e.ctrlKey || e.metaKey || e.altKey);
+      if (PREVENT.has(e.code) || browserKey) e.preventDefault();
+      if (browserKey) { const r = reloadCombo(e); if (r) blackbox.log('pintasan-dicegah', `${r} ditekan saat bermain (refresh dibatalkan)`, 2000); }
       // tombol yang masih ditahan saat kembali ke jendela: repeat dari OS → tandai ditahan (tanpa "ditekan")
       if (e.repeat) { this.down.add(e.code); return; }
       this.padActive = false;

@@ -99,3 +99,49 @@ describe('Input: controller', () => {
     expect(inp.padActive).toBe(false);
   });
 });
+
+describe('Input: pintasan browser saat bermain (laporan pengguna: host ter-refresh di tengah match)', () => {
+  let inp: InstanceType<typeof Input>;
+  beforeEach(() => { now = 10_000; pads = []; doc.pointerLockElement = null; inp = new Input(canvas); });
+  /** keydown yang bisa dibatalkan; true = browser dicegah menjalankan pintasannya. */
+  const press = (code: string, mods: { ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; shiftKey?: boolean } = {}) => {
+    const e = Object.assign(new Event('keydown', { cancelable: true }), { code, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false,
+      repeat: false, ...mods });
+    win.dispatchEvent(e);
+    win.dispatchEvent(Object.assign(new Event('keyup', { cancelable: true }), { code }));
+    return e.defaultPrevented;
+  };
+
+  it('mouse terkunci: F5, Ctrl+R, Ctrl+Shift+R, ⌘R, Ctrl+S, Alt+←, F1/F6/F7/F10 dicegah; tombol main biasa tidak', () => {
+    lock();
+    expect(press('F5')).toBe(true);
+    expect(press('KeyR', { ctrlKey: true })).toBe(true);
+    expect(press('KeyR', { ctrlKey: true, shiftKey: true })).toBe(true);
+    expect(press('KeyR', { metaKey: true })).toBe(true);
+    expect(press('KeyS', { ctrlKey: true })).toBe(true);
+    expect(press('ArrowLeft', { altKey: true })).toBe(true);
+    for (const f of ['F1', 'F6', 'F7', 'F10']) expect(press(f)).toBe(true);
+    expect(press('KeyR')).toBe(false);                                   // reload senjata biasa tetap jalan normal
+    expect(press('KeyW')).toBe(false);
+    expect(press('F11')).toBe(false);                                    // layar penuh tetap boleh
+  });
+
+  it('di menu (mouse tidak terkunci) pintasan browser tidak diganggu', () => {
+    unlock();                                                            // instance Input dari test lain ikut mendengar window
+    expect(press('F5')).toBe(false);
+    expect(press('KeyR', { ctrlKey: true })).toBe(false);
+  });
+
+  it('label pintasan muat ulang untuk kotak hitam', async () => {
+    const { reloadCombo } = await import('../src/core/Input');
+    const k = (code: string, m: Partial<{ ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }> = {}) =>
+      reloadCombo({ code, ctrlKey: false, metaKey: false, shiftKey: false, ...m });
+    expect(k('F5')).toBe('F5');
+    expect(k('F5', { ctrlKey: true })).toBe('Ctrl+F5');
+    expect(k('KeyR', { ctrlKey: true })).toBe('Ctrl+R');
+    expect(k('KeyR', { ctrlKey: true, shiftKey: true })).toBe('Ctrl+Shift+R');
+    expect(k('KeyR', { metaKey: true })).toBe('⌘+R');
+    expect(k('KeyR')).toBeNull();
+    expect(k('KeyS', { ctrlKey: true })).toBeNull();
+  });
+});

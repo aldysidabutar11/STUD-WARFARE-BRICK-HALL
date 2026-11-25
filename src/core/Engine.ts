@@ -28,7 +28,11 @@ export class Engine {
   /** Waktu GPU per frame (query timer WebGL2) — aktif saat dibutuhkan. */
   readonly gpu: GpuTimer;
   showViewmodel = false;
+  /** Konteks WebGL hilang (GPU di-reset / driver / memori): render & warmup dilewati, simulasi tetap jalan. */
   contextLost = false;
+  /** Dipanggil saat konteks hilang / pulih (Game: layar "Memulihkan grafis…", tangkap ulang peta lingkungan, kotak hitam). */
+  onContextLost: (() => void) | null = null;
+  onContextRestored: (() => void) | null = null;
   maxAnisotropy = 1;
 
   constructor(readonly canvas: HTMLCanvasElement, readonly presetName: PresetName) {
@@ -54,8 +58,15 @@ export class Engine {
     if (this.gfx.post) this.post = new PostFX(this.renderer, this.scene, this.camera, this.vmScene, this.vmCamera,
       { samples: this.gfx.ssao && this.preset.antialias ? 4 : 0, fxaa: !this.gfx.ssao, bloom: this.gfx.bloom, ssao: this.gfx.ssao });
     addEventListener('resize', () => this.resize());
-    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.contextLost = true; });
-    canvas.addEventListener('webglcontextrestored', () => { location.reload(); });
+    // Konteks pulih → dipulihkan DI TEMPAT (three.js membangun ulang state GL-nya sendiri di listener yang terpasang lebih dulu;
+    // Game menangkap ulang peta lingkungan & mengompilasi ulang shader). Dulu → location.reload(): bila terjadi di HOST, room &
+    // match ikut hilang dan semua teman terlempar (laporan pengguna 2026-11-25).
+    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.contextLost = true; this.onContextLost?.(); });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.contextLost = false;
+      this.gpu.restore(this.renderer.getContext() as WebGL2RenderingContext);
+      this.onContextRestored?.();
+    });
   }
 
   resize() {

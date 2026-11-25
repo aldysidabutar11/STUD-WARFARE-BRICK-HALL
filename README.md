@@ -156,6 +156,12 @@ File game di-host gratis di **Vercel** (atau hosting statis lain).
 - Host sebaiknya pemain dengan koneksi & laptop paling kuat (upload ±1.2–2.5 Mbps untuk 9 teman). Host jangan menutup tab selama main;
   pindah tab/aplikasi tetap aman (simulasi tetap jalan di latar belakang).
 - Teman keluar di tengah match → slotnya diambil alih bot. Host keluar → match berakhir, semua kembali ke room.
+- **Pengaman refresh:** selama bermain, **F5 / Ctrl+R** (dan pintasan browser lain seperti Ctrl+S, Alt+←) tidak berfungsi. Kalau halaman
+  akan di-refresh / ditutup di tengah match atau saat room online, browser bertanya **"Yakin keluar?"** dulu — pilih *Batal* untuk lanjut.
+- **Grafis tiba-tiba hilang** (driver/GPU bermasalah sesaat): game tetap berjalan dan muncul "Memulihkan grafis…" — biasanya pulih dalam
+  beberapa detik tanpa memutus siapa pun. Bila > 10 detik, muncul tombol *Muat ulang halaman*.
+- **Kotak hitam:** game mencatat kejadian teknis (koneksi, grafis, error). Kalau sesi berakhir tidak normal, menu utama menampilkan
+  sebabnya + tombol **Salin laporan** — tempelkan teksnya ke pengembang. Tombol kecil *Salin laporan teknis* selalu ada di menu utama.
 - Belum tersedia saat online: buang/ambil senjata (G/E), mode Latihan.
 
 ### Coba tanpa akun apa pun (uji lokal)

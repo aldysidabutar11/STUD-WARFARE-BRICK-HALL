@@ -260,6 +260,32 @@
     (publishable key bukan JWT). Tabel dari `supabase/keepalive.sql` (1 baris, RLS select anon) — dijalankan pengguna di SQL Editor.
     Alasan: paket gratis dijeda setelah ±7 hari tanpa aktivitas DATABASE; signaling Realtime tidak dihitung. CRON_SECRET opsional.
   - Input: keydown di kolom teks (input non-range / textarea) tidak dicegah & tidak jadi input game (Spasi bisa diketik).
+  - Ketahanan sesi (laporan pengguna 2026-11-25: game ke-7 Eliminasi, pengguna = HOST, "halaman ke-refresh sendiri" & SEMUA pemain
+    terlempar bersamaan = halaman host berakhir). Penelusuran: log Windows host (System 4101, Application 1000–1002, DxgKrnl/Intel
+    Graphics, WER, Crashpad Chrome/Edge) bersih selama sesi; 4101 teman kosong; uji 8 match offline + 7 match online berturut-turut →
+    memori stabil (DeathFx = pool per id entitas, maks 70 body — bukan kebocoran). Sebab pasti tak terbukti; dua jalur yang kini ditutup:
+    (a) F5/Ctrl+R tidak dicegah (Ctrl+R = kelingking melorot dari Shift/sprint ke Ctrl saat R/reload), (b) `webglcontextrestored` →
+    `location.reload()` (Engine). Perbaikan:
+    - `Game.unloadGuarded` → `beforeunload` (dialog bawaan "Yakin keluar?") saat match berjalan (bukan RESULTS) atau room online (host
+      dengan teman / klien); tidak untuk `autoTest` & muat ulang disengaja (`allowUnload`: ganti preset, tombol grafis).
+    - Input: saat mouse terkunci → preventDefault F1/F5/F6/F7/F10 + semua kombinasi Ctrl/⌘/Alt (`reloadCombo` dicatat ke kotak hitam);
+      Ctrl+W/T/N tak bisa dicegah Chrome → tertangkap dialog beforeunload.
+    - Grafis: konteks pulih → `Engine.onContextRestored` (bukan reload; three.js membangun ulang state GL di listener-nya yang terpasang
+      lebih dulu) → `Game.onGfxRestored`: `recaptureEnvironment` (peta lingkungan = render target GPU, ditangkap ulang tanpa karakter &
+      balok tubuh) + `applyVisual` (warmup) + `GpuTimer.restore`. Selama hilang: simulasi jalan, layar `#gfx-recover`; > `XCFG.gfx.recoverWaitS`
+      (10 s) → tombol "Muat ulang halaman" + `exitLock()` (pointer lock membuat klik tidak sampai ke tombol — terukur di browser).
+    - Kotak hitam `src/core/BlackBox.ts`: sessionStorage `studwarfare.blackbox.v1` (+ `.prev.v1` sampai ditutup) — bertahan saat refresh,
+      hilang saat tab ditutup; localStorage tetap khusus settings. Maks 80 entri: boot (versi bundle index-HASH, preset, GPU, UA), match
+      mulai/selesai/hasil/main lagi, room, status koneksi WebRTC (`Peer` connectionState), teman keluar, koneksi ke host (klien), host
+      mengakhiri, grafis hilang/pulih, pintasan dicegah, dialog keluar halaman, tab tersembunyi, error JS/promise, perf tiap 60 s (fps,
+      memori JS, geometri/tekstur, teman). `endSummary` (murni, diuji) → banner di menu utama ("Sesi sebelumnya berakhir tidak normal" +
+      sebab: di-refresh/ditutup, crash/memori, grafis tak pulih, muat ulang game) + "Salin laporan" (clipboard; gagal → textarea);
+      tombol kecil "Salin laporan teknis" selalu ada.
+    - Terukur (Chromium headless + Iris Xe asli, skrip lokal): konteks hilang ±1.5–2 s lalu pulih di tengah Eliminasi MEDIUM & HIGH →
+      tanpa muat ulang, waktu game jalan terus, render lanjut, peta lingkungan baru, 0 error konsol; host online kehilangan konteks →
+      teman tetap tersambung & match lanjut; refresh di tengah match → dialog, Batal → tetap main, diterima → banner sebab + laporan
+      tersalin; refresh di menu → tanpa dialog; konteks tak pulih → tombol tampil 10 s, klik mouse mentah → muat ulang → banner
+      "grafis tidak pulih". Tests: tests/blackbox.test.ts, tests/input.test.ts (pintasan saat terkunci / di menu, label).
 
 - Multi-map & Steel Yard (permintaan pengguna: map kedua "Steel Yard" — halaman kontainer di gurun, "detail dan lengkap"; dikerjakan
   bertahap: F1 fondasi → C1 denah/nav/test, C2 visual, C3 UI/online → I1 integrasi & uji browser):
@@ -404,14 +430,15 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 248 test Vitest / 19 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 258 test Vitest / 20 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
   denah, cermin, collider, nav + validate, lane, garis pandang, permukaan, latar luar pagar, collider ↔ visual, pantulan granat),
   pilihan map room/NetStart, antrean pesan klien saat memuat map (HoldQueue), Props/collider dilepas saat ganti map, bot manusiawi
   (tests/botAim.test.ts: profil sentakan/kelewatan/pelacakan/rencana ulang, reaksi, near-miss, perkiraan arah, callout;
-  tests/botTactics.test.ts: cover, posisi tempur, kabur granat di collider Rapier SY & BH)) hijau;
+  tests/botTactics.test.ts: cover, posisi tempur, kabur granat di collider Rapier SY & BH), kotak hitam & sebab sesi berakhir
+  (tests/blackbox.test.ts), pintasan browser saat bermain (tests/input.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

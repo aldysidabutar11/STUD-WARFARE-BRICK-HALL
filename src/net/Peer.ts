@@ -2,6 +2,7 @@
 // dan 'u' UNRELIABLE tanpa urutan & tanpa retransmit (biner: perintah & snapshot) — paket hilang tidak menahan paket berikutnya
 // (beda dengan WebSocket/TCP). Klien = pemrakarsa (membuat kanal + offer); host menjawab.
 import type { SignalKind } from './Signaling';
+import { blackbox } from '../core/BlackBox';
 
 /** Uji jaringan buruk (debug, di URL kedua sisi): ?netlag=ms&netjitter=ms&netloss=% — kirim ditunda (reliable tetap berurutan),
  *  paket unreliable dibuang acak. Ping ≈ 2 × netlag bila dipasang di host & klien. */
@@ -32,6 +33,8 @@ export class Peer {
     this.pc.onicecandidate = (ev) => { if (ev.candidate) this.signal('ice', ev.candidate.toJSON()); };
     this.pc.onconnectionstatechange = () => {
       const s = this.pc.connectionState;
+      // kotak hitam: urutan status (connecting → connected → disconnected → failed …) menjelaskan putusnya koneksi
+      blackbox.log('koneksi', `${this.initiator ? 'ke host' : 'dari teman'} ${remoteId.slice(0, 6)}: ${s}`);
       if (s === 'failed' || s === 'closed') this.close();
     };
     if (initiator) {

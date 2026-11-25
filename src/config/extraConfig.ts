@@ -227,6 +227,8 @@ export const XCFG = {
   //    Fitur per preset: LOW minimal · MEDIUM (Iris Xe, target 60 fps) material PBR + pantulan + bake + kabut + debu ·
   //    HIGH + bloom/grading + lampu moncong · ULTRA + SSAO + bayangan 4096. Saklar per efek di Pengaturan → Grafik.
   gfx: {
+    /** Konteks WebGL hilang: tunggu pemulihan dari browser sekian detik sebelum menawarkan tombol "Muat ulang halaman". */
+    recoverWaitS: 10,
     profiles: {
       LOW:    { pbr: false, normalMaps: false, env: false, fog: true, post: false, bloom: false, ssao: false, dust: false, shafts: false },
       MEDIUM: { pbr: true,  normalMaps: true,  env: true,  fog: true, post: false, bloom: false, ssao: false, dust: true,  shafts: true,  muzzleLight: false },

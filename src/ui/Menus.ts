@@ -17,6 +17,7 @@ import { mapFacts, paintThumbs, thumbHTML } from './MapThumb';
 import type { Team } from '../entities/BlockyCharacter';
 import type { JoinFail } from '../net/Session';
 import { onlineConfigured } from '../net/Signaling';
+import { blackbox } from '../core/BlackBox';
 
 /** Aksi di layar room (host: langsung; klien: dikirim ke host untuk divalidasi). */
 export type RoomAction = { type: 'team'; team: Team } | { type: 'ready'; ready: boolean } | { type: 'kick'; id: string }
@@ -94,13 +95,22 @@ export class Menus {
 
   showMain() {
     const mc = this.api.mapChoice();
-    const m = this.mount('main', `<div class="card main"><h1>STUD WARFARE</h1><div class="sub">BRICK HALL</div>
+    // kotak hitam: sesi halaman sebelumnya berakhir tidak normal (refresh/tutup tab/crash/grafis hilang di tengah match/room online)
+    const issue = blackbox.prevIssue();
+    const issueHtml = issue ? `<div class="bb-issue"><b>⚠ Sesi sebelumnya berakhir tidak normal</b> <span class="bb-when">(${esc(issue.when)})</span>
+      <div class="bb-why">${esc(issue.text)}</div>
+      <div class="bb-btns"><button data-a="bbcopy">Salin laporan</button><button data-a="bbclose">Tutup</button></div></div>` : '';
+    const m = this.mount('main', `<div class="card main"><h1>STUD WARFARE</h1><div class="sub">BRICK HALL</div>${issueHtml}
       <div class="btns"><button class="primary" data-a="play">▶ Main</button><button data-a="room">👥 Main Bareng (Room)</button>
       <button data-a="practice">◎ Latihan Menembak <small class="bsub">· ${esc(mc === 'random' ? 'map acak' : MAPS[mc].name)}</small></button>
       <button data-a="loadout">Loadout</button><button data-a="settings">Pengaturan</button><button data-a="controls">Kontrol</button>
       <button data-a="fs">Layar Penuh</button></div>
       <div class="note">Biru di Selatan menghadap Utara. Mode: Team Deathmatch atau Eliminasi melawan bot, atau Main Bareng di room (5 lawan 5, slot kosong diisi bot).
-        ${MAP_IDS.length} map: ${MAP_IDS.map(id => MAPS[id].name).join(' & ')} — pilih di ▶ Main (Latihan memakai map yang sama). Gamepad didukung.</div></div>`);
+        ${MAP_IDS.length} map: ${MAP_IDS.map(id => MAPS[id].name).join(' & ')} — pilih di ▶ Main (Latihan memakai map yang sama). Gamepad didukung.</div>
+      <button class="bb-link" data-a="bbreport" title="Catatan kejadian teknis (koneksi, grafis, error) untuk dikirim ke pengembang">Salin laporan teknis</button></div>`);
+    this.on(m, 'bbcopy', () => this.copyReport(m, m.querySelector('[data-a="bbcopy"]')));
+    this.on(m, 'bbreport', () => this.copyReport(m, m.querySelector('[data-a="bbreport"]')));
+    this.on(m, 'bbclose', () => { blackbox.dismissPrev(); this.showMain(); });
     this.on(m, 'play', () => this.showMatchSetup(() => this.showMain()));
     this.on(m, 'room', () => (this.api.room() ? this.showRoom() : this.showLobbyHome(() => this.showMain())));
     this.on(m, 'practice', () => this.api.play(true));
@@ -659,5 +669,19 @@ export class Menus {
 
   private on(m: HTMLElement, action: string, fn: () => void) {
     m.querySelector(`[data-a="${action}"]`)?.addEventListener('click', fn);
+  }
+
+  /** Salin laporan kotak hitam ke clipboard; gagal (izin/HTTP) → tampilkan teksnya untuk dipilih manual. */
+  private copyReport(m: HTMLElement, btn: Element | null) {
+    const text = blackbox.report();
+    const done = (ok: boolean) => {
+      if (btn) btn.textContent = ok ? '✔ Laporan disalin — tempel ke chat' : 'Salin manual dari kotak di bawah';
+      if (ok || m.querySelector('.bb-text')) return;
+      const ta = document.createElement('textarea');
+      ta.className = 'bb-text'; ta.readOnly = true; ta.value = text;
+      m.querySelector('.card')?.appendChild(ta);
+      ta.focus(); ta.select();
+    };
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => done(true), () => done(false)); else done(false);
   }
 }
