@@ -69,14 +69,15 @@ export function footstep(mat: SurfaceMaterial, land = false): Recipe {
       return 0.06;
     }
     if (mat === 'sand') {
-      // beton berpasir/kerikil: gesekan lowpass lembut + 3 butir "kres" highpass acak + dentum rendah
-      noiseSrc(s, t0, 0.08).connect(filt(s, 'lowpass', 1300 * p, 0.8)).connect(env(s, out, t0, 0.55 * g, 0.004, 0.075));
-      for (let i = 0; i < 3; i++) {
-        const t = t0 + 0.004 + Math.random() * 0.045, f = (2600 + Math.random() * 2400) * p;
-        noiseSrc(s, t, 0.012).connect(filt(s, 'bandpass', f, 3)).connect(env(s, out, t, 0.28 * g, 0.0008, 0.012));
+      // beton berpasir/kerikil: "kres" pendek & renyah — gesekan bandpass 45 ms + 4 butir kerikil di 30 ms pertama + ketuk tipis.
+      // (Dulu desis lowpass 80 ms + dentum 95 Hz: di map terbuka langkah terdengar berat & lambat — laporan pengguna 2026-11-25.)
+      noiseSrc(s, t0, 0.045).connect(filt(s, 'bandpass', 1800 * p, 1.1)).connect(env(s, out, t0, 0.5 * g, 0.002, 0.04));
+      for (let i = 0; i < 4; i++) {
+        const t = t0 + 0.002 + Math.random() * 0.028, f = (3000 + Math.random() * 2600) * p;
+        noiseSrc(s, t, 0.01).connect(filt(s, 'bandpass', f, 3)).connect(env(s, out, t, 0.3 * g, 0.0006, 0.01));
       }
-      osc(s, 'sine', 95 * p, 70 * p, t0, 0.05).connect(env(s, out, t0, 0.3 * g, 0.003, 0.05));
-      return 0.1;
+      osc(s, 'sine', 130 * p, 100 * p, t0, 0.03).connect(env(s, out, t0, 0.14 * g, 0.002, 0.03));
+      return 0.06;
     }
     if (mat === 'metal') {
       // lantai/atap kontainer baja: dentang berongga (parsial tak harmonis berdengung) + transien + dentum lantai

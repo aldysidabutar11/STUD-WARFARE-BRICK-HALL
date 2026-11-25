@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fallDamage, moveTarget, simulateJumpApex } from '../src/combat/Damage';
 import { CFG } from '../src/config/gameConfig';
-import { Spring } from '../src/entities/moveFeel';
+import { Spring, mapTempo } from '../src/entities/moveFeel';
 import { strideYaw } from '../src/entities/BlockyCharacter';
 
 const base = { sprinting: false, crouched: false, ads: false };
@@ -46,6 +46,22 @@ describe('tempo gerak (moveSpeedScale sebagai skala waktu)', () => {
     const d = (t: number) => { const o = { airTime: 0 }; simulateJumpApex(t, o); return 8.5 * t * o.airTime; };
     expect(Math.abs(d(T) - d(1))).toBeLessThan(0.15);
     expect(d(1)).toBeGreaterThan(5); // sprint-jump ke rak B (5 u dari pagar balkon)
+  });
+});
+
+describe('tempo gerak per map', () => {
+  it('Steel Yard (ruang terbuka) memakai tempo lebih cepat tapi tetap di rentang uji GDD §3.4; map lain = tempo dasar', () => {
+    const base = CFG.player.moveSpeedScale, sy = mapTempo('steelyard');
+    expect(sy).toBeGreaterThan(base);
+    expect(sy).toBeGreaterThanOrEqual(1.25); expect(sy).toBeLessThanOrEqual(1.5);
+    expect(mapTempo('brickhall')).toBe(base);
+    expect(mapTempo('tidak-ada')).toBe(base);
+  });
+  it('tempo Steel Yard: puncak lompat & jarak lompat sprint di ruang sama dengan tempo dasar (tidak membuka tempat baru)', () => {
+    const sy = mapTempo('steelyard'), o = { airTime: 0 };
+    expect(Math.abs(simulateJumpApex(sy, o) - 1.383)).toBeLessThanOrEqual(0.05);
+    const d = (t: number) => { const q = { airTime: 0 }; simulateJumpApex(t, q); return 8.5 * t * q.airTime; };
+    expect(Math.abs(d(sy) - d(CFG.player.moveSpeedScale))).toBeLessThan(0.15);
   });
 });
 

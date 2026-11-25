@@ -1,5 +1,7 @@
 // src/entities/moveFeel.ts — nilai "rasa gerak" yang bisa diubah langsung saat main (panel debug `), awalnya dari config.
 import { CFG } from '../config/gameConfig';
+import { XCFG } from '../config/extraConfig';
+import { currentMap } from '../world/maps/current';
 
 export const moveFeel = {
   /** Tempo gerak T (= CFG.player.moveSpeedScale): kecepatan ×T, gravitasi karakter ×T², lompat ×T, akselerasi udara ×T². */
@@ -8,8 +10,16 @@ export const moveFeel = {
   bob: 1, tilt: 1, sprintFov: 1, inertia: 1,
 };
 
+/** Tempo dasar map (XCFG.feel.mapTempo — mis. Steel Yard lebih cepat karena ruang terbuka terasa lambat) atau CFG.player.moveSpeedScale.
+ *  Tanpa id: map aktif (belum ada map → nilai dasar). Game.loadMap memasangnya ke moveFeel.tempo (host & klien memuat map yang sama). */
+export function mapTempo(id?: string): number {
+  let mid = id;
+  if (mid === undefined) { try { mid = currentMap().id; } catch { mid = ''; } }
+  return XCFG.feel.mapTempo[mid] ?? CFG.player.moveSpeedScale;
+}
+
 export function resetMoveFeel() {
-  moveFeel.tempo = CFG.player.moveSpeedScale; moveFeel.bob = 1; moveFeel.tilt = 1; moveFeel.sprintFov = 1; moveFeel.inertia = 1;
+  moveFeel.tempo = mapTempo(); moveFeel.bob = 1; moveFeel.tilt = 1; moveFeel.sprintFov = 1; moveFeel.inertia = 1;
 }
 
 /**

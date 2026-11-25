@@ -208,6 +208,11 @@ export const XCFG = {
   landKick: { min: 0.6, base: 0.10, perUnit: 0.03, max: 0.45, omega: 14, zeta: 0.6 },
   // "Rasa gerak" (pengguna: "gerak karakter terlalu kaku") — lapisan visual di atas gerak GDD; semua ×pengaturan Gerak kamera
   feel: {
+    // tempo gerak per map (pengguna 2026-11-25: "di Steel Yard lari/jalan terasa lambat/berat, beda banget dengan Brick Hall").
+    // Terukur: kecepatan & FPS identik, tapi di ruang terbuka pemandangan "mengalir" 27–33% lebih lambat pada kecepatan sama
+    // (langit 22% layar, benda < 8 u 32% vs 43%) → Steel Yard memakai batas atas rentang uji GDD §3.4 ("bila terasa lambat, uji
+    // 1.25–1.5"). Tempo = skala waktu (moveFeel): lintasan lompat/jatuh di RUANG tetap identik. Map lain: CFG.player.moveSpeedScale.
+    mapTempo: { steelyard: 1.5 } as Readonly<Record<string, number>>,
     // kamera FPS: ayunan kepala sinkron langkah (turun saat kaki menapak), miring saat strafe, FOV melebar saat sprint
     bob: { walkY: 0.085, sprintY: 0.13, x: 0.045, rollDeg: 0.35, adsMult: 0.2, rate: 9 },
     strafeRollDeg: 1.2, rollRate: 8, sprintFovDeg: 6, fovRate: 6,

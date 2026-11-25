@@ -23,7 +23,7 @@ import { Viewmodel } from '../entities/Viewmodel';
 import { Entity } from '../entities/Entity';
 import { TacticalBot } from '../entities/TacticalBot';
 import type { AnimState } from '../entities/BlockyCharacter';
-import { moveFeel } from '../entities/moveFeel';
+import { mapTempo, moveFeel } from '../entities/moveFeel';
 import { botVariant, characterArt, type Variant } from '../entities/CharacterArt';
 import type { Team } from '../entities/BlockyCharacter';
 import { ScopeSystem } from '../combat/ScopeSystem';
@@ -481,6 +481,7 @@ export class Game {
     sc.environment = null; engine.vmScene.environment = null;
     if (this.envRT) { this.envRT.dispose(); this.envRT = null; this.envTex = null; }
     const def = setCurrentMap(id), A = def.atmosphere;
+    moveFeel.tempo = mapTempo(id);   // tempo gerak per map (Steel Yard lebih cepat — lihat XCFG.feel.mapTempo)
     sc.background = new THREE.Color(A.background);           // builder luar ruang boleh menggantinya (langit)
     this.fog.color.setHex(A.fogColor); this.fog.density = A.fogDensity;
     ctx.map = def.build(sc, engine.preset, this.settings.preset, engine.maxAnisotropy);

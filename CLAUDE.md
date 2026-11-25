@@ -82,6 +82,13 @@
   - Langkah kaki kini dari fase kontinu `PlayerController.stepPhase` (bilangan bulat = suara langkah = kamera terendah = kaki
     terbuka penuh); fase berhenti saat diam/di udara.
   - Panel debug (`) → "RASA GERAK": slider tempo/ayunan/miring/FOV sprint/inersia untuk uji langsung (tidak disimpan).
+  - Tempo per map (laporan pengguna 2026-11-25: "di Steel Yard lari/jalan terasa lambat/berat, beda banget dengan Brick Hall"):
+    terukur kecepatan (jalan 8.1 / sprint 11.48 u/s) & FPS identik, tapi di ruang terbuka pemandangan "mengalir" 27–33% lebih lambat
+    pada kecepatan sama (raycast grid layar dari node nav: median 0.71 vs 0.98 rad/s; langit 22% layar, benda < 8 u 32% vs 43%).
+    `XCFG.feel.mapTempo` { steelyard: 1.5 } = batas atas rentang uji GDD §3.4 → `moveFeel.mapTempo(id)` dipasang `Game.loadMap`
+    (host & klien memuat map yang sama → prediksi cocok; reset panel debug = tempo map). SY kini jalan 9.0 / sprint 12.75 u/s;
+    lintasan lompat di ruang tetap (tests/movement.test.ts). Langkah pasir dibuat renyah (bandpass 45 ms + 4 butir kerikil + ketuk
+    130 Hz tipis; dulu desis 80 ms + dentum 95 Hz). Online terukur: tempo host = klien (1.5 / 1.35), posisi akhir 0.000 u.
 - Tampilan karakter (permintaan pengguna, acuan Karakter/*.png):
   - Biru pria: helm 2 tingkat + rel, goggles oranye, balaclava, headset+mic, baju biru, rompi pelat + 3 kantong magasin + radio + granat,
     pelindung bahu/siku/lutut, sarung tangan (jari kulit), sabuk, celana & sepatu bot hitam, holster paha kanan, kantong kargo kiri.
@@ -342,8 +349,9 @@
       host diam 3.2 s → overlay tampil lalu hilang tanpa pindah host; gabung balik ke kode kosong → gagal 5 s, room dibuka lagi +
       `HostRep.rebind`, match jalan terus; layar room: host ditutup → host room baru 3.14 s tanpa pemain hantu, internet host room putus →
       8.0 s + pesan kode di host lama; host AFK: kamera tertinggal 1 frame dari bot (median 0.1°, maks 2.2°); 0 error konsol.
-      Skrip uji lokal (scratchpad, bisa hilang): pw/migrate.js, migrate2.js, migrate3.js, migrate4.js. Belum diuji: Supabase asli &
-      dua perangkat/jaringan.
+      Skrip uji lokal (scratchpad, bisa hilang): pw/migrate.js, migrate2.js, migrate3.js, migrate4.js. Supabase asli teruji di situs live
+      (3 halaman, 1 perangkat: halaman host ditutup → host baru 3.17 s, teman menyusul 3.71 s, serah-terima 0.55 s). Belum diuji: dua
+      perangkat/jaringan berbeda (NAT).
 
 - Multi-map & Steel Yard (permintaan pengguna: map kedua "Steel Yard" — halaman kontainer di gurun, "detail dan lengkap"; dikerjakan
   bertahap: F1 fondasi → C1 denah/nav/test, C2 visual, C3 UI/online → I1 integrasi & uji browser):
@@ -488,7 +496,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 272 test Vitest / 21 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 274 test Vitest / 21 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
