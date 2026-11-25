@@ -269,6 +269,35 @@ export const XCFG = {
     simNames: ['Raka', 'Dimas', 'Sinta', 'Bayu', 'Nadia', 'Fajar', 'Putri', 'Rizky', 'Ayu'],   // teman simulasi (pratinjau tanpa server)
     simReady: [0.8, 2.6],                                // teman simulasi siap setelah jeda acak (detik)
   },
+  // ── chat teks tim & semua (permintaan pengguna 2026-11-25; berlaku di room, match & layar hasil). Y = semua, U = tim, H = pesan cepat.
+  chat: {
+    maxLen: 120,          // karakter per pesan (emoji dihitung utuh)
+    burst: 4,             // anti-spam: maks 4 pesan beruntun…
+    refill: 1.5,          // …lalu 1 pesan tiap 1.5 s (host menegakkan per pemain)
+    showSec: 8,           // pesan di HUD memudar setelah 8 s (tampil lagi saat kotak chat dibuka)
+    feedMax: 7,           // baris di HUD
+    logMax: 60,           // riwayat yang disimpan (panel room / layar hasil)
+    botGap: 6,            // callout bot di chat tim: maks 1 pesan per tim tiap 6 s…
+    botZoneGap: 15,       // …dan area yang sama tidak diulang dalam 15 s
+    quickTimeout: 5,      // menu pesan cepat (H) tertutup sendiri setelah 5 s
+  },
+  // ── voice chat push-to-talk (permintaan pengguna 2026-11-25): T tim / Z semua; Opus (WebCodecs) lewat koneksi game, host meneruskan.
+  //    Di match KEDUANYA berdasarkan jarak karakter: jelas sampai `near`, makin jauh makin kecil & teredam, hilang di ujung-ke-ujung map.
+  voice: {
+    near: 12,             // u (±4 m): jelas penuh
+    farFrac: 0.95,        // hilang di 95% diagonal batas map (Brick Hall ±111 u, Steel Yard ±133 u)
+    curve: 2,             // gain = (1 − x)^curve, x = 0 di near … 1 di far (tengah map ±25%, ujung ke ujung 0)
+    cutoffNear: 12000,    // Hz lowpass dekat …
+    cutoffFar: 900,       // … jauh (suara teredam)
+    occlGain: 0.55,       // terhalang dinding/kontainer: gain × 0.55 …
+    occlCutoff: 0.45,     // … & cutoff × 0.45
+    occlEvery: 0.2,       // detik: cek garis pandang per pembicara
+    bitrate: 24000,       // bit/s Opus mono
+    jitter: 0.06,         // detik: jeda buffer pemutaran (paket datang tidak rata)
+    maxLag: 0.35,         // detik: antrean pemutaran maksimal (lebih → potongan dibuang agar tetap real-time)
+    talkHold: 0.35,       // detik: indikator bicara bertahan setelah paket terakhir
+    maxRate: 60,          // host: paket per detik per pemain maksimal (Opus 20 ms = 50/s)
+  },
   // ── multiplayer online (disetujui pengguna: WebRTC host–client; signaling Supabase / antar-tab). Host = otoritatif (listen server):
   //    simulasi penuh di browser host; klien memprediksi gerak sendiri + interpolasi pemain lain; host me-rewind hitbox (lag compensation).
   net: {

@@ -126,7 +126,7 @@ describe('Sinkronisasi', () => {
 
 describe('Room online: serialisasi untuk klien', () => {
   it('klien mendapat cermin room dengan pemain lokalnya sendiri', () => {
-    const S: RoomSettings = { mode: 'tdm', scoreLimit: 50, timeLimit: 10, roundsToWin: 5, difficulty: 'normal', fillBots: true, map: 'steelyard' };
+    const S: RoomSettings = { mode: 'tdm', scoreLimit: 50, timeLimit: 10, roundsToWin: 5, difficulty: 'normal', fillBots: true, map: 'steelyard', allTalk: true };
     const L = new Lobby('K7RB2X', S);
     L.join('Aldy', { local: true });
     const f = L.join('Raka')!;

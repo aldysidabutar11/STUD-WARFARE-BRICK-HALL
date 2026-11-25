@@ -105,6 +105,13 @@ export const reloadStage = (stage: 0 | 1 | 2): Recipe => (s, out, t0) => {
   return 0.08;
 };
 
+/** Pesan chat masuk: dua nada lembut pendek (tidak tertukar dengan bunyi game). */
+export const chatBlip: Recipe = (s, out, t0) => {
+  osc(s, 'sine', 1320, 1320, t0, 0.05).connect(env(s, out, t0, 0.16, 0.003, 0.05));
+  osc(s, 'sine', 990, 990, t0 + 0.06, 0.06).connect(env(s, out, t0 + 0.06, 0.12, 0.003, 0.06));
+  return 0.13;
+};
+
 export const dryFire: Recipe = (s, out, t0) => { osc(s, 'square', 2000, 2000, t0, 0.01).connect(env(s, out, t0, 0.3, 0.001, 0.01)); return 0.03; };
 
 export const pin: Recipe = (s, out, t0) => {

@@ -353,6 +353,43 @@
       (3 halaman, 1 perangkat: halaman host ditutup → host baru 3.17 s, teman menyusul 3.71 s, serah-terima 0.55 s). Belum diuji: dua
       perangkat/jaringan berbeda (NAT).
 
+  - Chat teks tim & semua (permintaan pengguna 2026-11-25; TAHAP 1 dari "chat + voice"): logika murni `game/Chat.ts` (cleanChatText —
+    karakter kontrol/lebar-nol/pembalik arah dibuang lewat RENTANG KODE angka hex (jangan menulis escape unicode backslash-u lewat alat
+    penulis file: berubah jadi karakter asli & bisa memecah regex), maks XCFG.chat.maxLen; RateLimit token bucket; chatAllowed/chatReaches;
+    parseChat; BotChatGate + botCalloutText; QUICK 6 pesan), tampilan `ui/Chat.ts` (ChatUI: feed HUD kiri bawah di atas HP + kotak ketik +
+    menu pesan cepat; SATU panel chat tetap yang dipasang ulang di room/hasil/pause — fokus dipulihkan Menus.refreshRoom lewat
+    data-a="chatin"; teks selalu textContent). Tombol (Bindings): chatAll Y, chatTeam U, quickChat H (aksi baru otomatis dapat tombol
+    bila bebas; Input.consume agar angka di menu pesan cepat tidak mengganti senjata). Saat mengetik: `control` & senjata nonaktif,
+    mouse-look tetap; Esc → Chrome melepas kunci mouse → layar "klik untuk lanjut" (bukan menu pause, `chatEscAt`). Jaringan: klien
+    `act {a:'chat', scope, text, quick}` → host `hostChat` (validasi, batas laju per pid, allTalk) → `routeChat` ke penerima (tim = tim
+    pengirim: entitas di match / slot lobby) `{t:'chat', …}`; ditolak → `{t:'chatno', reason}`. Setelan room `allTalk` (bawaan on; off =
+    chat & voice SEMUA dimatikan selama match, tim tetap). Callout bot: `BotDirector.onCallout` (setelah jeda bicara) → chat tim bila ada
+    manusia di tim itu (BotChatGate: 1/tim/6 s, area sama 15 s; Pengaturan `chatBots`). Bisukan per pid (memori; juga untuk voice nanti)
+    di room & menu pause. Riwayat/bisukan direset saat buat/gabung/keluar room (bukan saat pindah host). Terukur (browser): routing
+    tim/semua benar di room & match, bisukan, ketikan bertahan saat room digambar ulang, allTalk off menolak Y & klien nakal, anti-spam
+    3 dari 7 sampai, HTML tidak tereksekusi, callout bot di host & klien, 0 error; tes online lama tetap lulus. Catatan: karakter diam bisa
+    tergeser bot setim yang menabraknya (perilaku tabrakan lama, bukan chat).
+  - Voice chat (TAHAP 2; keputusan pengguna 2026-11-25): push-to-talk T = tim, Z = semua (musuh yang dekat ikut dengar); di match
+    KEDUANYA berdasarkan jarak karakter (jelas sampai XCFG.voice.near 12 u → (1 − x)^2 & lowpass 12 kHz → 900 Hz → hilang di 95% diagonal
+    batas map = ujung ke ujung; arah 3D HRTF; terhalang dinding ×0.55 & cutoff ×0.45, cek LOS tiap 0.2 s); di room/layar hasil jelas penuh;
+    pemain mati: T jelas ke tim, Z mati; allTalk off = Z mati saat match. ARSITEKTUR (menyimpang dari rencana mesh, alasan: NAT &
+    keandalan): mic → `audio/VoiceCapture` (getUserMedia + echo/noise/AGC, MediaStreamTrackProcessor, WebCodecs AudioEncoder Opus 24 kbps,
+    hanya selama tombol ditahan) → paket biner MSG.VOICE (protocol.ts encodeVoiceUp/Down, VOICE_MAX 400 B) lewat kanal UNRELIABLE koneksi
+    game → host `game/Voice.ts` VoiceSystem.route: diteruskan hanya ke penerima yang berhak (`VoiceRules.voiceSendsTo`; anti-banjir maxRate
+    60 paket/s per pemain; host tidak mengode ulang) → `audio/VoicePlayer` per pembicara (AudioDecoder → AudioBuffer dijadwalkan, jitter
+    60 ms, antrean maks 350 ms, lowpass → gain → panner rolloff 0) → bus voice `SpatialSynthAudio.voiceOut()` ke master (ikut volume
+    master, kompresor & efek telinga berdenging). Tanpa koneksi tambahan: bisa main bareng = bisa saling dengar; ikut pindah host.
+    Biaya: upload host ±45 kbps per pendengar per pembicara. Pemain = pid ('p12' → nomor 12 di paket). Bisukan = set bisukan chat;
+    Pengaturan → Audio: `voice` (on/off) + `volVoice`. UI: baris voice di room/pause (tombol "Aktifkan mic", status/izin), ikon 🎙 di baris
+    pemain room (Menus.updateTalking ±10 Hz), HUD `.vtalk` = kita + teman SETIM yang terdengar (nama musuh tidak ditampilkan). Butuh Chrome/
+    Edge (MediaStreamTrackProcessor; lainnya → pesan "belum mendukung"). Terukur (Chromium + mic palsu, host + 2 teman): T hanya setim,
+    Z semua, bisukan 0 potongan, jarak 8/48/83 u → gain sesuai rumus (×dinding), allTalk off menolak Z + pesan, 0 error. Belum diuji
+    dengan mic sungguhan & dua perangkat (gema bila pakai speaker: push-to-talk + AEC browser; sarankan headset).
+  - Pratinjau karakter di Loadout (permintaan pengguna 2026-11-25): `ui/CharPreview.ts` — kanvas + WebGLRenderer kecil tersendiri
+    (alpha, ACES + eksposur game, lingkungan RoomEnvironment untuk senjata PBR, cahaya studio) dengan BlockyCharacter asli per tim
+    (Pria/Wanita = setVariant, seketika) memegang senjata + optik pilihan (weaponModel/createOpticMesh), pose low-ready, berputar pelan
+    0.4 rad/s, seret untuk memutar; dirender hanya selama Loadout tampil (berhenti saat elemen lepas dari DOM). Layout Loadout 2 kolom
+    (pratinjau 250 px + grid senjata; bertumpuk ≤ 760 px), toggle "Lihat pakaian" Biru/Merah (bawaan = tim kita, MenuApi.myTeam).
 - Multi-map & Steel Yard (permintaan pengguna: map kedua "Steel Yard" — halaman kontainer di gurun, "detail dan lengkap"; dikerjakan
   bertahap: F1 fondasi → C1 denah/nav/test, C2 visual, C3 UI/online → I1 integrasi & uji browser):
   - Kontrak `src/world/maps/types.ts`: `MapDef` (id, name, desc, bounds, boxes, stairs, spawnSlots, nav: NavTemplate, lanes: LaneDef[],
@@ -496,7 +533,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 274 test Vitest / 21 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 299 test Vitest / 23 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -505,7 +542,8 @@
   (tests/botAim.test.ts: profil sentakan/kelewatan/pelacakan/rencana ulang, reaksi, near-miss, perkiraan arah, callout;
   tests/botTactics.test.ts: cover, posisi tempur, kabur granat di collider Rapier SY & BH), kotak hitam & sebab sesi berakhir
   (tests/blackbox.test.ts), pintasan browser saat bermain (tests/input.test.ts), pindah host / cadangan / klaim / tiket
-  (tests/migration.test.ts)) hijau;
+  (tests/migration.test.ts), chat teks / tombol chat / allTalk (tests/chat.test.ts), voice: aturan dengar, kurva jarak, paket, routing
+  host (tests/voice.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

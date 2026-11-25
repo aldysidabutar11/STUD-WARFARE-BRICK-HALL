@@ -47,6 +47,10 @@ export interface Settings {
   // efek grafik (berlaku bila preset mendukung — lihat XCFG.gfx.profiles)
   gfxBloom: boolean; gfxSsao: boolean; gfxReflect: boolean; gfxFog: boolean; gfxDust: boolean;
   minimap: boolean; nameplates: boolean; killcam: boolean; dmgNumbers: boolean;
+  /** Callout bot (laporan musuh) ikut tampil di chat tim. */
+  chatBots: boolean;
+  /** Voice chat (dengar & bicara) + volumenya (0–100). */
+  voice: boolean; volVoice: number;
 }
 
 export const KEY = 'studwarfare.settings.v1';
@@ -62,7 +66,7 @@ export const DEFAULTS: Settings = {
   xhOutline: true, xhOutlineThick: 1, xhOutlineAlpha: 0.75, xhDynMult: 1,
   brightness: 1.0, shake: 100, renderScale: 0, fpsCap: 1,
   gfxBloom: true, gfxSsao: true, gfxReflect: true, gfxFog: true, gfxDust: true,
-  minimap: true, nameplates: true, killcam: true, dmgNumbers: false,
+  minimap: true, nameplates: true, killcam: true, dmgNumbers: false, chatBots: true, voice: true, volVoice: 90,
 };
 
 const clamp = (v: unknown, a: number, b: number, d: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(b, Math.max(a, v)) : d);
@@ -108,6 +112,7 @@ export function validate(raw: Partial<Settings> | null): Settings {
     brightness: clamp(r.brightness, 0.6, 1.6, D.brightness), shake: Math.round(clamp(r.shake, 0, 100, D.shake)),
     renderScale: pick(r.renderScale, RENDER_SCALES, 0), fpsCap: pick(r.fpsCap, FPS_CAPS, 1),
     minimap: bool(r.minimap, D.minimap), nameplates: bool(r.nameplates, D.nameplates), killcam: bool(r.killcam, D.killcam),
+    chatBots: bool(r.chatBots, D.chatBots), voice: bool(r.voice, D.voice), volVoice: clamp(r.volVoice, 0, 100, D.volVoice),
     dmgNumbers: bool(r.dmgNumbers, D.dmgNumbers),
   };
 }

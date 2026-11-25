@@ -19,6 +19,9 @@ const _fwd = new THREE.Vector3(), _up = new THREE.Vector3();
 export class SpatialSynthAudio {
   ac: AudioContext | null = null;
   private master!: GainNode; private sfx!: GainNode; private ui!: GainNode; private tinnitusLp!: BiquadFilterNode;
+  /** Bus voice chat (ke master: ikut volume master, kompresor & efek telinga berdenging). */
+  private voiceBus!: GainNode;
+  private voiceVol = 0.9;
   private noise!: AudioBuffer;
   private voices: Voice[] = [];
   private vol: { master: number; sfx: number; ui: number } = { master: CFG.audio.master, sfx: CFG.audio.sfx, ui: CFG.audio.ui };
@@ -42,6 +45,7 @@ export class SpatialSynthAudio {
       this.tinnitusLp = ac.createBiquadFilter(); this.tinnitusLp.type = 'lowpass'; this.tinnitusLp.frequency.value = XA.tinnitusBypass;
       this.master = ac.createGain(); this.sfx = ac.createGain(); this.ui = ac.createGain();
       this.sfx.connect(this.master); this.ui.connect(this.master);
+      this.voiceBus = ac.createGain(); this.voiceBus.gain.value = this.voiceVol; this.voiceBus.connect(this.master);
       this.master.connect(this.tinnitusLp).connect(comp).connect(ac.destination);
       // satu buffer white noise 1 detik, dipakai ulang dengan offset acak
       this.noise = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
@@ -60,6 +64,13 @@ export class SpatialSynthAudio {
   }
 
   get voiceCount() { return this.voices.length; }
+
+  /** Volume voice chat (0–1; 0 = tidak terdengar). */
+  setVoiceVolume(v: number) { this.voiceVol = v; if (this.ac) this.voiceBus.gain.value = v; }
+  /** Konteks & bus untuk pemutar voice (null sebelum audio dibuka klik pertama / saat konteks berhenti). */
+  voiceOut(): { ac: AudioContext; bus: AudioNode } | null {
+    return this.ac && this.ac.state === 'running' ? { ac: this.ac, bus: this.voiceBus } : null;
+  }
 
   /** Efek telinga berdenging: lowpass master 800 Hz selama `sec`. */
   tinnitus(sec: number) {

@@ -45,6 +45,8 @@ export interface RoomSettings {
   fillBots: boolean;
   /** Map match (dipilih host; 'random' diundi host saat Mulai lalu id konkret dikirim di pesan 'start'). */
   map: MapChoice;
+  /** Chat & voice ke SEMUA (kedua tim) saat match berjalan (bawaan: ya). Di room & layar hasil selalu boleh; tim selalu boleh. */
+  allTalk: boolean;
 }
 
 const isInt = (v: unknown, lo: number, hi: number) => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
@@ -55,9 +57,10 @@ const ROOM_CHECK: { readonly [K in keyof RoomSettings]: (v: unknown) => boolean 
   difficulty: v => v === 'easy' || v === 'normal' || v === 'hard',
   fillBots: v => typeof v === 'boolean',
   map: isMapChoice,
+  allTalk: v => typeof v === 'boolean',
 };
 const ROOM_DEFAULTS: RoomSettings = { mode: 'tdm', scoreLimit: CFG.match.scoreLimit, timeLimit: CFG.match.timeLimit / 60,
-  roundsToWin: XCFG.elim.roundsToWin, difficulty: 'normal', fillBots: true, map: BASE_MAP };
+  roundsToWin: XCFG.elim.roundsToWin, difficulty: 'normal', fillBots: true, map: BASE_MAP, allTalk: true };
 
 /** Patch setelan sah: setiap kunci dikenal & nilainya sah (satu nilai tak dikenal → seluruh patch ditolak). */
 export function validRoomPatch(patch: unknown): patch is Partial<RoomSettings> {

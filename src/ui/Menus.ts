@@ -18,6 +18,7 @@ import type { Team } from '../entities/BlockyCharacter';
 import type { JoinFail } from '../net/Session';
 import { onlineConfigured } from '../net/Signaling';
 import { blackbox } from '../core/BlackBox';
+import { CharPreview } from './CharPreview';
 
 /** Aksi di layar room (host: langsung; klien: dikirim ke host untuk divalidasi). */
 export type RoomAction = { type: 'team'; team: Team } | { type: 'ready'; ready: boolean } | { type: 'kick'; id: string }
@@ -57,6 +58,16 @@ export interface MenuApi {
   mergeBack(): void;
   /** Tiket kembali ke match online (halaman sebelumnya di-refresh / ditutup di room online), null = tidak ada. */
   ticket(): { code: string; match: boolean } | null;
+  /** Chat: pasang panel chat (elemen tetap) di placeholder menu; bisukan pemain (pid); teman manusia di room (menu pause). */
+  chatAttach(slot: Element): void;
+  isMuted(pid: string): boolean;
+  toggleMute(pid: string): void;
+  chatPeople(): { pid: string; name: string; team: Team }[];
+  /** Voice: nyala di pengaturan, status mic, label tombol bicara [tim, semua]; aktifkan mic (izin browser). */
+  voiceInfo(): { on: boolean; mic: 'off' | 'asking' | 'ready' | 'error'; err: string; keys: [string, string] };
+  voiceMic(): Promise<boolean>;
+  /** Tim pemain sekarang (match / room; main solo = Biru) — pakaian awal pratinjau karakter di Loadout. */
+  myTeam(): Team;
   /** Gabung lagi dengan slot lama; hasil = pesan gagal (null = berhasil). */
   useTicket(): Promise<string | null>;
   dropTicket(): void;
@@ -265,8 +276,10 @@ export class Menus {
         const tag = p.id === me ? ' <small>(kamu)</small>' : p.sim ? ' <small>(simulasi)</small>' : '';
         const state = p.host ? '<span class="st host">HOST</span>' : `<span class="st ${p.ready ? 'ok' : ''}">${p.ready ? '✔ Siap' : '⏳ Belum siap'}</span>`;
         const kick = host && p.id !== me ? `<button class="x" data-kick="${p.id}" title="Keluarkan dari room">✕</button>` : '';
+        const mute = p.id !== me && !p.sim ? this.muteBtn(p.id, '') : '';
+        const talk = p.sim ? '' : `<span class="talk" data-talk="${esc(p.id)}" title="Sedang bicara">🎙</span>`;
         const ping = !p.host && !p.sim ? `<span class="ping" data-ping="${p.id}"></span>` : '';
-        return `<div class="slot ${p.id === me ? 'me' : ''}"><span class="nm">${p.host ? '👑 ' : ''}${esc(p.name)}${tag}</span>${ping}${state}${kick}</div>`;
+        return `<div class="slot ${p.id === me ? 'me' : ''}"><span class="nm">${p.host ? '👑 ' : ''}${esc(p.name)}${tag}</span>${talk}${ping}${state}${mute}${kick}</div>`;
       }
       if (sv.bot) return `<div class="slot bot"><span class="nm">🤖 ${sv.bot}</span><span class="st">BOT · ${diff}</span></div>`;
       return '<div class="slot empty"><span class="nm">— slot kosong —</span></div>';
@@ -284,6 +297,7 @@ export class Menus {
       <div class="room-head"><h2>ROOM <span class="code">${formatRoomCode(L.code)}</span></h2>
         <button data-a="copy">Salin Link</button>${this.netBadge(net)}</div>
       <div class="teams">${teamCol('blue')}${teamCol('red')}</div>
+      <div class="room-chat" data-chat></div>${this.voiceBar()}
       <div class="host-set"><h3>Setelan host${host ? '' : ' <small>(hanya host yang bisa mengubah)</small>'}</h3>
         <div class="maps small">${MAP_CHOICES.map(c => this.mapCard(c, st.map === c, 'data-rmap', false, !host)).join('')}
           <div class="map-now"><span>Map</span><b>${esc(choiceName(st.map))}</b><small>${esc(st.map === 'random' ? 'diundi host saat Mulai' : mapFacts(MAPS[st.map]))}</small></div></div>
@@ -299,6 +313,8 @@ export class Menus {
             .map(([v, t]) => `<option value="${v}" ${st.difficulty === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
           <label>Isi slot kosong dengan bot <select data-rk="fillBots" ${host ? '' : 'disabled'}><option value="true" ${st.fillBots ? 'selected' : ''}>On (5 lawan 5)</option>
             <option value="false" ${st.fillBots ? '' : 'selected'}>Off (hanya manusia)</option></select></label>
+          <label>Chat & voice ke semua saat match <select data-rk="allTalk" ${host ? '' : 'disabled'}><option value="true" ${st.allTalk ? 'selected' : ''}>On (kedua tim)</option>
+            <option value="false" ${st.allTalk ? '' : 'selected'}>Off (hanya tim)</option></select></label>
           ${host ? '<button data-a="shuffle">⇄ Acak Tim</button>' : ''}
         </div></div>
       ${host ? `<div class="sim"><button data-a="sim" ${L.full ? 'disabled' : ''}>＋ Teman (simulasi)</button>
@@ -325,6 +341,7 @@ export class Menus {
       act({ type: 'settings', patch: { [k]: v === 'true' ? true : v === 'false' ? false : /^\d+$/.test(v) ? Number(v) : v } as Partial<RoomSettings> });
     }));
     this.on(m, 'shuffle', () => act({ type: 'shuffle' }));
+    this.attachChat(m, () => this.showRoom());
     this.on(m, 'sim', () => { this.api.addSimFriend(); this.showRoom(); });
     this.on(m, 'ready', () => act({ type: 'ready', ready: !mine.ready }));
     this.on(m, 'start', () => this.api.startRoom());
@@ -381,15 +398,31 @@ export class Menus {
   showLoadout(back: () => void, inMatch = false) {
     const s = this.api.settings();
     this.wSel = s.weapon; this.sSel = s.scope; this.vSel = s.charVariant;
-    const m = this.mount('loadout', `<div class="card"><h2>Loadout ${inMatch ? '<small style="font-size:13px;opacity:.7">— senjata berlaku pada spawn berikutnya</small>' : ''}</h2>
-      <div class="charsel"><span>Karakter</span><button data-v="m">Pria</button><button data-v="f">Wanita</button>
-      <small>Biru: pasukan taktis · Merah: gerilyawan</small></div>
-      <div class="grid"></div><div class="scopes"></div><div class="row"><button class="primary" data-a="ok">Simpan</button><button data-a="back">Kembali</button></div></div>`);
+    let tSel: Team = this.api.myTeam();
+    const m = this.mount('loadout', `<div class="card loadout"><h2>Loadout ${inMatch ? '<small style="font-size:13px;opacity:.7">— senjata berlaku pada spawn berikutnya</small>' : ''}</h2>
+      <div class="lo-cols">
+        <div class="lo-char">
+          <div class="lo-prev" data-prev><span class="lo-fail">Pratinjau 3D tidak tersedia di perangkat ini</span></div>
+          <div class="charsel"><span>Karakter</span><button data-v="m">Pria</button><button data-v="f">Wanita</button></div>
+          <div class="lo-team"><span>Lihat pakaian</span><button data-tm="blue">Biru</button><button data-tm="red">Merah</button></div>
+          <small>Biru: pasukan taktis · Merah: gerilyawan — pakaian di match mengikuti timmu. Seret karakter untuk memutar.</small>
+        </div>
+        <div class="lo-weap"><div class="grid"></div><div class="scopes"></div></div>
+      </div>
+      <div class="row"><button class="primary" data-a="ok">Simpan</button><button data-a="back">Kembali</button></div></div>`);
     const grid = m.querySelector('.grid')!, scopes = m.querySelector('.scopes')!;
-    const vBtns = m.querySelectorAll<HTMLButtonElement>('.charsel button');
+    // pratinjau karakter 3D (tim, pria/wanita, senjata + optik pilihan) — dirender hanya selama Loadout tampil
+    const prev = this.preview ??= new CharPreview(), slot = m.querySelector('[data-prev]')!;
+    slot.prepend(prev.el);
+    const showPrev = () => prev.set(tSel, this.vSel, this.wSel, this.sSel);
+    showPrev();
+    if (!prev.start()) slot.classList.add('fail');
+    const vBtns = m.querySelectorAll<HTMLButtonElement>('.charsel button'), tBtns = m.querySelectorAll<HTMLButtonElement>('.lo-team button');
     const renderV = () => vBtns.forEach(b => b.classList.toggle('sel', b.dataset.v === this.vSel));
-    vBtns.forEach(b => b.addEventListener('click', () => { this.api.click(); this.vSel = b.dataset.v as 'm' | 'f'; renderV(); }));
-    renderV();
+    const renderT = () => tBtns.forEach(b => b.classList.toggle('sel', b.dataset.tm === tSel));
+    vBtns.forEach(b => b.addEventListener('click', () => { this.api.click(); this.vSel = b.dataset.v as 'm' | 'f'; renderV(); showPrev(); }));
+    tBtns.forEach(b => b.addEventListener('click', () => { this.api.click(); tSel = b.dataset.tm as Team; renderT(); showPrev(); }));
+    renderV(); renderT();
     const render = () => {
       grid.innerHTML = WEAPON_ORDER.map(id => {
         const w = WEAPONS[id];
@@ -402,6 +435,7 @@ export class Menus {
         const sc = SCOPES[sid], ok = scopeAllowed(WEAPONS[this.wSel], sid);
         return `<button data-s="${sid}" class="${sid === this.sSel ? 'sel' : ''}" ${ok ? '' : 'disabled title="Terkunci untuk Groza"'}>${sc.name} · ${effectiveZoom(sc.fov).toFixed(2)}×</button>`;
       }).join('');
+      showPrev();
       grid.querySelectorAll<HTMLElement>('.wcard').forEach(c => c.addEventListener('click', () => {
         this.api.click(); this.wSel = c.dataset.w as WeaponId;
         if (!scopeAllowed(WEAPONS[this.wSel], this.sSel)) this.sSel = 'x3';
@@ -414,8 +448,8 @@ export class Menus {
       }));
     };
     render();
-    this.on(m, 'ok', () => { this.api.setLoadout(this.wSel, this.sSel, this.vSel); back(); });
-    this.on(m, 'back', back);
+    this.on(m, 'ok', () => { prev.stop(); this.api.setLoadout(this.wSel, this.sSel, this.vSel); back(); });
+    this.on(m, 'back', () => { prev.stop(); back(); });
   }
 
   /** draft: nilai yang sedang diedit (dipakai saat memilih preset crosshair agar perubahan lain tidak hilang). */
@@ -424,6 +458,7 @@ export class Menus {
     const px = (v: number) => v + ' px', pct = (v: number) => Math.round(v * 100) + '%', hz = this.api.refreshHz();
     const fmtOf: Partial<Record<keyof Settings, (v: number) => string>> = {
       fov: v => v + '°', volMaster: v => String(Math.round(v)), volSfx: v => String(Math.round(v)), volUi: v => String(Math.round(v)),
+      volVoice: v => String(Math.round(v)),
       shake: v => Math.round(v) + '%', brightness: v => Math.round(v * 100) + '%', xhLen: px, xhThick: px,
       xhGap: v => Math.max(0, XCFG.hud.crosshairBaseGap + v) + ' px', xhAlpha: pct, xhDotSize: px, xhDotAlpha: pct, xhCircleR: px,
       xhCircleThick: px, xhOutlineThick: px, xhOutlineAlpha: pct, xhDynMult: v => '×' + v.toFixed(1),
@@ -486,12 +521,15 @@ export class Menus {
         ${rng('volMaster', 'Volume master', 0, 100, 1)}
         ${rng('volSfx', 'Volume SFX', 0, 100, 1)}
         ${rng('volUi', 'Volume UI', 0, 100, 1)}
+        ${onOff('voice', 'Voice chat (tahan T = tim, Z = semua)')}
+        ${rng('volVoice', 'Volume voice', 0, 100, 1)}
       </div>
       <div class="tab" data-t="hud">
         ${onOff('minimap', 'Minimap / radar')}
         ${onOff('nameplates', 'Nama di atas kepala')}
         ${onOff('killcam', 'Killcam (replay dari mata pembunuh)')}
         ${onOff('dmgNumbers', 'Angka damage melayang')}
+        ${onOff('chatBots', 'Laporan musuh dari bot di chat tim')}
         ${sel('fullPause', 'Jeda penuh saat pause', [['false', 'Off (bot tetap jalan)'], ['true', 'On']])}
       </div>
       <div class="row"><button class="primary" data-a="ok">Simpan</button><button data-a="reset">Reset default</button><button data-a="back">Kembali</button></div></div>`);
@@ -620,6 +658,9 @@ export class Menus {
     this.stopCapture = () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('mousedown', onMouse, true); };
   }
 
+  /** Pratinjau karakter 3D Loadout (dibuat saat pertama dibuka; berhenti merender saat Loadout ditutup). */
+  private preview: CharPreview | null = null;
+
   private cancelCapture() { this.stopCapture?.(); this.stopCapture = null; }
 
   showPause(cooldownMs: number) {
@@ -639,7 +680,8 @@ export class Menus {
     const m = this.mount('pause', `<div class="card"><h2>Pause</h2><div class="btns">
       <button class="primary" data-a="resume">Lanjut</button><button data-a="loadout">Loadout</button><button data-a="settings">Pengaturan</button>
       <button data-a="controls">Kontrol</button>${role === 'client' ? '' : '<button data-a="restart">Ulangi match</button>'}<button data-a="quit">${quit}</button></div>
-      ${mergeBtn}${hand}<div class="note">${note}</div></div>`);
+      ${mergeBtn}${hand}${role !== 'offline' ? this.chatBlock() : ''}<div class="note">${note}</div></div>`);
+    this.attachChat(m, () => this.showPause(0));
     // serah-terima = keluar dari match → minta klik kedua sebagai konfirmasi
     m.querySelectorAll<HTMLButtonElement>('[data-h]').forEach(b => b.addEventListener('click', () => {
       if (b.dataset.sure) { this.api.handover(b.dataset.h!); return; }
@@ -678,8 +720,10 @@ export class Menus {
       ${mvp ? `<div class="mvp">★ MVP: <b>${esc(mvp.name)}</b> — ${mvp.stats.score} poin</div>` : ''}
       <div class="scoreboard on" style="position:static;transform:none;min-width:0;background:none;border:none;padding:0">
       <h3 class="b">BIRU</h3><table>${head}${rows('blue')}</table><h3 class="r">MERAH</h3><table>${head}${rows('red')}</table></div>
+      ${online ? '<div class="room-chat" data-chat></div>' : ''}
       <div class="row">${online === 'client' ? '' : '<button class="primary" data-a="again">Main Lagi</button>'}<button data-a="menu">${fromRoom ? 'Kembali ke Room' : 'Menu'}</button>
         ${online === 'client' ? '<span class="room-status">Host bisa langsung memulai match berikutnya</span>' : ''}</div></div>`);
+    this.attachChat(m, () => {});
     this.on(m, 'again', () => this.api.replay());
     this.on(m, 'menu', () => this.api.quitToMenu());
   }
@@ -714,6 +758,43 @@ export class Menus {
 
   private on(m: HTMLElement, action: string, fn: () => void) {
     m.querySelector(`[data-a="${action}"]`)?.addEventListener('click', fn);
+  }
+
+  /** Baris voice: tombol bicara, status mic (+ tombol aktifkan mic). */
+  private voiceBar(): string {
+    const v = this.api.voiceInfo();
+    if (!v.on) return '<div class="voice-bar off">🎙 Voice chat mati (Pengaturan → Audio)</div>';
+    const st = v.mic === 'ready' ? '<b class="ok">mic siap</b>' : v.mic === 'asking' ? 'meminta izin mikrofon…'
+      : v.mic === 'error' ? `<span class="bad">${esc(v.err)}</span>` : 'mic belum aktif';
+    const btn = v.mic === 'ready' || v.mic === 'asking' ? '' : '<button data-a="mic">🎙 Aktifkan mic</button>';
+    return `<div class="voice-bar">🎙 Tahan <b>${esc(v.keys[0])}</b> = bicara ke tim · <b>${esc(v.keys[1])}</b> = ke semua — ${st}${btn}</div>`;
+  }
+
+  /** Ikon "sedang bicara" di baris pemain room (diperbarui di tempat ±10×/detik, tanpa menggambar ulang). */
+  updateTalking(on: ReadonlySet<string>) {
+    if (this.current !== 'room') return;
+    this.root.querySelectorAll<HTMLElement>('[data-talk]').forEach(el => el.classList.toggle('on', on.has(el.dataset.talk!)));
+  }
+
+  /** Tombol bisukan chat pemain (🔈 aktif / 🔇 dibisukan); label opsional (nama di menu pause). */
+  private muteBtn(pid: string, label: string) {
+    const on = this.api.isMuted(pid);
+    return `<button class="mute${on ? ' on' : ''}" data-mute="${esc(pid)}" title="${on ? 'Aktifkan lagi chat & suara pemain ini' : 'Bisukan chat & suara pemain ini'}">`
+      + `${on ? '🔇' : '🔈'}${label ? ' ' + esc(label) : ''}</button>`;
+  }
+
+  /** Menu pause online: panel chat + daftar bisukan teman. */
+  private chatBlock() {
+    const people = this.api.chatPeople();
+    return `<div class="room-chat" data-chat></div>${this.voiceBar()}${people.length ? `<div class="mutes"><span>Bisukan:</span>${people.map(p => this.muteBtn(p.pid, p.name)).join('')}</div>` : ''}`;
+  }
+
+  /** Pasang panel chat di placeholder (bila ada) + tombol bisukan; redraw = gambar ulang menu setelah bisukan diubah. */
+  private attachChat(m: HTMLElement, redraw: () => void) {
+    const slot = m.querySelector('[data-chat]');
+    if (slot) this.api.chatAttach(slot);
+    this.on(m, 'mic', () => { void this.api.voiceMic().then(() => redraw()); redraw(); });
+    m.querySelectorAll<HTMLElement>('[data-mute]').forEach(b => b.addEventListener('click', () => { this.api.toggleMute(b.dataset.mute!); redraw(); }));
   }
 
   /** Salin laporan kotak hitam ke clipboard; gagal (izin/HTTP) → tampilkan teksnya untuk dipilih manual. */

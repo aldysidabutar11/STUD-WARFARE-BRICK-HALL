@@ -101,7 +101,7 @@ Steel Yard di laptop Iris Xe (MEDIUM, 10 karakter): ±90 FPS (terkunci ke layar 
 WASD gerak · Shift sprint · C jongkok · Space lompat · Klik kiri tembak / tebas pisau / masak granat → lempar jauh ·
 Klik kanan ADS / tusuk pisau / masak granat → gelinding · **1 senjata utama · 2 pisau · 3 granat K-400 · Q senjata sebelumnya** · scroll ganti senjata ·
 G buang senjata utama · E ambil/tukar senjata tim · R reload · F pukul (melee) · B mode tembak · V FPS/TPS · X tukar bahu · Tab skor · L loadout ·
-Esc pause · F3 statistik · ` debug.
+**Y chat semua · U chat tim · H pesan cepat (lalu 1–6) · tahan T voice tim · tahan Z voice semua** · Esc pause · F3 statistik · ` debug.
 
 **Gamepad** (layout standar): stik kiri/kanan gerak/bidik · RT/LT tembak/ADS (pisau: tebas/tusuk) · A lompat · B jongkok · X reload (dekat senjata tim:
 ambil/tukar) · Y senjata sebelumnya · RB granat · LB mode tembak · L3 sprint · R3 pukul · D-pad ↑ FPS/TPS · → tukar bahu · ↓ pisau · ← loadout ·
@@ -131,7 +131,8 @@ warna bebas + transparansi, outline (tebal & kepekatan), ukuran garis/celah/titi
 
 Tim **Biru** = pasukan taktis (helm, goggles oranye, rompi, pelindung), tim **Merah** = gerilyawan (topi loreng, kacamata hitam,
 bandana, sabuk peluru, jins sobek); masing-masing pria & wanita — semuanya prosedural (acuan desain di folder `Karakter/`).
-Pilih karakter kamu di **Loadout → Karakter: Pria / Wanita**.
+Pilih karakter kamu di **Loadout → Karakter: Pria / Wanita** — di samping pilihan senjata ada pratinjau 3D karakter yang memegang
+senjata & optik pilihanmu (berputar pelan, seret untuk memutar; "Lihat pakaian" Biru / Merah untuk melihat pakaian tim lain).
 
 ## Rasa gerak
 
@@ -167,6 +168,17 @@ File game di-host gratis di **Vercel** (atau hosting statis lain).
 - **AFK:** pause / pindah aplikasi / tab tersembunyi ≥ 10 detik di match online → karaktermu dimainkan bot; kembali → kendali langsung
   balik ke kamu. Teman keluar dengan sengaja di tengah match → slotnya dimainkan bot sampai match selesai.
 - Host memilih *Akhiri Match* di menu pause → match berakhir untuk semua, semua kembali ke room.
+- **Chat:** di room, di tengah match & di layar hasil. Saat match: **Y** = ke semua, **U** = ke tim (Enter kirim, Tab ganti tim/semua,
+  Esc batal — karakter berhenti selama mengetik). **H** lalu **1–6** = pesan cepat ke tim dengan nama area posisimu ("Butuh bantuan di
+  Rotunda!"). Laporan musuh dari bot ikut tampil di chat tim (bisa dimatikan: Pengaturan → HUD & Gameplay). Di room / menu pause ada
+  panel chat; tombol 🔈 di samping nama teman = bisukan. Host bisa mematikan chat & voice ke semua selama match (setelan room) — chat
+  tim tetap jalan. Anti-spam: maks 4 pesan beruntun lalu 1 tiap 1.5 detik.
+- **Voice (push-to-talk):** tahan **T** = bicara ke tim, tahan **Z** = ke semua (di room, match & layar hasil). Saat match suara
+  **berdasarkan jarak karakter**: dekat terdengar jelas, makin jauh makin kecil & teredam, terhalang dinding lebih teredam, dan baru hilang
+  di ujung ke ujung map — **Z juga terdengar musuh yang dekat** (bocor ya salah sendiri). Pemain yang sudah mati tetap bisa bicara ke tim
+  (terdengar jelas). Klik **🎙 Aktifkan mic** di room sekali agar izin mikrofon tidak muncul di tengah match. Suara lewat koneksi game yang
+  sama (host meneruskan) — kalau bisa main bareng, pasti bisa saling dengar. Pakai headset agar tidak bergema. Volume & on/off:
+  Pengaturan → Audio; 🔈 di samping nama teman membisukan chat & suaranya. Butuh Chrome / Edge.
 - **Pengaman refresh:** selama bermain, **F5 / Ctrl+R** (dan pintasan browser lain seperti Ctrl+S, Alt+←) tidak berfungsi. Kalau halaman
   akan di-refresh / ditutup di tengah match atau saat room online, browser bertanya **"Yakin keluar?"** dulu — pilih *Batal* untuk lanjut.
 - **Grafis tiba-tiba hilang** (driver/GPU bermasalah sesaat): game tetap berjalan dan muncul "Memulihkan grafis…" — biasanya pulih dalam

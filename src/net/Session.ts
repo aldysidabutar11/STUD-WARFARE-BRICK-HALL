@@ -42,6 +42,10 @@ export interface HostHooks {
   onAfk(pid: string, on: boolean): void;
   /** Host baru hasil pindah host bertemu host lain di kode yang sama dengan klaim lebih kuat → mengalah ke pemenang (pid). */
   onYield?(winner: string): void;
+  /** Teman mengirim chat (mentah dari jaringan — Game memvalidasi, membatasi laju & meneruskan ke penerima). */
+  onChat?(pid: string, scope: unknown, text: unknown, quick: boolean): void;
+  /** Paket suara dari teman (biner MSG.VOICE; Game/VoiceSystem memvalidasi & meneruskan ke penerima yang berhak). */
+  onVoice?(pid: string, buf: ArrayBuffer): void;
 }
 
 /** Klaim host baru hasil pindah host (disiarkan di signaling): lebih banyak teman tersambung menang; seri → urutan pengganti
@@ -132,7 +136,12 @@ export class NetHost {
 
   private wire(id: string, e: HostPeer) {
     e.peer.onRel = (msg) => this.onRel(e, msg);
-    e.peer.onUnr = (buf) => { if (e.pid && msgType(buf) === MSG.CMD) this.hooks.onCommands(e.pid, decodeCommands(buf)); };
+    e.peer.onUnr = (buf) => {
+      if (!e.pid) return;
+      const t = msgType(buf);
+      if (t === MSG.CMD) this.hooks.onCommands(e.pid, decodeCommands(buf));
+      else if (t === MSG.VOICE) this.hooks.onVoice?.(e.pid, buf);
+    };
     e.peer.onClose = () => {
       this.peers.delete(id);
       if (!e.pid) return;
@@ -181,6 +190,7 @@ export class NetHost {
       if (msg.a === 'team' && (msg.team === 'blue' || msg.team === 'red')) L.switchTeam(e.pid, msg.team as Team);
       else if (msg.a === 'ready') L.setReady(e.pid, !!msg.ready);
       else if (msg.a === 'afk') { this.hooks.onAfk(e.pid, !!msg.on); return; }
+      else if (msg.a === 'chat') { this.hooks.onChat?.(e.pid, msg.scope, msg.text, msg.quick === true); return; }
       else if (msg.a === 'loadout') {
         const lo = cleanLoadout(msg.weapon, msg.scope);
         p.weapon = lo.weapon; p.scope = lo.scope; p.variant = msg.variant === 'f' ? 'f' : 'm';
@@ -267,6 +277,11 @@ export interface ClientHooks {
   onPlan?(plan: Plan): void;
   onSave?(raw: unknown): void;
   onHandover?(plan: Plan | null, save: unknown, start: unknown): void;
+  /** Pesan chat dari host (divalidasi Game lewat parseChat) / chat kita ditolak host (alasan untuk ditampilkan). */
+  onChat?(msg: Record<string, unknown>): void;
+  onChatDeny?(reason: string): void;
+  /** Paket suara dari host (sudah disaring host). */
+  onVoice?(buf: ArrayBuffer): void;
 }
 
 export class NetClient {
@@ -331,12 +346,19 @@ export class NetClient {
             } else if (msg.t === 'plan') { const pl = parsePlan(msg); if (pl) this.hooks.onPlan?.(pl); }
             else if (msg.t === 'save') this.hooks.onSave?.(msg.s);
             else if (msg.t === 'handover') this.hooks.onHandover?.(parsePlan(msg.plan), msg.save, msg.start);
+            else if (msg.t === 'chat') this.hooks.onChat?.(msg);
+            else if (msg.t === 'chatno') this.hooks.onChatDeny?.(String(msg.reason ?? ''));
             else if (msg.t === 'start') this.hooks.onStart(msg);
             else if (msg.t === 'ev') this.hooks.onEvent(msg);
             else if (msg.t === 'bye') this.end('host');
             else if (msg.t === 'kicked') this.end('kicked');
           };
-          peer.onUnr = (buf) => { this.lastRx = performance.now(); if (msgType(buf) === MSG.SNAP) { const s = decodeSnapshot(buf); if (s) this.hooks.onSnapshot(s); } };
+          peer.onUnr = (buf) => {
+            this.lastRx = performance.now();
+            const t = msgType(buf);
+            if (t === MSG.SNAP) { const s = decodeSnapshot(buf); if (s) this.hooks.onSnapshot(s); }
+            else if (t === MSG.VOICE) this.hooks.onVoice?.(buf);
+          };
           peer.onClose = () => { if (!done) finish({ ok: false, reason: 'timeout' }); else this.end('lost'); };
           void peer.start();
         } else if (m.kind === 'deny' && !done) finish({ ok: false, reason: m.data === 'started' ? 'started' : m.data === 'full' ? 'full' : 'failed' });
@@ -365,6 +387,8 @@ export class NetClient {
 
   act(a: Record<string, unknown>) { this.peer?.sendRel({ t: 'act', ...a }); }
   sendCommands(buf: ArrayBuffer) { this.peer?.sendUnr(buf); }
+  /** Paket suara ke host (kanal unreliable). */
+  sendVoice(buf: ArrayBuffer) { this.peer?.sendUnr(buf); }
 
   /** Keluar room (memberi tahu host). */
   leave() { this.peer?.sendRel({ t: 'leave' }); this.close(true); }

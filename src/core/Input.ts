@@ -222,6 +222,8 @@ export class Input {
 
   isDown(code: string) { return this.down.has(code); }
   wasPressed(code: string) { return this.pressed.has(code); }
+  /** Tekanan tombol frame ini sudah dipakai (mis. angka di menu pesan cepat) → aksi lain tidak ikut membacanya. */
+  consume(code: string) { this.pressed.delete(code); }
   wasReleased(code: string) { return this.released.has(code); }
 
   /** Aksi ditahan: tombol keyboard/mouse terpetakan atau tombol gamepad. */

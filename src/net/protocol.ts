@@ -59,9 +59,39 @@ class R {
   f64() { const v = this.dv.getFloat64(this.o, true); this.o += 8; return v; }
 }
 
-export const MSG = { CMD: 1, SNAP: 2 } as const;
+export const MSG = { CMD: 1, SNAP: 2, VOICE: 3 } as const;
 /** Jenis pesan biner (byte pertama). */
 export const msgType = (buf: ArrayBuffer) => (buf.byteLength ? new Uint8Array(buf)[0] : 0);
+
+// ───────────────────────────── suara (voice chat): paket Opus lewat kanal unreliable; host meneruskan ke penerima yang berhak
+/** Paket Opus terbesar yang diterima (20 ms @ ±24 kbps ≈ 60 B; batas longgar untuk lonjakan). */
+export const VOICE_MAX = 400;
+/** Naik (pembicara → host): [3][0 tim / 1 semua][seq u16][opus…]. */
+export function encodeVoiceUp(all: boolean, seq: number, opus: Uint8Array): ArrayBuffer {
+  const out = new Uint8Array(4 + opus.byteLength);
+  out[0] = MSG.VOICE; out[1] = all ? 1 : 0; out[2] = seq & 255; out[3] = (seq >> 8) & 255; out.set(opus, 4);
+  return out.buffer;
+}
+export function decodeVoiceUp(buf: ArrayBuffer): { all: boolean; seq: number; opus: Uint8Array } | null {
+  if (buf.byteLength < 5 || buf.byteLength > 4 + VOICE_MAX) return null;
+  const b = new Uint8Array(buf);
+  if (b[0] !== MSG.VOICE || b[1] > 1) return null;
+  return { all: b[1] === 1, seq: b[2] | (b[3] << 8), opus: b.subarray(4) };
+}
+/** Turun (host → pendengar): [3][0/1][pembicara u16 = nomor pid ('p12' → 12)][seq u16][opus…]. */
+export function encodeVoiceDown(speaker: number, all: boolean, seq: number, opus: Uint8Array): ArrayBuffer {
+  const out = new Uint8Array(6 + opus.byteLength);
+  out[0] = MSG.VOICE; out[1] = all ? 1 : 0; out[2] = speaker & 255; out[3] = (speaker >> 8) & 255; out[4] = seq & 255; out[5] = (seq >> 8) & 255;
+  out.set(opus, 6);
+  return out.buffer;
+}
+export function decodeVoiceDown(buf: ArrayBuffer): { speaker: number; all: boolean; seq: number; opus: Uint8Array } | null {
+  if (buf.byteLength < 7 || buf.byteLength > 6 + VOICE_MAX) return null;
+  const b = new Uint8Array(buf);
+  if (b[0] !== MSG.VOICE || b[1] > 1) return null;
+  const speaker = b[2] | (b[3] << 8);
+  return speaker ? { speaker, all: b[1] === 1, seq: b[4] | (b[5] << 8), opus: b.subarray(6) } : null;
+}
 
 // ───────────────────────────── perintah (klien → host): beberapa perintah terakhir dalam satu paket
 export function encodeCommands(cmds: Command[]): ArrayBuffer {

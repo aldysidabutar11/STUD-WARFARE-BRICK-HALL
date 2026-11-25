@@ -11,7 +11,7 @@ import { Engine } from '../core/Engine';
 import { blackbox } from '../core/BlackBox';
 import { GameLoop } from '../core/GameLoop';
 import { Input } from '../core/Input';
-import { PAD } from '../core/Bindings';
+import { PAD, keyLabel } from '../core/Bindings';
 import { bus, type GameEvents } from '../core/EventBus';
 import { isHigh } from '../config/presets';
 import { MAPS, currentMap, isMapId, setCurrentMap, type MapDef, type MapId } from '../world/maps/registry';
@@ -44,6 +44,10 @@ import { Nameplates } from '../ui/Nameplates';
 import { Announcer } from '../ui/Announcer';
 import { loadSettings, saveSettings, validate, type Settings } from '../ui/Settings';
 import { Lobby, cleanName, formatRoomCode, makeRoomCode, pickMap, type MapChoice, type MatchRoster } from './Lobby';
+import { BotChatGate, QUICK, RateLimit, botCalloutText, chatAllowed, chatReaches, cleanChatText, parseChat, type ChatScope } from './Chat';
+import { ChatUI } from '../ui/Chat';
+import { VoiceSystem } from './Voice';
+import { voiceRange, voiceScopeOk, type VoiceScope } from './VoiceRules';
 import { StatsOverlay } from '../debug/StatsOverlay';
 import { DebugPanel } from '../debug/DebugPanel';
 import { PerfLogger } from '../debug/PerfLogger';
@@ -121,6 +125,20 @@ export class Game {
   private ticketKey = ''; private ticketT = 0;
   /** Klien: overlay "koneksi ke host tersendat" sedang tampil. */
   private stallShown = false;
+  // ── chat teks tim & semua (permintaan pengguna 2026-11-25; room + match + layar hasil). Logika: game/Chat.ts, tampilan: ui/Chat.ts.
+  private chat!: ChatUI;
+  /** Pemain yang dibisukan (pid; chat — dan voice nanti), batas laju (host: per pid teman, '' = kita), gerbang callout bot. */
+  private muted = new Set<string>();
+  private chatRate = new Map<string, RateLimit>();
+  private botChat = new BotChatGate();
+  /** Kotak chat dibatalkan dengan Esc (Chrome sekaligus melepas kunci mouse) → layar "klik untuk lanjut", bukan menu pause. */
+  private chatEscAt = -1e9;
+  // ── voice chat push-to-talk (T tim / Z semua) — game/Voice.ts; indikator bicara di HUD & room
+  private voice!: VoiceSystem;
+  private talkEl!: HTMLDivElement;
+  private talkKey = '';
+  private voiceUiT = 0;
+  private micSeen = '';
   /** AFK lokal di match online: sejak kapan tidak aktif (ms, −1 = aktif) & karakter sedang dimainkan bot.
    *  awayTest = uji otomatis: true paksa AFK, false paksa aktif (jendela uji tanpa fokus), null = deteksi biasa. */
   private awaySince = -1;
@@ -217,12 +235,40 @@ export class Game {
     ctx.match = new MatchManager();
     ctx.spawns = new SpawnSystem();
     ctx.directors = { blue: new BotDirector('blue'), red: new BotDirector('red') };
+    for (const d of Object.values(ctx.directors)) d.onCallout = (id, x, y, z) => this.botCallout(id, x, y, z);
     ctx.audio = new SpatialSynthAudio();
     ctx.audio.setVolumes(this.settings.volMaster / 100, this.settings.volSfx / 100, this.settings.volUi / 100);
     ctx.hud = new Hud();
     ctx.killcam = this.killcam = new Killcam(engine.scene);
     this.minimap = new Minimap(ctx.hud.root);
     this.nameplates = new Nameplates(ctx.hud.root);
+    this.chat = new ChatUI(ctx.hud.root);
+    this.chat.onSend = (scope, text) => this.sendChat(scope, text);
+    this.chat.onClose = (esc) => { this.input.clearAll(); if (esc) this.chatEscAt = performance.now(); };
+    this.voice = new VoiceSystem({
+      isHost: () => !!this.host && !this.client,
+      me: () => this.roomMe,
+      sendUp: (b) => this.client?.sendVoice(b),
+      sendDown: (pid, b) => this.host?.sendUnr(pid, b),
+      listeners: () => (this.host && !this.client ? this.host.pids() : []),
+      teamOf: (pid) => this.teamOfPid(pid),
+      aliveOf: (pid) => { const e = this.entityOfPid(pid); return !this.liveMatch() || !e || e.alive; },
+      live: () => this.liveMatch(),
+      allTalk: () => this.room?.settings.allTalk ?? true,
+      muted: (pid) => !this.settings.voice || this.muted.has(pid),
+      headOf: (pid, out) => {
+        if (!this.liveMatch()) return null;
+        const e = this.entityOfPid(pid);
+        return e && e.alive ? out.set(e.renderPos.x, e.renderPos.y + e.ctrl.eyeHeight, e.renderPos.z) : null;
+      },
+      audio: () => ctx.audio.voiceOut(),
+      camera: () => this.engine.camera,
+      blocked: (ax, ay, az, bx, by, bz) => physics.losBlocked(ax, ay, az, bx, by, bz),
+      range: () => voiceRange(currentMap().bounds),
+    });
+    this.talkEl = document.createElement('div'); this.talkEl.className = 'vtalk';
+    ctx.hud.root.appendChild(this.talkEl);
+    ctx.audio.setVoiceVolume(this.settings.voice ? this.settings.volVoice / 100 : 0);
     this.announcer = new Announcer(ctx.hud.root);
     ctx.entities = []; ctx.byId = new Map(); ctx.player = null;
     this.input = ctx.input = new Input(canvas);
@@ -257,9 +303,15 @@ export class Game {
       click: () => { ctx.audio.unlock(); ctx.audio.click(); }, inMatch: () => this.inMatch,
       refreshHz: () => 1000 / engine.pacing.refreshMs,
       room: () => (this.room ? { lobby: this.room, me: this.roomMe } : null),
-      createRoom: (n) => this.createRoom(n), leaveRoom: () => { this.dropTicket(); this.leaveRoom(); },
+      createRoom: (n) => this.createRoom(n), leaveRoom: () => { this.dropTicket(); this.leaveRoom(); this.resetChat(); },
       startRoom: () => void this.startRoom(), addSimFriend: () => this.addSimFriend(),
-      roomAct: (a) => this.roomAct(a), joinRoom: (code, name) => this.joinRoom(code, name), netInfo: () => this.netInfo(),
+      roomAct: (a) => this.roomAct(a), joinRoom: (code, name) => { this.resetChat(); return this.joinRoom(code, name); }, netInfo: () => this.netInfo(),
+      chatAttach: (slot) => this.chat.attachPanel(slot), isMuted: (pid) => this.muted.has(pid), toggleMute: (pid) => this.toggleMute(pid),
+      chatPeople: () => this.chatPeople(),
+      voiceInfo: () => ({ on: this.settings.voice, mic: this.voice.cap.state, err: this.voice.cap.error,
+        keys: [keyLabel(this.settings.binds.voiceTeam), keyLabel(this.settings.binds.voiceAll)] as [string, string] }),
+      voiceMic: () => this.voice.cap.start(),
+      myTeam: () => this.localTeam(),
       setPlayerName: (n) => { this.settings.playerName = cleanName(n); saveSettings(this.settings); },
       selectMap: (c) => void this.selectMap(c), mapId: () => currentMap().id, mapChoice: () => this.urlMap ?? this.settings.map,
       handoverTargets: () => this.handoverTargets(), handover: (pid) => this.handover(pid),
@@ -269,7 +321,12 @@ export class Game {
     });
     this.applyVisual();
     this.input.onLockChange = (locked) => {
-      if (!locked && this.inMatch && !this.menus.open && ctx.match.state !== 'RESULTS' && !this.input.padActive) this.pause();
+      if (!locked && this.inMatch && !this.menus.open && ctx.match.state !== 'RESULTS' && !this.input.padActive) {
+        // Esc saat mengetik chat: Chrome melepas kunci mouse sekaligus → cukup "klik untuk lanjut" (bukan menu pause)
+        if (this.chat.typing || performance.now() - this.chatEscAt < 600) {
+          this.chat.close(false); this.paused = true; this.input.clearAll(); this.menus.showClickToResume();
+        } else this.pause();
+      }
       // kunci mouse datang terlambat saat layar "Klik untuk lanjut" tampil → langsung lanjut
       if (locked && this.paused && this.menus.current === 'resume') { this.menus.hide(); this.unpause(); }
     };
@@ -559,6 +616,7 @@ export class Game {
     this.menus.hide();
     ctx.hud.clearFeed(); ctx.hud.showBanner('', '#fff');
     this.killcam.reset(); this.minimap.reset(); this.announcer.reset(true);
+    this.botChat.reset(); this.chat.close(false); this.chat.closeQuick();
     this.stopSpectate();
     this.stress = null;
     this.createEntities(mode, this.roster, net);
@@ -643,6 +701,7 @@ export class Game {
     this.afkOn = false; if (!keepLock) this.awaySince = -1;
     this.loop.timeScale = 1; this.slowmoEnd = 0;
     if (!keepLock) this.input.exitLock();   // pertandingan dilanjutkan (pindah host): kunci mouse dipertahankan
+    this.chat.close(false); this.chat.closeQuick();
     this.killcam.stop(); this.stopSpectate();
     this.endNet();
     this.disposeEntities();
@@ -674,9 +733,10 @@ export class Game {
   private createRoom(name: string) {
     this.leaveRoom();
     blackbox.log('room', 'buat room (host)'); blackbox.state({ role: 'host' });
+    this.resetChat();
     const s = this.settings;
     this.room = new Lobby(makeRoomCode(Math.random),
-      { mode: s.mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit, roundsToWin: s.roundsToWin, difficulty: s.difficulty, fillBots: true, map: s.map });
+      { mode: s.mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit, roundsToWin: s.roundsToWin, difficulty: s.difficulty, fillBots: true, map: s.map, allTalk: true });
     const me = this.room.join(name, { local: true })!;
     me.variant = s.charVariant; me.weapon = s.weapon; me.scope = s.scope;
     this.roomMe = me.id;
@@ -712,6 +772,8 @@ export class Game {
       onPeerRejoined: (pid) => this.onPeerRejoined(pid),
       onAfk: (pid, on) => { blackbox.log('afk', `${pid} ${on ? 'AFK (dimainkan bot)' : 'kembali'}`); this.hostRep?.setClientAfk(pid, on); },
       onYield: (winner) => { if (this.host === host) void this.yieldHost(winner); },
+      onChat: (pid, scope, text, quick) => { if (this.host === host) this.hostChat(pid, scope, text, quick); },
+      onVoice: (pid, buf) => { if (this.host === host) this.voice.onUp(pid, buf); },
       onLoadout: (pid, lo, v) => this.hostRep?.setLoadout(pid, lo, v),
       onPings: () => this.menus.updatePings(this.netInfo().pings),
     }, iceServers(XCFG.net.ice));
@@ -744,6 +806,9 @@ export class Game {
       onClosed: (reason) => { if (this.client === client) this.onClientClosed(reason); },
       onPings: () => { if (this.client === client) this.menus.updatePings(this.netInfo().pings); },
       onPlan: (plan) => { if (this.client === client) this.plan = plan; },
+      onChat: (msg) => { if (this.client === client) this.recvChat(msg); },
+      onChatDeny: (reason) => { if (this.client === client && reason) this.chat.note(reason.slice(0, 120)); },
+      onVoice: (buf) => { if (this.client === client) this.voice.onDown(buf); },
       onSave: (raw) => { if (this.client !== client) return; const sv = parseSave(raw); if (sv) this.lastSave = sv; },
       onHandover: (plan, save, start) => {
         if (this.client !== client) return;
@@ -1026,6 +1091,8 @@ export class Game {
     Object.assign(this.settings, validate(s));
     saveSettings(this.settings);
     ctx.audio.setVolumes(this.settings.volMaster / 100, this.settings.volSfx / 100, this.settings.volUi / 100);
+    ctx.audio.setVoiceVolume(this.settings.voice ? this.settings.volVoice / 100 : 0);
+    if (!this.settings.voice) this.voice.reset();
     this.stats.toggle(this.settings.showFps);
     this.applyVisual();
     if (reload) {   // antialias hanya bisa ditentukan saat WebGLRenderer dibuat
@@ -1375,6 +1442,173 @@ export class Game {
     else if (!this.migrating) this.hideNetOverlay();
   }
 
+  // ───────────────────────────────── chat teks tim & semua
+  /** Tombol chat saat match: Y semua · U tim · H menu pesan cepat (angka 1–6 dipakai menu, bukan ganti senjata). */
+  private chatKeys() {
+    const inp = this.input, c = this.chat;
+    if (c.quickOpen) {
+      for (let i = 0; i < QUICK.length; i++) {
+        const code = 'Digit' + (i + 1);
+        if (inp.wasPressed(code)) { inp.consume(code); c.closeQuick(); this.sendQuick(i); return; }
+      }
+      if (inp.actPressed('quickChat')) { inp.consume(this.settings.binds.quickChat); c.closeQuick(); }
+      return;
+    }
+    if (inp.actPressed('chatAll')) this.openChat('all');
+    else if (inp.actPressed('chatTeam')) this.openChat('team');
+    else if (inp.actPressed('quickChat')) c.toggleQuick(performance.now() / 1000);
+  }
+
+  private openChat(scope: ChatScope) {
+    const block = this.chatBlock(scope);
+    if (block) { this.chat.note(block); return; }
+    this.input.clearAll();   // tombol gerak yang sedang ditahan dilepas → karakter berhenti selama mengetik
+    this.chat.open(scope);
+  }
+
+  private sendQuick(i: number) {
+    const q = QUICK[i], p = ctx.player;
+    if (!q) return;
+    this.sendChat('team', q.text(p ? currentMap().zoneName(p.pos.x, p.pos.y, p.pos.z) : ''), true);
+  }
+
+  private liveMatch() { return this.inMatch && ctx.match.state !== 'RESULTS'; }
+  private chatBlock(scope: ChatScope): string | null {
+    return chatAllowed(scope, this.liveMatch(), this.room?.settings.allTalk ?? true) ? null
+      : 'Chat ke semua dimatikan host selama match — pakai chat tim (U)';
+  }
+  private rate(key: string) { let r = this.chatRate.get(key); if (!r) { r = new RateLimit(); this.chatRate.set(key, r); } return r; }
+
+  /** Pesan pemain lokal (kotak chat / panel / pesan cepat): offline & host langsung dirutekan; klien dikirim ke host. */
+  private sendChat(scope: ChatScope, raw: string, quick = false) {
+    const text = cleanChatText(raw);
+    if (!text) return;
+    const block = this.chatBlock(scope);
+    if (block) { this.chat.note(block); return; }
+    if (!this.rate('').take(performance.now() / 1000)) { this.chat.note('Pelan-pelan — tunggu sebentar sebelum kirim lagi'); return; }
+    if (this.client) { this.client.act({ a: 'chat', scope, text, quick }); return; }
+    this.routeChat(this.room ? this.roomMe : null, null, scope, text, quick);
+  }
+
+  /** Host: chat dari teman (mentah dari jaringan) → validasi, batas laju per pemain, setelan "chat semua" → teruskan. */
+  private hostChat(pid: string, scopeRaw: unknown, textRaw: unknown, quick: boolean) {
+    const h = this.host, L = this.room;
+    if (!h || !L || !L.find(pid)) return;
+    const scope: ChatScope | null = scopeRaw === 'all' ? 'all' : scopeRaw === 'team' ? 'team' : null, text = cleanChatText(textRaw);
+    if (!scope || !text) return;
+    const block = this.chatBlock(scope);
+    if (block) { h.sendTo(pid, { t: 'chatno', reason: block }); return; }
+    if (!this.rate(pid).take(performance.now() / 1000)) { h.sendTo(pid, { t: 'chatno', reason: 'Pelan-pelan — tunggu sebentar sebelum kirim lagi' }); return; }
+    this.routeChat(pid, null, scope, text, quick);
+  }
+
+  /** Entitas match milik pid (kita / teman lewat susunan match); null di luar match. */
+  private entityOfPid(pid: string | null): Entity | null {
+    if (!this.inMatch) return null;
+    if (!pid || pid === this.roomMe) return ctx.player;
+    const id = this.netStart?.ents.find(e => e.pid === pid)?.id;
+    return id === undefined ? null : ctx.byId.get(id) ?? null;
+  }
+  private teamOfPid(pid: string): Team | null { return this.entityOfPid(pid)?.team ?? this.room?.find(pid)?.team ?? null; }
+  private localTeam(): Team { return (this.inMatch ? ctx.player?.team : null) ?? this.room?.find(this.roomMe)?.team ?? ctx.player?.team ?? 'blue'; }
+
+  /** Host / main solo: pesan ke penerimanya — setim pengirim (tim) atau semua. Pengirim = pid manusia atau bot (callout). */
+  private routeChat(pid: string | null, bot: Entity | null, scope: ChatScope, text: string, quick: boolean) {
+    const live = this.liveMatch();
+    let name: string, team: Team, dead = false;
+    if (bot) { name = bot.name; team = bot.team; dead = live && !bot.alive; }
+    else {
+      const pl = pid ? this.room?.find(pid) ?? null : null, ent = this.entityOfPid(pid);
+      name = pl?.name ?? ent?.name ?? (cleanName(this.settings.playerName) || 'Pemain');
+      team = ent?.team ?? pl?.team ?? this.localTeam();
+      dead = live && !!ent && !ent.alive;
+    }
+    const msg = { t: 'chat', scope, name, team, text, pid: bot ? null : pid, bot: !!bot, dead, quick };
+    if (chatReaches(scope, team, this.localTeam())) this.recvChat(msg);
+    const h = this.host;
+    if (h && !this.client) for (const rp of h.pids()) {
+      const rt = this.teamOfPid(rp);
+      if (rt && chatReaches(scope, team, rt)) h.sendTo(rp, msg);
+    }
+  }
+
+  /** Tampilkan pesan (dari host / rute lokal): divalidasi, dibisukan dilewati, callout bot sesuai setelan, bunyi lembut. */
+  private recvChat(raw: Record<string, unknown>) {
+    const m = parseChat(raw);
+    if (!m || (m.pid && this.muted.has(m.pid)) || (m.bot && !this.settings.chatBots)) return;
+    this.chat.add(m);
+    const mine = !m.bot && (this.room ? m.pid === this.roomMe : true);
+    if (!mine) ctx.audio.playUi(R.chatBlip, 0.6);
+  }
+
+  /** Callout bot terucap → chat tim (hanya bila ada manusia di tim itu; dibatasi BotChatGate). Host / main solo saja. */
+  private botCallout(spotterId: number, x: number, y: number, z: number) {
+    if (!this.inMatch || ctx.match.state !== 'PLAYING' || ctx.net.role === 'client') return;
+    const s = ctx.byId.get(spotterId);
+    if (!s || !s.bot) return;
+    const humans = ctx.player?.team === s.team || ctx.entities.some(e => e.team === s.team && !!e.remote && !e.remote.afk);
+    if (!humans) return;
+    const zone = currentMap().zoneName(x, y, z);
+    if (!this.botChat.allow(s.team, zone, ctx.time)) return;
+    this.routeChat(null, s, 'team', botCalloutText(zone, spotterId + Math.floor(ctx.time)), false);
+  }
+
+  private toggleMute(pid: string) { if (!this.muted.delete(pid)) this.muted.add(pid); }
+  /** Teman manusia di room (untuk tombol bisukan di menu pause). */
+  private chatPeople(): { pid: string; name: string; team: Team }[] {
+    return this.room ? this.room.players.filter(p => p.id !== this.roomMe && !p.sim).map(p => ({ pid: p.id, name: p.name, team: p.team })) : [];
+  }
+  /** Room baru / keluar room: riwayat chat, bisukan & batas laju dimulai dari awal. */
+  private resetChat() { this.chat.clear(); this.muted.clear(); this.chatRate.clear(); this.botChat.reset(); this.voice.reset(); }
+
+  // ───────────────────────────────── voice chat
+  /** Tahan T (tim) / Z (semua) di room & match online (bukan saat mengetik); campuran pembicara (jarak); indikator ±10 Hz. */
+  private updateVoice() {
+    const v = this.voice, inp = this.input;
+    const online = !!this.room && (!!this.client || (!!this.host && this.host.connected > 0));
+    let want: VoiceScope | null = null;
+    if (online && this.settings.voice && !this.chat.typing && (document.hasFocus() || this.awayTest === false)) {
+      want = inp.actDown('voiceTeam') ? 'team' : inp.actDown('voiceAll') ? 'all' : null;
+      const alive = !this.liveMatch() || (ctx.player?.alive ?? true);
+      if (want === 'all' && !voiceScopeOk('all', this.liveMatch(), this.room?.settings.allTalk ?? true, alive)) {
+        if (inp.actPressed('voiceAll')) this.chat.note(alive ? 'Voice ke semua dimatikan host selama match — tahan T untuk tim' : 'Sudah mati: voice ke semua tidak bisa — tahan T untuk tim');
+        want = null;
+      }
+    }
+    v.talk(want);
+    // status mic berubah (izin diberikan / ditolak) → beri tahu & perbarui layar room
+    const ms = v.cap.state + '|' + v.cap.error;
+    if (ms !== this.micSeen) {
+      this.micSeen = ms;
+      if (v.cap.state === 'error' && v.cap.error) this.chat.note('🎙 ' + v.cap.error);
+      this.menus.refreshRoom();
+    }
+    v.update();
+    const now = performance.now();
+    if (now - this.voiceUiT > 100) { this.voiceUiT = now; this.paintTalk(); }
+  }
+
+  /** Indikator bicara: HUD (match) = kita + teman SETIM yang terdengar; room = ikon di baris pemain. */
+  private paintTalk() {
+    const v = this.voice, talkers = v.talkers(), me = v.speaking, myTeam = this.localTeam();
+    const rows: [string, string][] = [];
+    if (this.inMatch) {
+      if (me) rows.push(['me', `🎙 Kamu → ${me === 'team' ? 'TIM' : 'SEMUA'}`]);
+      for (const t of talkers) {
+        if (this.teamOfPid(t.pid) !== myTeam) continue;   // suara musuh (Z) terdengar, namanya tidak ditampilkan
+        rows.push(['', `🎙 ${this.room?.find(t.pid)?.name ?? 'Teman'}${t.all ? ' (semua)' : ''}`]);
+      }
+    }
+    const key = rows.map(r => r.join(':')).join('|');
+    if (key !== this.talkKey) {
+      this.talkKey = key;
+      this.talkEl.replaceChildren(...rows.map(([c, t]) => { const d = document.createElement('div'); if (c) d.className = c; d.textContent = t; return d; }));
+    }
+    const on = new Set(talkers.map(t => t.pid));
+    if (me) on.add(this.roomMe);
+    this.menus.updateTalking(on);
+  }
+
   private showNetOverlay(title: string, text: string) {
     let el = document.getElementById('net-overlay');
     if (!el) { el = document.createElement('div'); el.id = 'net-overlay'; document.body.appendChild(el); }
@@ -1554,7 +1788,7 @@ export class Game {
   private fixedUpdate(dt: number) {
     ctx.fixedIndex++;
     const p = ctx.player, inp = this.input, role = ctx.net.role;
-    const control = this.inMatch && !this.paused && inp.captured && !ctx.match.locked && !ctx.debug.noclip;
+    const control = this.inMatch && !this.paused && inp.captured && !ctx.match.locked && !ctx.debug.noclip && !this.chat.typing;
     // 1. PlayerController: input → kecepatan → KCC
     if (p) {
       const it = p.intent;
@@ -1676,8 +1910,12 @@ export class Game {
       if (rig.isFpsView && !ctx.debug.noclip && !kcCam && !this.specTarget) cam.layers.disable(1); else cam.layers.enable(1);
     } else this.menuCamera(dt, cam);
 
-    // 2. senjata pemain
-    if (p && this.inMatch && !p.bot) this.playerWeapon(dt, looking);   // AFK: senjata digerakkan bot (loop bot di bawah)
+    // chat: Y semua / U tim / H pesan cepat lalu 1–6 (sebelum senjata: angka di menu pesan cepat tidak mengganti senjata)
+    if (looking && !this.chat.typing) this.chatKeys();
+    this.chat.update(performance.now() / 1000);
+    this.updateVoice();
+    // 2. senjata pemain (selama mengetik chat: tidak menembak; mouse-look tetap)
+    if (p && this.inMatch && !p.bot) this.playerWeapon(dt, looking && !this.chat.typing);   // AFK: senjata digerakkan bot (loop bot di bawah)
     // 3. bot: bidik per frame + keputusan tembak
     for (const e of ctx.entities) if (e.bot) e.bot.update(dt);
     // 4. senjata, granat & melee semua bot

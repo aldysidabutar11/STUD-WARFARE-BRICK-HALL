@@ -39,6 +39,8 @@ export class BotDirector {
   readonly reports = new Map<number, { pos: THREE.Vector3; t: number }>();
   private calls: Callout[] = [];
   private lastCall = new Map<number, number>();
+  /** Callout terucap (setelah jeda bicara): Game menampilkannya di chat tim (dibatasi BotChatGate). */
+  onCallout: ((spotter: number, x: number, y: number, z: number) => void) | null = null;
 
   constructor(readonly team: Team) {}
 
@@ -94,6 +96,7 @@ export class BotDirector {
       const c = this.calls[k];
       if (c.due > now) continue;
       this.calls.splice(k, 1);
+      this.onCallout?.(c.spotter, c.x, c.y, c.z);
       const dist = (o: Entity) => Math.hypot(o.pos.x - c.x, o.pos.z - c.z);
       const mates = entities.filter(o => o.bot && o.alive && o.team === this.team && o.id !== c.spotter && dist(o) <= C.range)
         .sort((a, b) => dist(a) - dist(b));

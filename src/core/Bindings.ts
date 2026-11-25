@@ -2,7 +2,8 @@
 // Fitur pasca-MVP: rebind tombol & dukungan gamepad (GDD §1 "Pasca-MVP").
 
 export type Action = 'forward' | 'back' | 'left' | 'right' | 'jump' | 'sprint' | 'crouch' | 'reload' | 'fireMode' | 'melee'
-  | 'primary' | 'knife' | 'grenade' | 'lastWeapon' | 'drop' | 'pickup' | 'view' | 'shoulder' | 'scoreboard' | 'loadout';
+  | 'primary' | 'knife' | 'grenade' | 'lastWeapon' | 'drop' | 'pickup' | 'view' | 'shoulder' | 'scoreboard' | 'loadout'
+  | 'chatAll' | 'chatTeam' | 'quickChat' | 'voiceTeam' | 'voiceAll';
 export type Binds = Record<Action, string>;
 
 export const ACTIONS: readonly { id: Action; label: string }[] = [
@@ -13,12 +14,15 @@ export const ACTIONS: readonly { id: Action; label: string }[] = [
   { id: 'lastWeapon', label: 'Senjata sebelumnya' }, { id: 'drop', label: 'Buang senjata utama' },
   { id: 'pickup', label: 'Ambil / tukar senjata (tim sendiri)' }, { id: 'view', label: 'Ganti FPS / TPS' },
   { id: 'shoulder', label: 'Tukar bahu (TPS)' }, { id: 'scoreboard', label: 'Papan skor (tahan)' }, { id: 'loadout', label: 'Loadout' },
+  { id: 'chatAll', label: 'Chat ke semua' }, { id: 'chatTeam', label: 'Chat ke tim' }, { id: 'quickChat', label: 'Pesan cepat ke tim (lalu 1–6)' },
+  { id: 'voiceTeam', label: 'Voice ke tim (tahan)' }, { id: 'voiceAll', label: 'Voice ke semua (tahan)' },
 ];
 
 export const DEFAULT_BINDS: Binds = {
   forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', sprint: 'ShiftLeft', crouch: 'KeyC',
   reload: 'KeyR', fireMode: 'KeyB', melee: 'KeyF', primary: 'Digit1', knife: 'Digit2', grenade: 'Digit3', lastWeapon: 'KeyQ',
   drop: 'KeyG', pickup: 'KeyE', view: 'KeyV', shoulder: 'KeyX', scoreboard: 'Tab', loadout: 'KeyL',
+  chatAll: 'KeyY', chatTeam: 'KeyU', quickChat: 'KeyH', voiceTeam: 'KeyT', voiceAll: 'KeyZ',
 };
 
 /** Versi skema tombol tersimpan. v2: slot 1/2/3 + Q senjata sebelumnya, tukar bahu Q → X, granat G → 3, G = buang senjata. */

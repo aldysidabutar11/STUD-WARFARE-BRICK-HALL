@@ -9,7 +9,7 @@ import { XCFG } from '../src/config/extraConfig';
 import { makeRng } from '../src/core/Rng';
 import { validate } from '../src/ui/Settings';
 
-const S = (): RoomSettings => ({ mode: 'tdm', scoreLimit: 50, timeLimit: 10, roundsToWin: 5, difficulty: 'normal', fillBots: true, map: 'brickhall' });
+const S = (): RoomSettings => ({ mode: 'tdm', scoreLimit: 50, timeLimit: 10, roundsToWin: 5, difficulty: 'normal', fillBots: true, map: 'brickhall', allTalk: true });
 /** Room dengan host + n teman (teman masuk bergantian ke tim yang lebih sedikit). */
 function room(n: number) {
   const L = new Lobby('K7RB2X', S());
