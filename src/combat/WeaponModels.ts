@@ -280,6 +280,28 @@ export const KNIFE_TIP = new THREE.Vector3(0, 0.02, -0.98);
 export const KNIFE_MID = new THREE.Vector3(0, 0.0, -0.55);
 
 /** Granat K-400 di tangan (ukuran sama dengan badan granat dunia GrenadeK400). */
+let flashGeo: THREE.BufferGeometry | null = null;
+/** Flashbang (gaya M84 blocky): tabung abu-abu muda lebih ramping & tinggi, lubang hitam di 4 sisi, pita putih — siluet & warna
+ *  jelas beda dari K-400 (hijau zaitun, gemuk). */
+export function flashbangModel(): THREE.BufferGeometry {
+  if (flashGeo) return flashGeo;
+  const b = new Builder();
+  const body = 0xa9b0b9, hole = 0x1d1f22, band = 0xe9e3d1, dark = 0x2a2c30;
+  b.box(-0.17, -0.3, -0.17, 0.17, 0.3, 0.17, body);
+  b.box(-0.178, 0.13, -0.178, 0.178, 0.21, 0.178, band);              // pita atas
+  for (const y of [-0.2, -0.04]) {                                     // lubang di 4 sisi
+    b.box(-0.06, y, 0.165, 0.06, y + 0.1, 0.182, hole);
+    b.box(-0.06, y, -0.182, 0.06, y + 0.1, -0.165, hole);
+    b.box(0.165, y, -0.06, 0.182, y + 0.1, 0.06, hole);
+    b.box(-0.182, y, -0.06, -0.165, y + 0.1, 0.06, hole);
+  }
+  b.box(-0.1, 0.3, -0.1, 0.1, 0.43, 0.1, dark);                        // sumbu
+  b.box(0.14, -0.04, -0.03, 0.22, 0.37, 0.03, dark);                   // tuas
+  b.box(-0.19, 0.35, -0.02, -0.1, 0.41, 0.02, 0x9aa0a8);               // ring pin
+  flashGeo = b.build();
+  return flashGeo;
+}
+
 export function grenadeModel(): THREE.BufferGeometry {
   if (nadeGeo) return nadeGeo;
   const b = new Builder();

@@ -154,8 +154,9 @@ export class Minimap {
       return [C + k * (c * dx - s * dz), C + k * (s * dx + c * dz)];
     };
     // granat hidup
-    ctx.grenades.forEachLive((x, _y, z) => {
+    ctx.grenades.forEachLive((x, _y, z, _f, _o, _id, kind) => {
       const [sx, sy] = toScreen(x, z);
+      if (kind === 'flash') { g.fillStyle = '#f2f6ff'; g.beginPath(); g.arc(sx, sy, 3 * this.dpr, 0, Math.PI * 2); g.fill(); return; }
       g.fillStyle = '#ffb02e'; g.beginPath(); g.arc(sx, sy, 3.2 * this.dpr, 0, Math.PI * 2); g.fill();
       g.strokeStyle = 'rgba(255,90,40,0.6)'; g.lineWidth = 1 * this.dpr; g.beginPath(); g.arc(sx, sy, CFG.grenade.blastRadius * k, 0, Math.PI * 2); g.stroke();
     });

@@ -18,13 +18,14 @@ export interface GameEvents {
     /** Klien online: tembakan/pisau sendiri yang kena menurut prediksi lokal (host mengonfirmasi kemudian). */
     predicted?: boolean };
   kill: { killerId: number; victimId: number; weaponId: KillWeapon; headshot: boolean };
-  assist: { entityId: number; victimId: number };
+  assist: { entityId: number; victimId: number; flash?: boolean };
   death: { entityId: number; impulse: THREE.Vector3; grenade: boolean };
   spawn: { entityId: number; slot: number };
   melee: { entityId: number; phase: 'swing' | 'hit' | 'wall'; position: THREE.Vector3; kind: MeleeKind };
   'weapon:drop': { entityId: number; position: THREE.Vector3 };
   'weapon:pickup': { entityId: number; weaponId: WeaponId };
   'grenade:explode': { position: THREE.Vector3; ownerId: number };
+  'flash:explode': { position: THREE.Vector3; ownerId: number };
   'grenade:bounce': { position: THREE.Vector3; speed: number; material: SurfaceMaterial };
   footstep: { entityId: number; material: SurfaceMaterial; position: THREE.Vector3; loud: boolean; land?: boolean };
   'match:state': { state: MatchStateName; scores: [number, number]; timeLeft: number };

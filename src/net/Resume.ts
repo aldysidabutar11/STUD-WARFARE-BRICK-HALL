@@ -16,7 +16,8 @@ export function saveEnt(e: Entity): SaveEnt {
   const w = e.weapon;
   return { id: e.id, alive: e.alive, hp: Math.round(e.hp), respawnT: r2(Math.max(0, e.respawnT)), protectT: r2(Math.max(0, e.protectT)),
     x: r2(e.pos.x), y: r2(e.pos.y), z: r2(e.pos.z), yaw: r2(e.yaw), pitch: r2(e.pitch), weapon: e.loadout.weapon, scope: e.loadout.scope,
-    ammo: w.ammo, reserve: w.reserve, modeIdx: w.modeIdx, grenades: e.grenades, stats: statsOf(e), streak: e.streak, variant: e.char.variant };
+    ammo: w.ammo, reserve: w.reserve, modeIdx: w.modeIdx, grenades: e.grenades, stats: statsOf(e), streak: e.streak, variant: e.char.variant,
+    flashes: e.flashes };
 }
 
 /** Cadangan dari keadaan match & entitas saat ini. */
@@ -43,7 +44,7 @@ export function applySaveEntities(save: MatchSave) {
       if (e.isPlayer) ctx.camRig.pitch = s.pitch;
       const w = e.weapon;
       w.ammo = Math.min(s.ammo, w.def.magSize); w.reserve = s.reserve; w.modeIdx = Math.min(s.modeIdx, w.def.modes.length - 1);
-      e.grenades = s.grenades;
+      e.grenades = s.grenades; e.flashes = s.flashes;
     } else {
       e.alive = false; e.hp = 0; e.respawnT = s.respawnT;
       e.ctrl.setEnabled(false); e.char.setVisible(false);

@@ -44,8 +44,8 @@ describe('Codec snapshot (host → klien)', () => {
     tick: 123456, ack: 789, match: { state: 3, sb: 12, sr: 9, timeLeft: 431.5, countdown: 0, round: 1 },
     ents: [ent(1), ent(7, { flags: 0, hp: 0, reloadP: 0.5, meleeT: -1, slot: 0, gstate: 0, meleeKind: 0 })],
     own: { x: 1, y: 2, z: 3, vx: 4, vz: 5, velY: -6, crouchT: 0.25, coyote: 0.1, jumpBuf: 0, airCap: 9.5, peakY: 12, stepPhase: 3.5,
-      grounded: true, crouched: false, sprinting: true, crouchQueued: null, ammo: 27, reserve: 120, modeIdx: 1, grenades: 1, shots: 340 },
-    nades: [{ id: 3, x: 0.5, y: 4, z: -9, fuse: 2.4, owner: 7 }],
+      grounded: true, crouched: false, sprinting: true, crouchQueued: null, ammo: 27, reserve: 120, modeIdx: 1, grenades: 1, shots: 340, flashes: 1 },
+    nades: [{ id: 3, x: 0.5, y: 4, z: -9, fuse: 2.4, owner: 7, kind: 'frag' }, { id: 4, x: 1, y: 2, z: 3, fuse: 1.2, owner: 2, kind: 'flash' }],
     shots: [{ shooter: 7, x: 1, y: 2, z: 3, kind: 2, nx: 0, ny: 1, nz: 0, mat: 1, victim: 1, part: 0 }],
     fx: [{ type: 2, ent: 7, a: 1, x: 0, y: 5, z: 0 }],
   });

@@ -21,7 +21,7 @@ const STEP_EVERY = Math.max(1, Math.round(1 / (CFG.world.fixedStep * K.hz)));
 const FX = 0, FY = 1, FZ = 2, FYAW = 3, FPITCH = 4, FCROUCH = 5, FSPEED = 6, FSPRINT = 7, FAIR = 8, FALIVE = 9, FRELOAD = 10,
   FADS = 11, FMELEE = 12, FHELD = 13, FKNIFE = 14, F = 15;
 /** Benda di tangan ↔ angka rekaman. Serangan pisau: −1, tebas 0..1, tusuk 2..3. */
-const HELD: readonly Held[] = ['ar', 'knife', 'grenade', 'none'];
+const HELD: readonly Held[] = ['ar', 'knife', 'grenade', 'none', 'flash'];
 
 interface Shot { t: number; id: number; w: WeaponId; o: THREE.Vector3; e: THREE.Vector3 }
 interface Hit { t: number; a: number; v: number; head: boolean }

@@ -3,7 +3,7 @@
 // Masukan = ActionFrame (tombol ditahan + tepi tekan/lepas), bukan Input langsung → host menjalankan aturan persis sama.
 import { ctx } from './ctx';
 import type { Entity } from '../entities/Entity';
-import { cycleTarget, quickSwitchTarget, slotAvail, type Slot } from '../combat/Slots';
+import { cycleTarget, isThrowable, quickSwitchTarget, slotAvail, type Slot } from '../combat/Slots';
 import { cancelMelee, startKnife, startMelee, updateMelee } from '../combat/Melee';
 import { equipTimeFor, type GrenadeInput } from '../combat/GrenadeK400';
 import { fireOne } from '../combat/Ballistics';
@@ -32,7 +32,7 @@ export function frameFromCommand(c: Command, prevHeld: number, out: ActionFrame)
   out.rR = !!(c.imp & I.ALT_R) || (!!(prevHeld & H.ALT) && !rH);
   out.aimHold = !!(c.held & H.AIM);
   out.reload = !!(c.imp & I.RELOAD); out.fireMode = !!(c.imp & I.FIREMODE); out.melee = !!(c.imp & I.MELEE);
-  out.slot = c.imp & I.SLOT_AR ? 'ar' : c.imp & I.SLOT_KNIFE ? 'knife' : c.imp & I.SLOT_NADE ? 'grenade' : null;
+  out.slot = c.imp & I.SLOT_AR ? 'ar' : c.imp & I.SLOT_KNIFE ? 'knife' : c.imp & I.SLOT_NADE ? 'grenade' : c.imp & I.SLOT_FLASH ? 'flash' : null;
   out.last = !!(c.imp & I.LAST);
   out.wheel = c.imp & I.WHEEL_UP ? 1 : c.imp & I.WHEEL_DN ? -1 : 0;
   return out;
@@ -57,8 +57,8 @@ export function driveWeapons(e: Entity, f: ActionFrame, dt: number, o: DriveOpts
   const w = e.weapon, active = o.active;
   const lP = active && f.lP, lH = active && f.lH, lR = f.lR;
   const rP = active && f.rP, rH = active && f.rH, rR = f.rR;
-  // slot: 1 senjata utama · 2 pisau · 3 granat · Q senjata sebelumnya · scroll siklus
-  const av = slotAvail(w.hasPrimary, e.grenades);
+  // slot: 1 senjata utama · 2 pisau · 3 granat · 4 flashbang · Q senjata sebelumnya · scroll siklus
+  const av = slotAvail(w.hasPrimary, e.grenades, e.flashes);
   let want: Slot | null = null;
   if (active) {
     if (f.slot) want = f.slot;
@@ -66,13 +66,13 @@ export function driveWeapons(e: Entity, f: ActionFrame, dt: number, o: DriveOpts
     else if (f.wheel !== 0) want = cycleTarget(w.slot, f.wheel > 0 ? 1 : -1, av);
     if (want && (!av[want] || want === w.slot)) want = null;
   }
-  g.equip = want === 'grenade';                                                   // diproses state machine granat (§8.1)
-  g.toSlot = want && want !== 'grenade' && w.slot === 'grenade' ? want : null;   // keluar dari granat (READY)
-  if (want && want !== 'grenade' && w.slot !== 'grenade' && e.grenadeState === 'NONE' && (e.meleeT < 0 || e.meleeHit)) {
+  g.equip = want && isThrowable(want) ? want : null;                               // granat / flashbang: state machine (§8.1)
+  g.toSlot = want && !isThrowable(want) && isThrowable(w.slot) ? want : null;      // keluar dari benda lempar (READY)
+  if (want && !isThrowable(want) && !isThrowable(w.slot) && e.grenadeState === 'NONE' && (e.meleeT < 0 || e.meleeHit)) {
     cancelMelee(e);
     w.switchTo(want, equipTimeFor(want));
   }
-  const nade = w.slot === 'grenade' || e.grenadeState !== 'NONE';
+  const nade = isThrowable(w.slot) || e.grenadeState !== 'NONE';
   const gun = w.slot === 'ar' && !nade, knife = w.slot === 'knife' && !nade;
   g.lPress = nade && lP; g.lHeld = nade && lH; g.lRelease = nade && lR;
   g.rPress = nade && rP; g.rHeld = nade && rH; g.rRelease = nade && rR;
@@ -93,6 +93,7 @@ export function driveWeapons(e: Entity, f: ActionFrame, dt: number, o: DriveOpts
   if (o.practice) { // latihan: amunisi cadangan & granat tak terbatas
     w.reserve = w.def.reserveAmmo;
     if (e.grenades < 1 && e.grenadeState === 'NONE') e.grenades = 1;
+    if (e.flashes < 1 && e.grenadeState === 'NONE') e.flashes = 1;
   }
   w.update(dt, ctx.time, t, () => fireOne(e));
   ctx.grenades.handle(e, g, dt);

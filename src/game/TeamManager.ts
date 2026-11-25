@@ -7,6 +7,7 @@ import { bus, type HitPart, type KillWeapon } from '../core/EventBus';
 import { ctx } from './ctx';
 import type { Entity } from '../entities/Entity';
 import type { Team } from '../entities/BlockyCharacter';
+import { flashWhite } from '../combat/Flash';
 
 const _imp = new THREE.Vector3();
 const XA = XCFG.announce;
@@ -83,15 +84,25 @@ export class TeamManager {
     bus.emit('death', { entityId: victim.id, impulse, grenade });
     bus.emit('kill', { killerId: scored && killer ? killer.id : victim.id, victimId: victim.id, weaponId: weapon, headshot });
     // assist: musuh lain yang memberi damage ≤ 10 s terakhir
+    const helped = new Set<number>();
     for (const [id, r] of victim.dmgBy) {
       if (scored && killer && id === killer.id) continue;
       const a = ctx.byId.get(id);
       if (!a || a.team === victim.team || ctx.time - r.t > XA.assistWindow) continue;
       a.stats.assists++;
       a.stats.score += XA.assistScore;
+      helped.add(a.id);
       bus.emit('assist', { entityId: a.id, victimId: victim.id });
     }
-    victim.dmgBy.clear();
+    // assist flash: musuh korban yang membutakannya (cukup kuat) ≤ assistWindow s sebelum mati / masih silau (bila belum dapat assist)
+    const FX = XCFG.flash, fa = victim.flashedBy ? ctx.byId.get(victim.flashedBy) : undefined;
+    if (fa && fa.team !== victim.team && !helped.has(fa.id) && !(scored && killer && fa.id === killer.id) && victim.blindX
+      && victim.flashS >= FX.assistMin && (ctx.time - victim.blindAt <= FX.assistWindow || flashWhite(victim.blindX, ctx.time - victim.blindAt) > 0.3)) {
+      fa.stats.assists++;
+      fa.stats.score += XA.assistScore;
+      bus.emit('assist', { entityId: fa.id, victimId: victim.id, flash: true });
+    }
+    victim.dmgBy.clear(); victim.flashedBy = 0;
   }
 
   teamOf(e: Entity) { return ctx.entities.filter(o => o.team === e.team); }

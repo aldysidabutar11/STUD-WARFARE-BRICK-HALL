@@ -149,6 +149,18 @@ export const explosion: Recipe = (s, out, t0) => {
   return 1.25;
 };
 
+/** Flashbang: letupan tajam & keras (transien lebar + "krak" frekuensi tinggi), ekor pendek — beda jelas dari dentum K-400. */
+export const flashBang: Recipe = (s, out, t0) => {
+  noiseSrc(s, t0, 0.35).connect(filt(s, 'highpass', 900)).connect(env(s, out, t0, 1.0, 0.001, 0.3));
+  noiseSrc(s, t0, 0.12).connect(filt(s, 'bandpass', 3200, 0.9)).connect(env(s, out, t0, 0.9, 0.0005, 0.1));
+  osc(s, 'sine', 140, 60, t0, 0.18).connect(env(s, out, t0, 0.6, 0.002, 0.18));
+  for (let i = 0; i < 4; i++) {
+    const t = t0 + 0.05 + Math.random() * 0.25;
+    noiseSrc(s, t, 0.015).connect(filt(s, 'highpass', 3000)).connect(env(s, out, t, 0.25, 0.001, 0.015));
+  }
+  return 0.45;
+};
+
 export const hitBody: Recipe = (s, out, t0) => { osc(s, 'sine', 1800, 1800, t0, 0.025).connect(env(s, out, t0, 0.35, 0.001, 0.025)); return 0.04; };
 export const hitHead: Recipe = (s, out, t0) => {
   osc(s, 'sine', 2600, 2600, t0, 0.25).connect(env(s, out, t0, 0.5, 0.001, 0.25));

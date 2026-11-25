@@ -6,7 +6,7 @@ import { XCFG } from '../config/extraConfig';
 import type { HitPart } from '../core/EventBus';
 import { Spring, damp } from './moveFeel';
 import { characterArt, type Variant } from './CharacterArt';
-import { WEAPON_MATERIAL, grenadeModel, knifeModel } from '../combat/WeaponModels';
+import { WEAPON_MATERIAL, grenadeModel, knifeModel, flashbangModel } from '../combat/WeaponModels';
 import type { Held } from '../combat/Slots';
 import { RIG_SLASH_A, RIG_SLASH_B, RIG_STAB, sampleKeys } from './knifeAnim';
 import { BAKE_UNIFORMS } from '../world/LightBake';
@@ -167,7 +167,8 @@ uniform vec3 uBounce;`)
     this.heldKind = h;
     if (this.gun) this.gun.visible = h === 'ar';
     this.knifeMesh.visible = h === 'knife';
-    this.nadeMesh.visible = h === 'grenade';
+    this.nadeMesh.visible = h === 'grenade' || h === 'flash';
+    if (h === 'grenade' || h === 'flash') this.nadeMesh.geometry = h === 'flash' ? flashbangModel() : grenadeModel();
   }
 
   /** Ganti varian (pria/wanita) seketika: hanya geometri & atlas tampilan; hitbox tidak berubah. */

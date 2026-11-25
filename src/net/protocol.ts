@@ -8,7 +8,7 @@ export const H = { FIRE: 1, ALT: 2, AIM: 4, CROUCH: 8, SPRINT: 16 } as const;
 /** Tombol yang DITEKAN sejak perintah sebelumnya (impuls, diproses tepat sekali per seq). */
 export const I = {
   JUMP: 1, RELOAD: 2, FIREMODE: 4, MELEE: 8, SLOT_AR: 16, SLOT_KNIFE: 32, SLOT_NADE: 64, LAST: 128,
-  WHEEL_UP: 256, WHEEL_DN: 512, FIRE_P: 1024, ALT_P: 2048, FIRE_R: 4096, ALT_R: 8192,
+  WHEEL_UP: 256, WHEEL_DN: 512, FIRE_P: 1024, ALT_P: 2048, FIRE_R: 4096, ALT_R: 8192, SLOT_FLASH: 16384,
 } as const;
 
 export interface Command {
@@ -144,9 +144,13 @@ export interface OwnState {
   crouchT: number; coyote: number; jumpBuf: number; airCap: number; peakY: number; stepPhase: number;
   grounded: boolean; crouched: boolean; sprinting: boolean; crouchQueued: boolean | null;
   ammo: number; reserve: number; modeIdx: number; grenades: number; shots: number;
+  /** Flashbang tersisa (pemain sendiri). */
+  flashes: number;
 }
 
-export interface NadeState { id: number; x: number; y: number; z: number; fuse: number; owner: number }
+export interface NadeState { id: number; x: number; y: number; z: number; fuse: number; owner: number;
+  /** K-400 / flashbang (model di klien). */
+  kind: 'frag' | 'flash' }
 
 /** Efek tembakan: penembak, titik akhir, jenis kena (0 tidak / 1 dunia / 2 tubuh), normal, material, korban, bagian. */
 export interface ShotFx { shooter: number; x: number; y: number; z: number; kind: number; nx: number; ny: number; nz: number;
@@ -192,10 +196,12 @@ export function encodeSnapshot(s: Snapshot): ArrayBuffer {
     // berbeda hasil beberapa tick kemudian → koreksi berantai). +48 B per snapshot.
     for (const v of [o.x, o.y, o.z, o.vx, o.vz, o.velY, o.crouchT, o.coyote, o.jumpBuf, o.airCap, o.peakY, o.stepPhase]) w.f64(v);
     w.u8((o.grounded ? 1 : 0) | (o.crouched ? 2 : 0) | (o.sprinting ? 4 : 0) | (o.crouchQueued === null ? 0 : o.crouchQueued ? 8 : 16));
-    w.u16(o.ammo); w.u16(o.reserve); w.u8(o.modeIdx); w.u8(o.grenades); w.u16(o.shots);
+    w.u16(o.ammo); w.u16(o.reserve); w.u8(o.modeIdx); w.u8(o.grenades); w.u16(o.shots); w.u8(o.flashes);
   } else w.u8(0);
   w.u8(s.nades.length);
-  for (const n of s.nades) { w.u16(n.id); w.f32(n.x); w.f32(n.y); w.f32(n.z); w.u8(Math.round(Math.max(0, n.fuse) * 50)); w.u8(n.owner); }
+  for (const n of s.nades) {
+    w.u16(n.id); w.f32(n.x); w.f32(n.y); w.f32(n.z); w.u8(Math.round(Math.max(0, n.fuse) * 50)); w.u8(n.owner); w.u8(n.kind === 'flash' ? 1 : 0);
+  }
   w.u8(s.shots.length);
   for (const f of s.shots) {
     w.u8(f.shooter); w.f32(f.x); w.f32(f.y); w.f32(f.z); w.u8(f.kind);
@@ -226,10 +232,12 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot | null {
     const b = r.u8();
     own = { x: f[0], y: f[1], z: f[2], vx: f[3], vz: f[4], velY: f[5], crouchT: f[6], coyote: f[7], jumpBuf: f[8], airCap: f[9],
       peakY: f[10], stepPhase: f[11], grounded: !!(b & 1), crouched: !!(b & 2), sprinting: !!(b & 4),
-      crouchQueued: b & 8 ? true : b & 16 ? false : null, ammo: r.u16(), reserve: r.u16(), modeIdx: r.u8(), grenades: r.u8(), shots: r.u16() };
+      crouchQueued: b & 8 ? true : b & 16 ? false : null, ammo: r.u16(), reserve: r.u16(), modeIdx: r.u8(), grenades: r.u8(), shots: r.u16(),
+      flashes: r.u8() };
   }
   const nades: NadeState[] = [];
-  for (let i = 0, n = r.u8(); i < n; i++) nades.push({ id: r.u16(), x: r.f32(), y: r.f32(), z: r.f32(), fuse: r.u8() / 50, owner: r.u8() });
+  for (let i = 0, n = r.u8(); i < n; i++) nades.push({ id: r.u16(), x: r.f32(), y: r.f32(), z: r.f32(), fuse: r.u8() / 50, owner: r.u8(),
+    kind: r.u8() === 1 ? 'flash' : 'frag' });
   const shots: ShotFx[] = [];
   for (let i = 0, n = r.u8(); i < n; i++) {
     shots.push({ shooter: r.u8(), x: r.f32(), y: r.f32(), z: r.f32(), kind: r.u8(), nx: r.i8() / 127, ny: r.i8() / 127, nz: r.i8() / 127,

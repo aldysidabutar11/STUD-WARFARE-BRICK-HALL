@@ -2,7 +2,7 @@
 // Fitur pasca-MVP: rebind tombol & dukungan gamepad (GDD §1 "Pasca-MVP").
 
 export type Action = 'forward' | 'back' | 'left' | 'right' | 'jump' | 'sprint' | 'crouch' | 'reload' | 'fireMode' | 'melee'
-  | 'primary' | 'knife' | 'grenade' | 'lastWeapon' | 'drop' | 'pickup' | 'view' | 'shoulder' | 'scoreboard' | 'loadout'
+  | 'primary' | 'knife' | 'grenade' | 'flash' | 'lastWeapon' | 'drop' | 'pickup' | 'view' | 'shoulder' | 'scoreboard' | 'loadout'
   | 'chatAll' | 'chatTeam' | 'quickChat' | 'voiceTeam' | 'voiceAll';
 export type Binds = Record<Action, string>;
 
@@ -11,6 +11,7 @@ export const ACTIONS: readonly { id: Action; label: string }[] = [
   { id: 'jump', label: 'Lompat' }, { id: 'sprint', label: 'Sprint (tahan, hanya ke depan)' }, { id: 'crouch', label: 'Jongkok' },
   { id: 'reload', label: 'Reload' }, { id: 'fireMode', label: 'Ganti mode tembak' }, { id: 'melee', label: 'Pukul (melee)' },
   { id: 'primary', label: 'Senjata utama (slot 1)' }, { id: 'knife', label: 'Pisau (slot 2)' }, { id: 'grenade', label: 'Granat K-400 (slot 3)' },
+  { id: 'flash', label: 'Flashbang (slot 4)' },
   { id: 'lastWeapon', label: 'Senjata sebelumnya' }, { id: 'drop', label: 'Buang senjata utama' },
   { id: 'pickup', label: 'Ambil / tukar senjata (tim sendiri)' }, { id: 'view', label: 'Ganti FPS / TPS' },
   { id: 'shoulder', label: 'Tukar bahu (TPS)' }, { id: 'scoreboard', label: 'Papan skor (tahan)' }, { id: 'loadout', label: 'Loadout' },
@@ -20,7 +21,7 @@ export const ACTIONS: readonly { id: Action; label: string }[] = [
 
 export const DEFAULT_BINDS: Binds = {
   forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', sprint: 'ShiftLeft', crouch: 'KeyC',
-  reload: 'KeyR', fireMode: 'KeyB', melee: 'KeyF', primary: 'Digit1', knife: 'Digit2', grenade: 'Digit3', lastWeapon: 'KeyQ',
+  reload: 'KeyR', fireMode: 'KeyB', melee: 'KeyF', primary: 'Digit1', knife: 'Digit2', grenade: 'Digit3', flash: 'Digit4', lastWeapon: 'KeyQ',
   drop: 'KeyG', pickup: 'KeyE', view: 'KeyV', shoulder: 'KeyX', scoreboard: 'Tab', loadout: 'KeyL',
   chatAll: 'KeyY', chatTeam: 'KeyU', quickChat: 'KeyH', voiceTeam: 'KeyT', voiceAll: 'KeyZ',
 };
@@ -98,7 +99,7 @@ export const PAD_ACTION: Partial<Record<Action, number>> = {
 };
 export const PAD_HELP: [string, string][] = [
   ['Stik kiri / kanan', 'Gerak / bidik'], ['RT / LT', 'Tembak / ADS (pisau: tebas / tusuk; granat: lempar jauh / gelinding)'], ['A', 'Lompat'], ['B', 'Jongkok'],
-  ['X', 'Reload / ambil senjata (dekat senjata tim)'], ['Y', 'Senjata sebelumnya'], ['RB', 'Granat K-400'], ['LB', 'Ganti mode tembak'],
+  ['X', 'Reload / ambil senjata (dekat senjata tim)'], ['Y', 'Senjata sebelumnya'], ['RB', 'Granat K-400 · RB 2× cepat = flashbang'], ['LB', 'Ganti mode tembak'],
   ['L3', 'Sprint (toggle)'], ['R3', 'Pukul (melee)'], ['D-pad ↑ / →', 'FPS-TPS / tukar bahu'], ['D-pad ↓', 'Pisau'], ['D-pad ←', 'Loadout'],
   ['View (Back)', 'Papan skor'],
   ['Menu (Start)', 'Pause'], ['Di menu', 'D-pad pilih · A oke · B kembali'],

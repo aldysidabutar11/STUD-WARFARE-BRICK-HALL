@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { XCFG } from '../config/extraConfig';
 import { SCOPES, type ScopeId, type WeaponId } from '../config/weaponsData';
-import { KNIFE_MID, KNIFE_TIP, VM_SCALE, VM_WEAPON_MATERIAL, createOpticMesh, grenadeModel, knifeModel, weaponModel } from '../combat/WeaponModels';
+import { KNIFE_MID, KNIFE_TIP, VM_SCALE, VM_WEAPON_MATERIAL, createOpticMesh, flashbangModel, grenadeModel, knifeModel, weaponModel } from '../combat/WeaponModels';
 import { TRAIL_WINDOW, VM_SLASH_A, VM_SLASH_B, VM_STAB, sampleKeys } from './knifeAnim';
 import type { Held } from '../combat/Slots';
 import { CFG } from '../config/gameConfig';
@@ -67,7 +67,8 @@ export class Viewmodel {
   private trMid = Array.from({ length: TR_N }, () => new THREE.Vector3());
   private trAge = new Float32Array(TR_N).fill(99);
   private trHead = 0;
-  private nadeRig = new THREE.Group();   // granat + lengan kanan
+  private nadeRig = new THREE.Group();   // granat / flashbang + lengan kanan
+  private nadeMesh: THREE.Mesh | null = null;
   private cookW = 0;
   private gun: THREE.Mesh;
   private optic: THREE.Mesh | null = null;
@@ -150,7 +151,7 @@ export class Viewmodel {
       blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
     this.trail.frustumCulled = false; this.trail.visible = false; this.trail.renderOrder = 2;
     this.root.add(this.trail);
-    const nade = new THREE.Mesh(grenadeModel(), VM_WEAPON_MATERIAL);
+    const nade = this.nadeMesh = new THREE.Mesh(grenadeModel(), VM_WEAPON_MATERIAL);
     nade.scale.setScalar(VM_SCALE); nade.position.set(0, 0.03, -0.02);
     this.nadeRig.add(nade, arm(0.44, new THREE.Vector3(0.0, -0.035, 0.03), new THREE.Vector3(0.24, -0.7, 0.32)));
     this.nadeRig.position.set(-0.04, 0.02, 0.12);
@@ -221,7 +222,9 @@ export class Viewmodel {
   update(dt: number, s: VmState) {
     // benda di tangan (slot 1/2/3) + sprint
     const held = s.held;
-    this.rifle.visible = held === 'ar'; this.knifeRig.visible = held === 'knife'; this.nadeRig.visible = held === 'grenade';
+    const nadeHeld = held === 'grenade' || held === 'flash';
+    this.rifle.visible = held === 'ar'; this.knifeRig.visible = held === 'knife'; this.nadeRig.visible = nadeHeld;
+    if (nadeHeld && this.nadeMesh) { const g = held === 'flash' ? flashbangModel() : grenadeModel(); if (this.nadeMesh.geometry !== g) this.nadeMesh.geometry = g; }
     this.sprintT = damp(this.sprintT, s.sprint ? 1 : 0, 14, dt);
     // bob mengikuti irama langkah (fase PlayerController bila ada → sinkron suara langkah & ayunan kamera); memudar halus
     const moving = s.grounded && s.speed > 1;
@@ -269,7 +272,7 @@ export class Viewmodel {
     const eq = s.equip ?? 0, eqE = eq * eq * (3 - 2 * eq);
     y -= 0.42 * eqE; rx -= D2R(32) * eqE;
     if (held === 'knife') this.animKnife(s.knife ?? -1, !!s.knifeStab, !!s.knifeAlt);
-    if (held === 'grenade') {
+    if (nadeHeld) {
       this.cookW = damp(this.cookW, s.cooking ? 1 : 0, 16, dt);
       const o = s.overhand !== false ? 1 : -1;
       this.nadeRig.position.set(-0.04, 0.02 + 0.07 * o * this.cookW, 0.12 + 0.1 * this.cookW);

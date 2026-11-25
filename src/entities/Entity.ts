@@ -11,6 +11,7 @@ import { Recoil } from '../combat/Recoil';
 import { WEAPON_MATERIAL, createOpticMesh, weaponModel } from '../combat/WeaponModels';
 import type { TacticalBot } from './TacticalBot';
 import type { MeleeKind } from '../core/EventBus';
+import type { FlashExposure, NadeKind } from '../combat/Flash';
 
 export interface Stats {
   kills: number; deaths: number; assists: number; score: number; shots: number; hits: number; hsHits: number; hsKills: number;
@@ -35,6 +36,14 @@ export class Entity {
   lastDamageT = -99;
   yaw = 0; pitch = 0;          // rad
   grenades = 1;
+  /** Flashbang (XCFG.flash.perLife per nyawa) & jenis benda lempar yang sedang dipegang / dimasak (state machine granat). */
+  flashes = 1;
+  nadeKind: NadeKind = 'frag';
+  /** Silau flashbang: paparan & waktu ledakan (ctx.time), pelempar & kekuatan (assist flash). blindX null = tidak silau. */
+  blindX: FlashExposure | null = null;
+  blindAt = -1e9;
+  flashedBy = 0;
+  flashS = 0;
   grenadeState: GrenadeState = 'NONE';
   grenadeT = 0;                // timer state granat
   cookT = 0;                   // waktu sumbu berjalan

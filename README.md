@@ -99,15 +99,23 @@ Steel Yard di laptop Iris Xe (MEDIUM, 10 karakter): ±90 FPS (terkunci ke layar 
 ## Kontrol utama (bisa diubah di menu Kontrol)
 
 WASD gerak · Shift sprint · C jongkok · Space lompat · Klik kiri tembak / tebas pisau / masak granat → lempar jauh ·
-Klik kanan ADS / tusuk pisau / masak granat → gelinding · **1 senjata utama · 2 pisau · 3 granat K-400 · Q senjata sebelumnya** · scroll ganti senjata ·
+Klik kanan ADS / tusuk pisau / masak granat → gelinding · **1 senjata utama · 2 pisau · 3 granat K-400 · 4 flashbang · Q senjata sebelumnya** · scroll ganti senjata ·
 G buang senjata utama · E ambil/tukar senjata tim · R reload · F pukul (melee) · B mode tembak · V FPS/TPS · X tukar bahu · Tab skor · L loadout ·
 **Y chat semua · U chat tim · H pesan cepat (lalu 1–6) · tahan T voice tim · tahan Z voice semua** · Esc pause · F3 statistik · ` debug.
 
 **Gamepad** (layout standar): stik kiri/kanan gerak/bidik · RT/LT tembak/ADS (pisau: tebas/tusuk) · A lompat · B jongkok · X reload (dekat senjata tim:
 ambil/tukar) · Y senjata sebelumnya · RB granat · LB mode tembak · L3 sprint · R3 pukul · D-pad ↑ FPS/TPS · → tukar bahu · ↓ pisau · ← loadout ·
-View skor · Menu pause. Menu bisa dinavigasi dengan D-pad + A/B.
+View skor · Menu pause. RB dua kali cepat = flashbang. Menu bisa dinavigasi dengan D-pad + A/B.
 
 Setelan tombol lama (sebelum ada slot pisau) dimigrasi otomatis: Q pindah ke "senjata sebelumnya", tukar bahu ke X, granat ke 3, G jadi buang senjata.
+
+## Flashbang
+
+Tekan **4** (gamepad: RB dua kali cepat), lempar seperti granat (klik kiri jauh, klik kanan menggelinding, bisa dimasak agar meledak
+di udara). Tidak memberi damage, tapi **membutakan semua yang melihatnya — termasuk teman setim dan dirimu sendiri**. Menatap dari
+dekat = layar putih ±3 detik lalu pulih bertahap (total ±5 detik); melirik / agak jauh = silau sebentar; terhalang dinding = tidak
+kena. Telinga ikut berdenging. Bot juga bisa kena, sebagian sempat memalingkan muka (makin sulit makin sering), dan bot juga
+melempar flashbang sebelum maju. Musuh yang kamu butakan lalu dibunuh timmu = **Assist flash** (+50). 1 flashbang per nyawa.
 
 ## Senjata
 

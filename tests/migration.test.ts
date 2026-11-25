@@ -46,7 +46,7 @@ describe('Rencana pengganti host', () => {
 
 const ent = (id: number, o: Partial<SaveEnt> = {}): SaveEnt => ({
   id, alive: true, hp: 74, respawnT: 0, protectT: 0.5, x: 12.5, y: 10, z: -31.25, yaw: 2.1, pitch: -0.2, weapon: 'akm', scope: 'holo',
-  ammo: 17, reserve: 90, modeIdx: 1, grenades: 2, stats: [3, 1, 2, 340, 60, 25, 6, 1, 812, 3], streak: 2, variant: 'f', ...o,
+  ammo: 17, reserve: 90, modeIdx: 1, grenades: 2, stats: [3, 1, 2, 340, 60, 25, 6, 1, 812, 3], streak: 2, variant: 'f', flashes: 1, ...o,
 });
 const save = (o: Partial<MatchSave> = {}): MatchSave => ({
   v: SAVE_V, state: 'PLAYING', round: 3, timeLeft: 71.5, countdown: 0, sb: 2, sr: 1, winner: 'draw', roundWinner: null,

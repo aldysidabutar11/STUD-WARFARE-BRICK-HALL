@@ -1,4 +1,6 @@
-// src/combat/GrenadeK400.ts — state machine, lemparan, CCD, damage + okklusi fraksional, efek (GDD §8)
+// src/combat/GrenadeK400.ts — state machine, lemparan, CCD, damage + okklusi fraksional, efek (GDD §8) — untuk DUA jenis benda
+// lempar: K-400 (frag, GDD) dan flashbang (permintaan pengguna 2026-11-25; tanpa damage, membutakan semua yang melihat termasuk
+// rekan & pelempar; XCFG.flash, efek silau: combat/Flash.ts). Lempar / masak / fisika sama persis; hanya sumbu & ledakannya beda.
 import * as THREE from 'three';
 import { RAPIER, physics, type V3 } from '../physics/Physics';
 import { G, GROUPS } from '../physics/groups';
@@ -11,22 +13,32 @@ import type { Entity } from '../entities/Entity';
 import { currentMap, type MapDef } from '../world/maps/registry';
 import { returnSlot, type Slot } from './Slots';
 import { BodyLerp } from '../core/BodyLerp';
+import { WEAPON_MATERIAL, flashbangModel } from './WeaponModels';
+import { combineFlash, flashExposure, flashStrength, type FlashExposure, type NadeKind } from './Flash';
 
-const GR = CFG.grenade, GT = XCFG.grenadeThrow;
+const GR = CFG.grenade, GT = XCFG.grenadeThrow, FL = XCFG.flash;
 const D2R = THREE.MathUtils.degToRad;
 const EARLY_GROUPS = ((G.GRENADE << 16) | (G.STATIC | G.PROP)) >>> 0; // 0.15 s pertama: abaikan kapsul pelempar
 
 interface Live { body: RAPIER.RigidBody; collider: RAPIER.Collider; mesh: THREE.Group; fuse: number; owner: number; prev: THREE.Vector3; early: number;
-  lerp: BodyLerp; id: number }
+  lerp: BodyLerp; id: number; kind: NadeKind }
 
-/** Waktu angkat per slot: senapan 0.55 s (GDD §5.1), pisau XCFG.knife, granat 0.35 s (GDD §8). */
+/** Sumbu per jenis: K-400 GDD 3.5 s, flashbang XCFG.flash.fuse. */
+export const fuseOf = (k: NadeKind) => (k === 'flash' ? FL.fuse : GR.fuse);
+/** Stok jenis benda lempar milik entitas. */
+export const stockOf = (e: Entity, k: NadeKind) => (k === 'flash' ? e.flashes : e.grenades);
+const kindOfSlot = (s: 'grenade' | 'flash'): NadeKind => (s === 'flash' ? 'flash' : 'frag');
+const slotOfKind = (k: NadeKind): 'grenade' | 'flash' => (k === 'flash' ? 'flash' : 'grenade');
+
+/** Waktu angkat per slot: senapan 0.55 s (GDD §5.1), pisau XCFG.knife, granat / flashbang 0.35 s (GDD §8). */
 export function equipTimeFor(slot: Slot): number {
   return slot === 'ar' ? CFG.combat.equipTime : slot === 'knife' ? XCFG.knife.equipTime : CFG.grenade.equipTime;
 }
 
 export interface GrenadeInput {
-  equip: boolean;          // tombol granat (3) / scroll / Q
-  toSlot: 'ar' | 'knife' | null; // keluar dari granat (READY) ke senapan / pisau
+  /** Tombol granat (3) / flashbang (4) / scroll / Q: slot benda lempar yang diminta. */
+  equip: 'grenade' | 'flash' | null;
+  toSlot: 'ar' | 'knife' | null; // keluar dari benda lempar (READY) ke senapan / pisau
   lPress: boolean; lHeld: boolean; lRelease: boolean;
   rPress: boolean; rHeld: boolean; rRelease: boolean;
 }
@@ -65,41 +77,59 @@ function grenadeMesh(): THREE.Group {
   return g;
 }
 
+function flashMeshWorld(): THREE.Group {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(flashbangModel(), WEAPON_MATERIAL));
+  return g;
+}
+
 /** Granat dari snapshot host (klien online): tampilan saja. */
-interface NetNade { mesh: THREE.Group; x: number; y: number; z: number; fuse: number; owner: number }
+interface NetNade { mesh: THREE.Group; x: number; y: number; z: number; fuse: number; owner: number; kind: NadeKind }
 
 export class GrenadeManager {
   private live: Live[] = [];
   private pool: THREE.Group[] = [];
+  private flashPool: THREE.Group[] = [];
   readonly handMesh: THREE.Group;
   private nextId = 1;
   private readonly net = new Map<number, NetNade>();
+  /** Pemain di layar ini kena flash (Game: layar putih + "bayangan" + telinga berdenging). s = kekuatan 0..1. */
+  onLocalFlash: ((x: FlashExposure, s: number) => void) | null = null;
+  /** Bot: sudah sadar flash ini & memalingkan muka (TacticalBot) → kekuatan × XCFG.flash.lookAway. */
+  noticed: ((bot: Entity, nadeId: number) => boolean) | null = null;
 
   constructor(private scene: THREE.Scene) {
     for (let i = 0; i < 8; i++) { const m = grenadeMesh(); m.visible = false; scene.add(m); this.pool.push(m); }
+    for (let i = 0; i < 6; i++) { const m = flashMeshWorld(); m.visible = false; scene.add(m); this.flashPool.push(m); }
     this.handMesh = grenadeMesh();
   }
 
   get count() { return this.live.length; }
 
-  /** Iterasi granat hidup (posisi, sisa sumbu, pemilik, id) — indikator bahaya HUD, radar (klien: dari snapshot) & bot (kabur). */
-  forEachLive(cb: (x: number, y: number, z: number, fuse: number, owner: number, id: number) => void) {
-    for (const g of this.live) { const t = g.body.translation(); cb(t.x, t.y, t.z, g.fuse, g.owner, g.id); }
-    for (const [id, n] of this.net) cb(n.x, n.y, n.z, n.fuse, n.owner, id);
+  private meshFor(kind: NadeKind): THREE.Group {
+    const p = kind === 'flash' ? this.flashPool : this.pool;
+    return p.find(m => !m.visible) ?? p[0];
   }
 
-  /** Host: granat hidup untuk snapshot. */
-  forEachNet(cb: (id: number, x: number, y: number, z: number, fuse: number, owner: number) => void) {
-    for (const g of this.live) { const t = g.lerp.pos; cb(g.id, t.x, t.y, t.z, g.fuse, g.owner); }
+  /** Iterasi benda lempar hidup (posisi, sisa sumbu, pemilik, id, jenis) — indikator bahaya HUD, radar (klien: dari snapshot) & bot. */
+  forEachLive(cb: (x: number, y: number, z: number, fuse: number, owner: number, id: number, kind: NadeKind) => void) {
+    for (const g of this.live) { const t = g.body.translation(); cb(t.x, t.y, t.z, g.fuse, g.owner, g.id, g.kind); }
+    for (const [id, n] of this.net) cb(n.x, n.y, n.z, n.fuse, n.owner, id, n.kind);
   }
 
-  /** Klien: tampilkan / gerakkan granat dari host. */
-  netSet(id: number, x: number, y: number, z: number, fuse: number, owner: number) {
+  /** Host: benda lempar hidup untuk snapshot. */
+  forEachNet(cb: (id: number, x: number, y: number, z: number, fuse: number, owner: number, kind: NadeKind) => void) {
+    for (const g of this.live) { const t = g.lerp.pos; cb(g.id, t.x, t.y, t.z, g.fuse, g.owner, g.kind); }
+  }
+
+  /** Klien: tampilkan / gerakkan benda lempar dari host. */
+  netSet(id: number, x: number, y: number, z: number, fuse: number, owner: number, kind: NadeKind = 'frag') {
     let n = this.net.get(id);
-    if (!n) {
-      const mesh = this.pool.find(m => !m.visible) ?? this.pool[0];
+    if (!n || n.kind !== kind) {
+      if (n) n.mesh.visible = false;
+      const mesh = this.meshFor(kind);
       mesh.visible = true;
-      n = { mesh, x, y, z, fuse, owner };
+      n = { mesh, x, y, z, fuse, owner, kind };
       this.net.set(id, n);
     }
     n.x = x; n.y = y; n.z = z; n.fuse = fuse; n.owner = owner;
@@ -107,24 +137,27 @@ export class GrenadeManager {
     n.mesh.rotation.x += 0.21; n.mesh.rotation.z += 0.13;   // berputar di udara (kosmetik)
   }
 
-  /** Klien: hapus granat yang tidak ada lagi di snapshot. */
+  /** Klien: hapus benda lempar yang tidak ada lagi di snapshot. */
   netPrune(alive: Set<number>) {
     for (const [id, n] of this.net) if (!alive.has(id)) { n.mesh.visible = false; this.net.delete(id); }
   }
 
-  /** State machine per entitas (pemain: input mouse; bot: input virtual yang sama). */
+  /** State machine per entitas (pemain: input mouse; bot: input virtual yang sama). Jenis dipilih saat mengangkat (3 / 4). */
   handle(e: Entity, inp: GrenadeInput, dt: number) {
     const w = e.weapon;
+    const want = inp.equip ? kindOfSlot(inp.equip) : null;
     switch (e.grenadeState) {
       case 'NONE':
-        if (inp.equip && e.grenades >= 1 && !w.reloading) { e.grenadeState = 'EQUIP'; e.grenadeT = GR.equipTime; w.switchTo('grenade', GR.equipTime); }
+        if (want && stockOf(e, want) >= 1 && !w.reloading) this.equip(e, want);
         break;
       case 'EQUIP':
+        if (want && want !== e.nadeKind && stockOf(e, want) >= 1) { this.equip(e, want); break; }   // 3 ↔ 4 saat mengangkat
         e.grenadeT -= dt;
         if (e.grenadeT <= 0) e.grenadeState = 'READY';
         break;
       case 'READY':
         if (inp.toSlot) { e.grenadeState = 'NONE'; w.switchTo(inp.toSlot, equipTimeFor(inp.toSlot)); break; }
+        if (want && want !== e.nadeKind && stockOf(e, want) >= 1) { this.equip(e, want); break; }
         if (inp.lPress || inp.rPress) {
           e.grenadeState = 'COOKING'; e.cookT = 0; e.throwOver = inp.lPress;
           bus.emit('pin', { entityId: e.id });
@@ -132,12 +165,14 @@ export class GrenadeManager {
         break;
       case 'COOKING':
         e.cookT += dt;
-        if (e.cookT >= GR.fuse) { // meledak di tangan
-          e.grenades--; e.grenadeState = 'NONE'; w.switchTo(returnSlot(w.prevSlot, w.hasPrimary), CFG.combat.equipAfterThrow);
-          if (ctx.net.role !== 'client') { this.handPos(e, _hand); this.explode(_hand, e.id); }   // klien: ledakan dari host
+        if (e.cookT >= fuseOf(e.nadeKind)) { // meledak di tangan
+          this.spend(e);
+          e.grenadeState = 'NONE'; w.switchTo(returnSlot(w.prevSlot, w.hasPrimary), CFG.combat.equipAfterThrow);
+          if (ctx.net.role !== 'client') { this.handPos(e, _hand); this.detonate(_hand, e.id, e.nadeKind, -1); }   // klien: dari host
         } else if ((e.throwOver && inp.lRelease) || (!e.throwOver && inp.rRelease) || (e.throwOver ? !inp.lHeld : !inp.rHeld)) {
-          this.throw(e, e.throwOver, GR.fuse - e.cookT);
-          e.grenades--; e.grenadeState = 'THROWN'; e.grenadeT = CFG.combat.equipAfterThrow; e.throwAnimT = 0;
+          this.throw(e, e.throwOver, fuseOf(e.nadeKind) - e.cookT);
+          this.spend(e);
+          e.grenadeState = 'THROWN'; e.grenadeT = CFG.combat.equipAfterThrow; e.throwAnimT = 0;
           e.protectT = 0;
         }
         break;
@@ -148,6 +183,13 @@ export class GrenadeManager {
     }
     if (e.throwAnimT >= 0) { e.throwAnimT += dt; if (e.throwAnimT > 0.5) e.throwAnimT = -1; }
   }
+
+  private equip(e: Entity, k: NadeKind) {
+    e.nadeKind = k; e.grenadeState = 'EQUIP'; e.grenadeT = GR.equipTime;
+    e.weapon.switchTo(slotOfKind(k), GR.equipTime);
+  }
+
+  private spend(e: Entity) { if (e.nadeKind === 'flash') e.flashes--; else e.grenades--; }
 
   /** Posisi tangan kanan dunia (dipakai TPS & ledakan di tangan). */
   handPos(e: Entity, out: THREE.Vector3) {
@@ -186,10 +228,10 @@ export class GrenadeManager {
     const collider = physics.world.createCollider(RAPIER.ColliderDesc.ball(GR.radius).setRestitution(GR.restitution).setFriction(GR.friction)
       .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Max)
       .setDensity(GR.density).setCollisionGroups(EARLY_GROUPS), body);
-    const mesh = this.pool.find(m => !m.visible) ?? this.pool[0];
+    const mesh = this.meshFor(e.nadeKind);
     mesh.visible = true; mesh.position.copy(_a);
     this.live.push({ body, collider, mesh, fuse: fuseLeft, owner: e.id, prev: _b.clone(), early: 0.15, lerp: new BodyLerp().snap(body),
-      id: this.nextId++ });
+      id: this.nextId++, kind: e.nadeKind });
   }
 
   fixedUpdate(dt: number) {
@@ -212,7 +254,7 @@ export class GrenadeManager {
       if (g.fuse <= 0) {
         _c.set(t.x, t.y, t.z);
         this.remove(i);
-        this.explode(_c, g.owner);
+        this.detonate(_c, g.owner, g.kind, g.id);
       }
     }
   }
@@ -228,6 +270,11 @@ export class GrenadeManager {
     physics.world.removeRigidBody(g.body);
     g.mesh.visible = false;
     this.live.splice(i, 1);
+  }
+
+  /** Host / main solo: ledakan sesuai jenis (id −1 = meledak di tangan). */
+  private detonate(c: THREE.Vector3, owner: number, kind: NadeKind, id: number) {
+    if (kind === 'flash') this.flashBang(c, owner, id); else this.explode(c, owner);
   }
 
   /** D = round(135 × max(0, 1 − (r/12)²) × O); O = titik sampel terlihat / 3 (kepala, dada, perut). */
@@ -267,6 +314,46 @@ export class GrenadeManager {
     if (rc < GR.shakeRadius) ctx.camRig.addShake(GR.shakeMaxDeg * (1 - rc / GR.shakeRadius) ** 2);
     if (rc < GR.tinnitusRadius) ctx.audio.tinnitus(XCFG.explosion.tinnitusTime);
     bus.emit('grenade:explode', { position: c.clone(), ownerId });
+  }
+
+  /** Host / main solo: flashbang — tanpa damage; setiap karakter yang melihat titik ledak (termasuk rekan & pelempar) silau sesuai
+   *  arah pandang, jarak & dinding. Bot yang sempat memalingkan muka (pelempar sendiri / sadar flash) kena lebih ringan. Pemain di
+   *  layar ini dihitung dari KAMERA di flashFx (juga dipakai klien). */
+  flashBang(c: THREE.Vector3, ownerId: number, nadeId: number) {
+    for (const v of ctx.entities) {
+      if (!v.alive || (v === ctx.player && !v.bot)) continue;
+      v.eye(_a);
+      const cp = Math.cos(v.pitch);
+      _f.set(-Math.sin(v.yaw) * cp, Math.sin(v.pitch), -Math.cos(v.yaw) * cp);
+      let s = flashStrength(_a, _f, c, physics.losBlocked(_a.x, _a.y, _a.z, c.x, c.y, c.z));
+      if (s > 0 && v.bot && (v.id === ownerId || (nadeId >= 0 && this.noticed?.(v, nadeId)))) s *= FL.lookAway;
+      this.applyFlash(v, s, ownerId, c);
+    }
+    this.flashFx(c, ownerId);
+  }
+
+  /** Host & klien: kilatan, suara (event), dan efek silau untuk pemain di layar ini (dari posisi & arah KAMERA). */
+  flashFx(c: THREE.Vector3, ownerId: number) {
+    ctx.vfx.flashBurst(c);
+    const p = ctx.player, cam = ctx.engine?.camera;
+    if (p && cam) {
+      cam.getWorldDirection(_f);
+      const e = cam.position;
+      const s = flashStrength(e, _f, c, physics.losBlocked(e.x, e.y, e.z, c.x, c.y, c.z));
+      const x = this.applyFlash(p, s, ownerId, c);
+      if (x) this.onLocalFlash?.(x, s);
+    }
+    bus.emit('flash:explode', { position: c.clone(), ownerId });
+  }
+
+  /** Catat paparan di entitas (yang lebih terang sekarang menang) + beri tahu bot. null = tidak berefek. */
+  private applyFlash(v: Entity, s: number, ownerId: number, c: THREE.Vector3): FlashExposure | null {
+    const x = flashExposure(s);
+    if (!x) return null;
+    const now = ctx.time;
+    if (combineFlash(v.blindX ? { x: v.blindX, t: now - v.blindAt } : null, x)) { v.blindX = x; v.blindAt = now; v.flashedBy = ownerId; v.flashS = s; }
+    v.bot?.onFlash(x, c);
+    return x;
   }
 
   clear() {

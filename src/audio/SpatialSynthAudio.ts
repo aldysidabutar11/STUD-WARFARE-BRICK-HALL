@@ -192,6 +192,7 @@ export class SpatialSynthAudio {
       this.play(R.footstep(e.material, e.land), own ? 'own' : 'footstep', own ? null : e.position, P.footstep, own ? vol * 0.45 : vol);
     });
     bus.on('grenade:explode', (e) => this.play(R.explosion, 'explosion', e.position, P.explosion, 1.0));
+    bus.on('flash:explode', (e) => this.play(R.flashBang, 'explosion', e.position, P.explosion, 1.0));
     bus.on('grenade:bounce', (e) => this.play(R.bounce(e.material, e.speed), 'impact', e.position, P.impact));
     bus.on('reload', (e) => {
       const ent = ctx.byId.get(e.entityId);

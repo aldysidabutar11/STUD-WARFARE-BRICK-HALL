@@ -48,7 +48,7 @@ export class RemoteHuman {
   readonly queue = new CommandQueue(NET.cmdQueueMax);
   readonly frame: ActionFrame = emptyFrame();
   readonly trig: TriggerInput = { pressed: false, held: false, reload: false, modeSwitch: false, ads: false, sprinting: false };
-  readonly gIn: GrenadeInput = { equip: false, toSlot: null, lPress: false, lHeld: false, lRelease: false, rPress: false, rHeld: false, rRelease: false };
+  readonly gIn: GrenadeInput = { equip: null, toSlot: null, lPress: false, lHeld: false, lRelease: false, rPress: false, rHeld: false, rRelease: false };
   /** Tick host yang sedang dilihat klien ini (lag compensation tembakannya). */
   viewTick = 0;
   /** Tick ini ada perintah (senjata digerakkan setelah world.step) / tidak ada (pemain ditahan). */
@@ -127,7 +127,7 @@ function entState(e: Entity): EntState {
 
 function ownState(e: Entity): OwnState {
   const s = e.ctrl.getState(), w = e.weapon;
-  return { ...s, ammo: w.ammo, reserve: w.reserve, modeIdx: w.modeIdx, grenades: e.grenades, shots: w.shotsFired };
+  return { ...s, ammo: w.ammo, reserve: w.reserve, modeIdx: w.modeIdx, grenades: e.grenades, shots: w.shotsFired, flashes: e.flashes };
 }
 
 // ───────────────────────────── HOST
@@ -175,7 +175,7 @@ export class HostRep {
       const d = this.deathImp.get(p.victimId);
       all({ e: 'kill', k: p.killerId, v: p.victimId, w: p.weaponId, hs: p.headshot, ix: d?.x ?? 0, iy: d?.y ?? 0, iz: d?.z ?? 0, gr: d?.grenade ?? false });
     });
-    on('assist', (p) => all({ e: 'assist', id: p.entityId, v: p.victimId }));
+    on('assist', (p) => all({ e: 'assist', id: p.entityId, v: p.victimId, fl: !!p.flash }));
     on('hit', (p) => {   // hanya untuk penyerang & korban (hitmarker / indikator arah / angka damage)
       const msg = { t: 'ev', e: 'hit', a: p.attackerId, v: p.victimId, p: p.part, d: p.damage, hs: p.headshot, dist: p.dist, fx: p.fromX, fz: p.fromZ };
       const a = ctx.byId.get(p.attackerId)?.remote?.pid, v = ctx.byId.get(p.victimId)?.remote?.pid;
@@ -185,6 +185,8 @@ export class HostRep {
     on('match:state', (p) => all({ e: 'mstate', s: p.state, w: ctx.match.winner, rw: ctx.match.roundWinner, r: ctx.match.round,
       sb: p.scores[0], sr: p.scores[1], tl: p.timeLeft }));
     on('grenade:explode', (p) => all({ e: 'boom', x: p.position.x, y: p.position.y, z: p.position.z, o: p.ownerId }));
+    // flashbang: tiap klien menghitung silau layarnya sendiri dari kameranya (arah pandang, jarak, dinding)
+    on('flash:explode', (p) => all({ e: 'flashbang', x: p.position.x, y: p.position.y, z: p.position.z, o: p.ownerId }));
     on('melee', (p) => this.pushFx(p.phase === 'swing' ? 1 : p.phase === 'hit' ? 2 : 3, p.entityId, meleeIdx(p.kind), p.position));
     on('grenade:bounce', (p) => this.pushFx(4, 0, packBounce(surfaceCode(p.material), p.speed), p.position));
     on('reload', (p) => { const e = ctx.byId.get(p.entityId); if (e) this.pushFx(5, e.id, p.stage, e.pos); });
@@ -310,7 +312,7 @@ export class HostRep {
         countdown: m.countdown, round: m.round },
       ents: ctx.entities.map(entState), nades: [] as Snapshot['nades'], shots: this.shots, fx: this.fx,
     };
-    ctx.grenades.forEachNet((id, x, y, z, fuse, owner) => base.nades.push({ id: id & 0xffff, x, y, z, fuse, owner }));
+    ctx.grenades.forEachNet((id, x, y, z, fuse, owner, kind) => base.nades.push({ id: id & 0xffff, x, y, z, fuse, owner, kind }));
     const now = performance.now() / 1000, odd = (++this.baseN & 1) === 1;
     for (const pid of this.net.pids()) {
       const e = this.byPid.get(pid);
@@ -361,7 +363,8 @@ export class HostRep {
 
 // ───────────────────────────── KLIEN
 interface CmdExtra { speedMult: number; cooking: boolean; wantFire: boolean; ads: boolean }
-interface NadeTrack { a: { t: number; x: number; y: number; z: number }; b: { t: number; x: number; y: number; z: number }; fuse: number; owner: number; seen: number }
+interface NadeTrack { a: { t: number; x: number; y: number; z: number }; b: { t: number; x: number; y: number; z: number }; fuse: number; owner: number;
+  seen: number; kind: 'frag' | 'flash' }
 
 export class ClientRep {
   private readonly clock = new HostClock(60, 1.5);
@@ -450,7 +453,7 @@ export class ClientRep {
     ctx.match.applyNet((MATCH_STATES[m.state] ?? 'PLAYING') as MatchStateName, m.sb, m.sr, m.timeLeft, m.countdown, m.round);
     for (const n of s.nades) {
       const tr = this.nades.get(n.id);
-      if (!tr) this.nades.set(n.id, { a: { t: s.tick, x: n.x, y: n.y, z: n.z }, b: { t: s.tick, x: n.x, y: n.y, z: n.z }, fuse: n.fuse, owner: n.owner, seen: s.tick });
+      if (!tr) this.nades.set(n.id, { a: { t: s.tick, x: n.x, y: n.y, z: n.z }, b: { t: s.tick, x: n.x, y: n.y, z: n.z }, fuse: n.fuse, owner: n.owner, seen: s.tick, kind: n.kind });
       else { tr.a = tr.b; tr.b = { t: s.tick, x: n.x, y: n.y, z: n.z }; tr.fuse = n.fuse; tr.owner = n.owner; tr.seen = s.tick; }
     }
     for (const [id, tr] of this.nades) if (tr.seen !== s.tick) this.nades.delete(id);
@@ -465,7 +468,7 @@ export class ClientRep {
     // amunisi/granat: ikut host saat tidak sedang menembak/reload/granat (prediksi tidak berebut dengan konfirmasi)
     const w = p.weapon;
     if (!(this.held & H.FIRE) && w.reloadT < 0 && p.grenadeState === 'NONE' && this.seq - ack < 20) {
-      w.ammo = own.ammo; w.reserve = own.reserve; w.modeIdx = own.modeIdx; p.grenades = own.grenades; w.shotsFired = own.shots;
+      w.ammo = own.ammo; w.reserve = own.reserve; w.modeIdx = own.modeIdx; p.grenades = own.grenades; p.flashes = own.flashes; w.shotsFired = own.shots;
     }
     if (pred && err <= NET.correctEps && pred.grounded === own.grounded && pred.crouched === own.crouched) return;
     this.diag.corrections++; this.diag.lastErr = err === Infinity ? -1 : err;
@@ -500,7 +503,7 @@ export class ClientRep {
     }
     for (const [id, tr] of this.nades) {
       const span = tr.b.t - tr.a.t, k = span > 0 ? Math.max(0, Math.min(1, (this.renderTick - tr.a.t) / span)) : 1;
-      ctx.grenades.netSet(id, tr.a.x + (tr.b.x - tr.a.x) * k, tr.a.y + (tr.b.y - tr.a.y) * k, tr.a.z + (tr.b.z - tr.a.z) * k, tr.fuse, tr.owner);
+      ctx.grenades.netSet(id, tr.a.x + (tr.b.x - tr.a.x) * k, tr.a.y + (tr.b.y - tr.a.y) * k, tr.a.z + (tr.b.z - tr.a.z) * k, tr.fuse, tr.owner, tr.kind);
     }
     ctx.grenades.netPrune(new Set(this.nades.keys()));
     this.smooth.multiplyScalar(Math.exp(-dt / NET.smoothT));
@@ -580,7 +583,7 @@ export class ClientRep {
       case 'assist': {
         const a = ctx.byId.get(num('id'));
         if (a) { a.stats.assists++; a.stats.score += XCFG.announce.assistScore; }
-        bus.emit('assist', { entityId: num('id'), victimId: num('v') });
+        bus.emit('assist', { entityId: num('id'), victimId: num('v'), flash: m.fl === true });
         break;
       }
       case 'hit': {
@@ -592,6 +595,7 @@ export class ClientRep {
         break;
       }
       case 'boom': ctx.grenades.explodeFx(new THREE.Vector3(num('x'), num('y'), num('z')), num('o')); break;
+      case 'flashbang': ctx.grenades.flashFx(new THREE.Vector3(num('x'), num('y'), num('z')), num('o')); break;
       case 'mstate':
         ctx.match.winner = (m.w as never) ?? 'draw'; ctx.match.roundWinner = (m.rw as never) ?? null;
         ctx.match.applyNet(m.s as MatchStateName, num('sb'), num('sr'), num('tl'), ctx.match.countdown, num('r'));

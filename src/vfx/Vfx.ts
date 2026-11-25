@@ -72,6 +72,8 @@ export class Vfx {
   private flashes: Timed[] = [];
   private smokes: Timed[] = [];
   private booms: Timed[] = [];
+  /** Kilatan flashbang: bola aditif putih kebiruan yang membesar cepat (XCFG.flash.burst). */
+  private flashBursts: Timed[] = [];
   private light: THREE.PointLight | null = null;
   private lightT = 0;
   // kepulan debu benturan peluru (Points, atribut per titik diperbarui CPU saat aktif)
@@ -149,6 +151,12 @@ export class Vfx {
         blending: THREE.AdditiveBlending, depthWrite: false }));
       m.visible = false; scene.add(m);
       this.booms.push({ obj: m, life: 0, max: XCFG.explosion.flash, kind: 'boom' });
+    }
+    for (let i = 0; i < 2; i++) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: 0xeef4ff, transparent: true,
+        blending: THREE.AdditiveBlending, depthWrite: false }));
+      m.visible = false; scene.add(m);
+      this.flashBursts.push({ obj: m, life: 0, max: XCFG.flash.burst, kind: 'boom' });
     }
   }
 
@@ -250,6 +258,21 @@ export class Vfx {
     if (this.light) { this.light.position.copy(c); this.light.intensity = 12; this.light.distance = 24; this.lightT = 0.12; }
   }
 
+  /** Flashbang meledak: kilatan putih sangat terang + cahaya sesaat (HIGH+) + sedikit asap tipis. */
+  flashBurst(c: THREE.Vector3) {
+    const b = this.flashBursts.find(x => x.life <= 0) ?? this.flashBursts[0];
+    b.obj.position.copy(c); b.obj.scale.setScalar(0.4); b.obj.visible = true; b.life = b.max;
+    let n = 0;
+    for (const s of this.smokes) {
+      if (s.life > 0) continue;
+      s.obj.position.set(c.x + (Math.random() - 0.5) * 0.8, c.y + Math.random() * 0.6, c.z + (Math.random() - 0.5) * 0.8);
+      s.obj.rotation.set(Math.random(), Math.random(), Math.random());
+      s.obj.scale.setScalar(0.5); s.obj.visible = true; s.life = s.max;
+      if (++n >= 2) break;
+    }
+    if (this.light) { this.light.position.copy(c); this.light.intensity = 40; this.light.distance = 34; this.lightT = XCFG.flash.burst; }
+  }
+
   /** Skala ukuran titik (piksel per unit pada jarak 1) — dari tinggi buffer & FOV kamera. */
   setViewScale(s: number) { (this.puffs.material as THREE.ShaderMaterial).uniforms.uScale.value = s; }
 
@@ -289,10 +312,18 @@ export class Vfx {
       ((b.obj as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 1 - k;
       if (b.life <= 0) b.obj.visible = false;
     }
+    for (const b of this.flashBursts) if (b.life > 0) {
+      b.life -= dt;
+      const k = 1 - b.life / b.max;
+      b.obj.scale.setScalar(0.4 + Math.sqrt(k) * 5.5);
+      ((b.obj as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = (1 - k) * (1 - k);
+      if (b.life <= 0) b.obj.visible = false;
+    }
     if (this.light && this.lightT > 0) { this.lightT -= dt; if (this.lightT <= 0) { this.light.intensity = 0; this.light.distance = X.muzzleLightDist; } }
   }
 
   clear() {
+    for (const b of this.flashBursts) { b.life = 0; b.obj.visible = false; }
     this.chipPool.clear(); this.debris.clear(); this.shells.clear();
     for (let i = 0; i < this.decals.count; i++) this.decals.setMatrixAt(i, ZERO);
     this.decals.instanceMatrix.needsUpdate = true;

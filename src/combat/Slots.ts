@@ -1,17 +1,20 @@
 // src/combat/Slots.ts — logika slot senjata murni (tanpa Three/Rapier → mudah diuji):
-// 1 = senjata utama ('ar'), 2 = pisau, 3 = granat K-400; Q = senjata sebelumnya; scroll = siklus 1 → 2 → 3.
+// 1 = senjata utama ('ar'), 2 = pisau, 3 = granat K-400, 4 = flashbang; Q = senjata sebelumnya; scroll = siklus 1 → 2 → 3 → 4.
 // Permintaan pengguna (bukan GDD; GDD §8 memakai G/4 untuk granat & Q untuk tukar bahu).
 
-export type Slot = 'ar' | 'knife' | 'grenade';
+export type Slot = 'ar' | 'knife' | 'grenade' | 'flash';
 /** Benda di tangan untuk animasi/tampilan ('none' = tangan kosong sesaat setelah granat dilempar). */
 export type Held = Slot | 'none';
-export interface SlotAvail { ar: boolean; knife: boolean; grenade: boolean }
+export interface SlotAvail { ar: boolean; knife: boolean; grenade: boolean; flash: boolean }
 
-export const SLOT_ORDER: readonly Slot[] = ['ar', 'knife', 'grenade'];
+export const SLOT_ORDER: readonly Slot[] = ['ar', 'knife', 'grenade', 'flash'];
 
-/** Ketersediaan slot: senjata utama hanya bila masih dipegang (belum dibuang), granat bila stok ≥ 1. */
-export function slotAvail(hasPrimary: boolean, grenades: number): SlotAvail {
-  return { ar: hasPrimary, knife: true, grenade: grenades >= 1 };
+/** Slot benda lempar (state machine granat: K-400 / flashbang). */
+export const isThrowable = (s: Slot): s is 'grenade' | 'flash' => s === 'grenade' || s === 'flash';
+
+/** Ketersediaan slot: senjata utama hanya bila masih dipegang (belum dibuang), granat / flashbang bila stok ≥ 1. */
+export function slotAvail(hasPrimary: boolean, grenades: number, flashes = 0): SlotAvail {
+  return { ar: hasPrimary, knife: true, grenade: grenades >= 1, flash: flashes >= 1 };
 }
 
 /**
@@ -20,10 +23,10 @@ export function slotAvail(hasPrimary: boolean, grenades: number): SlotAvail {
  */
 export function quickSwitchTarget(cur: Slot, prev: Slot | null, av: SlotAvail): Slot | null {
   if (prev && prev !== cur && av[prev]) return prev;
-  if (cur === 'grenade') return av.ar ? 'ar' : av.knife ? 'knife' : null;
+  if (isThrowable(cur)) return av.ar ? 'ar' : av.knife ? 'knife' : null;
   const other: Slot = cur === 'ar' ? 'knife' : 'ar';
   if (av[other]) return other;
-  return av.grenade ? 'grenade' : null;
+  return av.grenade ? 'grenade' : av.flash ? 'flash' : null;
 }
 
 /** Scroll: slot berikutnya/sebelumnya yang tersedia (melingkar). */
@@ -46,7 +49,7 @@ export const canPickUp = (team: string, dropTeam: string) => team === dropTeam;
 
 /** Benda di tangan dari keadaan slot + state granat. */
 export function heldOf(slot: Slot, hasPrimary: boolean, grenadeState: string): Held {
-  if (slot === 'grenade') return grenadeState === 'THROWN' ? 'none' : 'grenade';
+  if (isThrowable(slot)) return grenadeState === 'THROWN' ? 'none' : slot;
   if (slot === 'ar') return hasPrimary ? 'ar' : 'none';
   return 'knife';
 }

@@ -135,6 +135,25 @@
   - Buang/ambil: src/combat/WeaponDrops.ts — Rapier dynamic + CCD, grup DEBRIS (tidak menahan peluru/karakter), keadaan senjata ikut
     (jenis, optik, isi, cadangan, mode). Hanya tim sendiri (`canPickUp`); tukar = senjata sekarang ikut dibuang. Respawn kembali ke loadout
     pilihan (pendingLoadout diisi saat buang/ambil pertama). Maks 6, hilang 60 s, dibersihkan tiap ronde / keluar ke menu.
+- Flashbang (permintaan pengguna 2026-11-25; bukan GDD; angka di XCFG.flash): tombol 4 (gamepad: RB dua kali cepat ≤ 0.35 s; RB sekali
+  = K-400), 1 per nyawa, lempar/masak/fisika sama dengan K-400 (CFG.grenade), sumbu 1.6 s, TANPA damage. Membutakan SEMUA yang melihat
+  titik ledak — termasuk rekan & pelempar (keputusan pengguna; padahal friendly fire K-400 OFF). Logika murni `combat/Flash.ts`:
+  kekuatan s = arah (cos ≥ 0.75 penuh → membelakangi 0.15 pantulan) × jarak (penuh ≤ 8 u → 0 di 45 u), 0 bila LOS terhalang;
+  s ≥ 0.5 → putih total 1.5–3 s + pulih (1 − u)^1.5 1.5–2 s = total 3–5 s (angka pengguna); 0.08–0.5 → silau sebagian; telinga
+  berdenging 3 s × s. `GrenadeManager` menangani 2 jenis (Slot 'flash', `Entity.flashes/nadeKind/blindX/blindAt/flashedBy/flashS`,
+  `isThrowable`, slot bar & panel HUD, viewmodel & rig TPS mengganti geometri `flashbangModel()`, killcam HELD + 'flash' di akhir).
+  Layar pemain: `Hud.flash` (div putih di bawah widget HUD + "bayangan" = salinan kanvas WebGL setengah resolusi tepat setelah render,
+  `Hud.snapFlash` dari `Game.render`). Online: host `flashBang` (entitas lain dari yaw/pitch + LOS) → event 'flashbang' → tiap klien
+  `flashFx` menghitung silau layarnya sendiri dari KAMERA; protokol I.SLOT_FLASH, NadeState.kind, OwnState.flashes; cadangan pindah
+  host `SaveEnt.flashes` (host lama → 1). Bot (`TacticalBot`): buta → perceive tidak melihat apa pun (≥ 0.9 putih; selama pulih jarak
+  pandang × (1 − putih)) + kaget + EVADE menjauhi titik ledak selama putih total; sadar flash (lihat / dengar pantulan) & memalingkan
+  muka (kekuatan × 0.25) dengan peluang Mudah/Normal/Sulit 0.1/0.35/0.65; pelempar selalu memalingkan muka; memakai flash sebelum
+  maju (wantGrenade: flash dulu dengan peluang 0.3/0.5/0.7, sasaran 6–26 u, tidak ada rekan ≤ 10 u dari titik ledak, dimasak agar
+  meledak di udara dekat sasaran). Assist flash (+50, "Assist flash"): korban dibutakan (s ≥ 0.3) musuhnya ≤ 3 s sebelum mati / masih
+  silau. VFX `Vfx.flashBurst`, suara `R.flashBang`, radar titik putih tanpa lingkaran ledak, tanpa ikon bahaya HUD. Terukur (browser):
+  lempar ke depan → putih total 2.2 s, jernih 4.0 s; bot musuh & setim di depan flash: putih 3 s, EVADE, tidak melihat 1.5 s
+  kemudian; 60 s TDM: bot melempar 1 flash + 3 K-400; online: flash di depan kamera teman → putih penuh di klien, lemparan teman
+  (tombol 4 lewat jaringan) tersinkron (model, stok), putih 2.9 s / jernih 4.9 s; 0 error. Flash terhalang tembok tidak membutakan.
 - Grafik realistis (permintaan pengguna: "lebih realistis, detail, pencahayaan lebih real" — gaya blocky GDD tetap; nilai di XCFG.gfx):
   - Semua preset: tone mapping ACES + eksposur (Engine), kabut FogExp2 tipis, cahaya "dipanggang" saat loading (src/world/LightBake.ts:
     grid okupansi 0.5 u → AO per verteks; medan cahaya langit dari skylight & jendela + pantul hangat dari bercak matahari, jarak
@@ -533,7 +552,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 299 test Vitest / 23 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 309 test Vitest / 24 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -543,7 +562,7 @@
   tests/botTactics.test.ts: cover, posisi tempur, kabur granat di collider Rapier SY & BH), kotak hitam & sebab sesi berakhir
   (tests/blackbox.test.ts), pintasan browser saat bermain (tests/input.test.ts), pindah host / cadangan / klaim / tiket
   (tests/migration.test.ts), chat teks / tombol chat / allTalk (tests/chat.test.ts), voice: aturan dengar, kurva jarak, paket, routing
-  host (tests/voice.test.ts)) hijau;
+  host (tests/voice.test.ts), flashbang: kekuatan/durasi/slot 4/perintah/cadangan (tests/flash.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

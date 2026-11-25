@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
+import { flashWhite, type FlashExposure } from '../combat/Flash';
 import { SCOPES, WEAPONS, type ScopeId } from '../config/weaponsData';
 import { bus, type KillWeapon } from '../core/EventBus';
 import { keyLabel } from '../core/Bindings';
@@ -85,7 +86,13 @@ export class Hud {
   private center = h('div', 'center-msg');
   private prompt = h('div', 'prompt');
   /** Bar slot senjata (1 utama · 2 pisau · 3 granat), slot aktif menyala. */
-  private slots = h('div', 'slots', '<div class="s"><b></b><span></span></div><div class="s"><b></b><span>Pisau</span></div><div class="s"><b></b><span>K-400</span></div>');
+  private slots = h('div', 'slots', '<div class="s"><b></b><span></span></div><div class="s"><b></b><span>Pisau</span></div><div class="s"><b></b><span>K-400</span></div><div class="s"><b></b><span>Flash</span></div>');
+  /** Flashbang: layar putih + "bayangan" gambar terakhir (afterimage) yang memudar (combat/Flash.flashWhite). */
+  private readonly flashImg = document.createElement('canvas');
+  private readonly flashEl = h('div', 'flashbang', '');
+  private flashX: FlashExposure | null = null;
+  private flashT0 = 0;
+  private flashSnap = false;
   /** Senjata tim sendiri terdekat (diisi Game) → prompt ambil/tukar. */
   pickup: DroppedWeapon | null = null;
   private toastText = ''; private toastT = 0;
@@ -117,6 +124,8 @@ export class Hud {
       this.dmgArcs.push({ el: p, t: 0, x: 0, z: 0 });
     }
     for (let i = 0; i < 4; i++) { const g = h('div', 'gw', '<i></i><b>!</b>'); g.style.display = 'none'; this.gw.push(g); }
+    this.flashImg.className = 'flash-img';
+    this.root.append(this.flashImg, this.flashEl);   // paling bawah di HUD: widget HUD tetap terlihat di atas layar putih
     this.root.append(this.lens, this.dot, this.hurt, this.vign, this.xh, this.hm, this.ring, this.rbar, this.dmgWrap, this.hp, this.ammo, this.slots,
       this.score, this.pips, this.feed, this.center, this.prompt, this.countdownEl, this.banner, this.killer, this.spec, this.kc, ...this.gw, this.board,
       this.pingWarn);
@@ -191,7 +200,35 @@ export class Hud {
   /** Pesan singkat di area prompt (mis. "Hanya senjata utama yang bisa dibuang"). */
   toast(text: string) { this.toastText = text; this.toastT = XCFG.drop.toastTime; }
 
+  /** Kena flash: putih (puncak paparan) → pulih bertahap; gambar layar saat itu jadi bayangan yang memudar sedikit lebih lambat. */
+  flash(x: FlashExposure) {
+    if (this.flashX && flashWhite(this.flashX, (performance.now() - this.flashT0) / 1000) > x.peak) return;
+    this.flashX = x; this.flashT0 = performance.now(); this.flashSnap = true;
+  }
+
+  /** Game: setelah render — salin kanvas WebGL (setengah resolusi) untuk bayangan, sekali per flash. */
+  snapFlash(src: HTMLCanvasElement) {
+    if (!this.flashSnap) return;
+    this.flashSnap = false;
+    const c = this.flashImg, w = Math.max(1, Math.round(src.width / 2)), hh = Math.max(1, Math.round(src.height / 2));
+    if (c.width !== w || c.height !== hh) { c.width = w; c.height = hh; }
+    try { c.getContext('2d')?.drawImage(src, 0, 0, w, hh); } catch { /* kanvas hilang */ }
+  }
+
+  clearFlash() { this.flashX = null; this.flashSnap = false; this.flashEl.style.opacity = '0'; this.flashImg.style.opacity = '0'; }
+
+  private updateFlash(p: Entity | null) {
+    const x = this.flashX;
+    if (!x) return;
+    if (p && !p.blindX) { this.clearFlash(); return; }   // respawn / match baru
+    const t = (performance.now() - this.flashT0) / 1000, w = flashWhite(x, t);
+    this.flashEl.style.opacity = w.toFixed(3);
+    this.flashImg.style.opacity = (Math.min(1, w * 1.6) * 0.85).toFixed(3);
+    if (w <= 0 && t > x.hold) this.clearFlash();
+  }
+
   update(dt: number, p: Entity | null, spreadDeg: number, showBoard: boolean) {
+    this.updateFlash(p);
     const kc = ctx.killcam, replay = !!kc?.replaying;
     const pw = ctx.net.role === 'client' && p && p.ping >= XCFG.net.pingWarn ? `⚠ Ping ${p.ping} ms` : '';
     if (this.last.pingWarn !== pw) { this.last.pingWarn = pw; this.pingWarn.textContent = pw; this.pingWarn.style.display = pw ? 'block' : 'none'; }
@@ -231,21 +268,21 @@ export class Hud {
     });
     this.vign.style.opacity = p.alive && p.hp < XCFG.vfx.lowHpVignette ? '1' : '0';
     // amunisi, mode, optik, granat (pisau: tanpa angka amunisi)
-    const grenadeHeld = w.slot === 'grenade', knifeHeld = w.slot === 'knife';
+    const grenadeHeld = w.slot === 'grenade', flashHeld = w.slot === 'flash', knifeHeld = w.slot === 'knife';
     const lowAmmo = w.slot === 'ar' && w.ammo <= Math.ceil(w.def.magSize * 0.3);
-    this.set('am', `${v.id}|${w.ammo}|${w.reserve}|${w.slot}|${v.grenades}`, () => {
+    this.set('am', `${v.id}|${w.ammo}|${w.reserve}|${w.slot}|${v.grenades}|${v.flashes}`, () => {
       (this.ammo.children[1] as HTMLElement).innerHTML = grenadeHeld ? `K-400 <small>| ${v.grenades}</small>`
-        : knifeHeld ? 'Pisau' : `${w.ammo} <small>| ${w.reserve}</small>`;
+        : flashHeld ? `Flash <small>| ${v.flashes}</small>` : knifeHeld ? 'Pisau' : `${w.ammo} <small>| ${w.reserve}</small>`;
       this.ammo.classList.toggle('low', lowAmmo);
       this.ammo.classList.toggle('knife', knifeHeld);
       this.ammo.classList.toggle('alt', w.slot !== 'ar');   // pisau/granat: sembunyikan mode tembak & optik
     });
-    const wn = knifeHeld ? 'Pisau komando · lari +10%' : grenadeHeld ? 'Granat K-400'
+    const wn = knifeHeld ? 'Pisau komando · lari +10%' : grenadeHeld ? 'Granat K-400' : flashHeld ? 'Flashbang · membutakan, tanpa damage'
       : w.hasPrimary ? `${w.def.name} · ${SCOPES[w.scope.id].name}` : 'Senjata utama dibuang';
     this.set('wn', wn, () => ((this.ammo.children[0] as HTMLElement).textContent = wn));
     // bar slot: tombol sesuai binds, slot aktif menyala, slot kosong redup
     const b = ctx.settings.binds;
-    const sk = `${w.slot}|${w.hasPrimary ? w.def.name : ''}|${v.grenades}|${b.primary}|${b.knife}|${b.grenade}`;
+    const sk = `${w.slot}|${w.hasPrimary ? w.def.name : ''}|${v.grenades}|${v.flashes}|${b.primary}|${b.knife}|${b.grenade}|${b.flash}`;
     this.set('slots', sk, () => {
       const el = this.slots.children;
       const fill = (i: number, key: string, name: string | null, on: boolean, empty: boolean) => {
@@ -257,12 +294,13 @@ export class Hud {
       fill(0, b.primary, w.hasPrimary ? w.def.name : '—', w.slot === 'ar', !w.hasPrimary);
       fill(1, b.knife, null, knifeHeld, false);
       fill(2, b.grenade, `K-400 ×${v.grenades}`, grenadeHeld, v.grenades < 1);
+      fill(3, b.flash, `Flash ×${v.flashes}`, flashHeld, v.flashes < 1);
     });
     this.set('md', MODE_LABEL[w.mode], () => (this.ammo.querySelector('.mode')!.textContent = MODE_LABEL[w.mode]));
     this.set('op', w.scope.name, () => (this.ammo.querySelector('.optic')!.textContent = w.scope.name));
-    this.set('gr', `${v.id}|${v.grenades}`, () => {
+    this.set('gr', `${v.id}|${v.grenades}|${v.flashes}`, () => {
       const g = this.ammo.querySelector('.gren')!;
-      g.innerHTML = `<i></i>×${v.grenades}`; g.classList.toggle('empty', v.grenades < 1);
+      g.innerHTML = `<i></i>×${v.grenades} <i class="fl"></i>×${v.flashes}`; g.classList.toggle('empty', v.grenades < 1 && v.flashes < 1);
     });
     // crosshair: spread senjata → piksel = (H/2)·tan(spread)/tan(fovV/2); bentuk/perilaku menentukan bagian yang mengembang
     const fovV = THREE.MathUtils.degToRad(ctx.engine.camera.fov);
@@ -369,8 +407,8 @@ export class Hud {
     let gi = 0;
     if (p.alive && !ctx.killcam?.replaying) {
       const cam = ctx.engine.camera, W = innerWidth, H = innerHeight, yaw = ctx.camRig.yaw;
-      ctx.grenades.forEachLive((x, y, z) => {
-        if (gi >= this.gw.length) return;
+      ctx.grenades.forEachLive((x, y, z, _f, _o, _id, kind) => {
+        if (gi >= this.gw.length || kind === 'flash') return;   // flash tidak melukai: tanpa ikon bahaya
         const d = Math.hypot(x - p.pos.x, y - (p.pos.y + 2), z - p.pos.z);
         if (d > CFG.grenade.blastRadius + 3) return;
         const el = this.gw[gi++];

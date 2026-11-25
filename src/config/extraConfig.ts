@@ -76,6 +76,33 @@ export const XCFG = {
   // §8 code — titik lepas granat
   grenadeThrow: { fpsFwd: 0.6, fpsRight: 0.25, fpsDown: 0.15, underUp: 1.5, underFwd: 0.6, underPitchAdd: 2,
     bounceDot: 0.7, bounceMinSpeed: 1.5 },
+  // ── flashbang (permintaan pengguna 2026-11-25; bukan GDD): tombol 4, 1 per nyawa, tanpa damage, membutakan SEMUA yang melihat
+  //    (termasuk rekan & pelempar). Lempar/masak sama dengan K-400 (fisika CFG.grenade). Durasi dari pengguna: putih total 1.5–3 s,
+  //    total sampai jernih 3–5 s.
+  flash: {
+    perLife: 1,
+    fuse: 1.6,            // detik sejak pin dilepas (dimasak terlalu lama = meledak di tangan, membutakan diri sendiri)
+    // kekuatan s = arah × jarak (0 bila terhalang dinding): menatap (cos ≥ faceFull ±41°) → 1; membelakangi (cos ≤ faceBackCos)
+    // → faceBack (pantulan cahaya); di antaranya linier
+    faceFull: 0.75, faceBackCos: -0.5, faceBack: 0.15,
+    nearFull: 8, far: 45, // u: kekuatan penuh sampai 8 u, habis di 45 u
+    fullAt: 0.5,          // s ≥ 0.5 → buta total (putih penuh lalu pulih bertahap)
+    holdMin: 1.5, holdMax: 3.0,   // detik putih total (s 0.5 → 1)
+    fadeMin: 1.5, fadeMax: 2.0,   // detik pulih bertahap → total 3–5 s
+    mildMin: 0.08,        // s di bawah ini tidak berefek; 0.08–0.5: silau sebagian (puncak s/0.5) tanpa putih total
+    mildFade: [0.8, 2.2] as readonly [number, number],
+    fadePow: 1.5,         // kurva pulih (1 − u)^1.5: cepat di awal, sisa silau tertinggal
+    deafMax: 3.0,         // detik telinga berdenging × s (s ≥ 0.2)
+    assistWindow: 3,      // detik: musuh yang dibutakan (s ≥ assistMin) terbunuh rekan pelempar → assist flash
+    assistMin: 0.3,
+    lookAway: 0.25,       // bot yang sempat memalingkan muka: kekuatan × 0.25
+    // bot: peluang sadar & memalingkan muka / peluang memakai flash saat situasinya cocok (Mudah / Normal / Sulit)
+    botNotice: { easy: 0.1, normal: 0.35, hard: 0.65 },
+    botUse: { easy: 0.3, normal: 0.5, hard: 0.7 },
+    botMin: 6, botMax: 26, botAllyClear: 10,   // jarak sasaran & rekan tidak boleh terlalu dekat titik ledak
+    burst: 0.18,          // detik kilatan VFX
+    padDoubleTap: 0.35,   // detik: gamepad RB dua kali cepat = flashbang (RB sekali = K-400)
+  },
   // §4.8 / §10.2 properti
   props: {
     bookSize: [0.45, 1.0, 0.6], booksPerCompartment: [3, 2, 3, 2, 3, 2], bookJitter: 0.25, bookYawDeg: 4,

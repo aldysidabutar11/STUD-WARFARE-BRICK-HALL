@@ -24,6 +24,7 @@ import { canMelee } from '../combat/Melee';
 import { moveFeel } from './moveFeel';
 import { estimateSource, newAimState, reactionTime, resetAim, segPointDist2, stepAim, type AimParams } from './botAim';
 import { coverFrom, fightSpot, fleeNode, type FightSpot } from './botTactics';
+import { flashWhite, type FlashExposure, type NadeKind } from '../combat/Flash';
 
 const B = XCFG.bots, H = XCFG.bots.human;
 const D2R = THREE.MathUtils.degToRad, R2D = THREE.MathUtils.radToDeg;
@@ -135,12 +136,15 @@ export class TacticalBot {
   private safeT = 0;
   // granat
   private grenadeCd = 0; private gStep = 0; private gT = 0;
-  private gPlan = { yaw: 0, pitch: 0, cook: 0 };
+  private gPlan: { yaw: number; pitch: number; cook: number; kind: NadeKind } = { yaw: 0, pitch: 0, cook: 0, kind: 'frag' };
+  /** Flashbang yang disadari (id → akan memalingkan muka saat meledak) & buta total: kabur sampai waktu ini (ctx.time). */
+  private readonly flashSeen = new Map<number, boolean>();
+  private flashEvadeUntil = -1;
   readonly trigger: TriggerInput = { pressed: false, held: false, reload: false, modeSwitch: false, ads: false, sprinting: false };
   private unsubs: (() => void)[] = [];
   /** Permintaan pukulan popor (dieksekusi Game lewat startMelee — aturan sama dengan pemain). */
   wantMelee = false;
-  readonly gIn: GrenadeInput = { equip: false, toSlot: null, lPress: false, lHeld: false, lRelease: false, rPress: false, rHeld: false, rRelease: false };
+  readonly gIn: GrenadeInput = { equip: null, toSlot: null, lPress: false, lHeld: false, lRelease: false, rPress: false, rHeld: false, rRelease: false };
 
   constructor(readonly e: Entity, readonly difficulty: Difficulty, readonly index: number) {
     this.diff = B.difficulty[difficulty];
@@ -236,6 +240,7 @@ export class TacticalBot {
     this.burstOn = false; this.burstDecided = false; this.plant = false;
     this.fight = false; this.alertT = -99; this.unseenHitT = -99; this.unseenDoneT = -99; this.lastHitT = -99; this.seenAtT = -99;
     this.gNotice.clear(); this.evadeId = -1; this.pauseT = 0; this.glanceUntil = 0;
+    this.flashSeen.clear(); this.flashEvadeUntil = -1;
     this.lookP.set(this.e.pos.x - Math.sin(this.e.yaw) * 10, this.e.pos.y + EYE, this.e.pos.z - Math.cos(this.e.yaw) * 10);
     this.stuckRef.copy(this.e.pos); this.stuckT = 0;
   }
@@ -260,11 +265,13 @@ export class TacticalBot {
     const e = this.e, now = ctx.time;
     e.eye(_eye);
     const half = D2R(this.diff.fov) / 2;
+    // silau flashbang: buta total = tidak melihat apa pun; selama pulih jarak pandang ikut menyempit
+    const white = this.blindWhite(now), sight = this.diff.sight * (1 - white);
     let best: Entity | null = null, bestD = Infinity;
-    for (const o of ctx.entities) {
+    for (const o of white >= 0.9 ? [] : ctx.entities) {
       if (!o.alive || o.team === e.team) continue;
       const dx = o.pos.x - e.pos.x, dz = o.pos.z - e.pos.z, dist = Math.hypot(dx, o.pos.y - e.pos.y, dz);
-      if (dist > this.diff.sight) continue;
+      if (dist > sight) continue;
       if (Math.abs(wrap(yawTo(dx, dz) - e.yaw)) > half && dist > 4) continue;
       o.partCenter('head', _a);
       let vis = !physics.losBlocked(_eye.x, _eye.y, _eye.z, _a.x, _a.y, _a.z);
@@ -483,8 +490,9 @@ export class TacticalBot {
   }
 
   // ─────────────────────────── granat musuh: sadar (lihat / dengar pantulan) → jeda reaksi → kabur
-  private readonly grenadeCb = (x: number, y: number, z: number, _fuse: number, owner: number, id: number) => {
+  private readonly grenadeCb = (x: number, y: number, z: number, _fuse: number, owner: number, id: number, kind: NadeKind) => {
     const e = this.e, now = ctx.time;
+    if (kind === 'flash') { this.noticeFlash(x, y, z, id); return; }   // flash: tidak kabur, cukup palingkan muka saat meledak
     const o = ctx.byId.get(owner);
     if (o && o.team === e.team && o !== e) return;               // granat rekan tidak melukai kita (friendly fire OFF)
     const d = Math.hypot(x - e.pos.x, y - (e.pos.y + 2.5), z - e.pos.z);
@@ -520,6 +528,7 @@ export class TacticalBot {
     if (id === this.evadeId) { this.evadeLive = true; this.gPos.set(x, y, z); }
   };
   private thinkEvade() {
+    if (ctx.time < this.flashEvadeUntil) return;                  // buta total: tetap mundur sampai bisa melihat lagi
     this.evadeLive = false;
     ctx.grenades.forEachLive(this.evadeCb);
     if (this.evadeLive && this.stateT < H.grenade.maxEvade) return;
@@ -781,14 +790,51 @@ export class TacticalBot {
     }
   }
 
+  // ─────────────────────────── flashbang: sadar, silau, buta
+  /** Tingkat putih silau saat ini (0..1). */
+  private blindWhite(now: number): number { const x = this.e.blindX; return x ? flashWhite(x, now - this.e.blindAt) : 0; }
+
+  /** Flash terlihat / terdengar memantul (siapa pun pelemparnya — rekan juga membutakan): sekali per flash, peluang sadar &
+   *  memalingkan muka sesuai kesulitan (XCFG.flash.botNotice). */
+  private noticeFlash(x: number, y: number, z: number, id: number) {
+    if (this.flashSeen.has(id)) return;
+    const e = this.e, d = Math.hypot(x - e.pos.x, y - (e.pos.y + 2.5), z - e.pos.z);
+    if (d > XCFG.flash.far) return;
+    const ang = Math.abs(wrap(yawTo(x - e.pos.x, z - e.pos.z) - e.yaw));
+    const seen = ang < D2R(this.diff.fov) / 2 && !physics.losBlocked(_eye.x, _eye.y, _eye.z, x, y + 0.25, z);
+    const heard = ctx.time - this.bounceT < 0.6 && Math.hypot(this.bounceAt.x - x, this.bounceAt.z - z) < 3;
+    if (!seen && !heard) return;                                  // belum sadar — dicoba lagi think berikutnya
+    this.flashSeen.set(id, Math.random() < XCFG.flash.botNotice[this.difficulty]);
+  }
+
+  /** GrenadeManager: bot ini sempat memalingkan muka dari flash `id`. */
+  flashNoticed(id: number): boolean { return this.flashSeen.get(id) === true; }
+
+  /** Kena flash: bidikan kacau sebanding silau; buta total → mundur menjauhi titik ledak sampai bisa melihat lagi (tidak menembak:
+   *  tidak melihat apa pun di perceive). */
+  onFlash(x: FlashExposure, at: THREE.Vector3) {
+    const e = this.e, s = this.state;
+    if (!e.alive) return;
+    this.addStartle(H.startle.max * x.peak);
+    if (x.peak < 1 || s === 'DEAD' || s === 'SPAWN') return;
+    this.fight = false; this.plant = false; this.drop = null; this.evadeId = -1; this.target = this.target && this.target.alive ? this.target : null;
+    const node = fleeNode(ctx.nav, blocked, e.pos, at, FLEE_OPTS, _path);
+    if (node >= 0) this.goToNode(node); else { this.path.length = 0; this.pathIdx = 0; this.goal = -1; }
+    this.flashEvadeUntil = ctx.time + x.hold;
+    this.set('EVADE');
+  }
+
   // ─────────────────────────── granat (§11.8)
   private wantGrenade(): boolean {
-    const e = this.e, p = this.seenAt;
-    if (e.grenades < 1 || this.grenadeCd > 0 || ctx.time - this.seenAtT > B.memory) return false;
+    const e = this.e, p = this.seenAt, F = XCFG.flash;
+    if ((e.grenades < 1 && e.flashes < 1) || this.grenadeCd > 0 || ctx.time - this.seenAtT > B.memory || this.blindWhite(ctx.time) > 0.3) return false;
     const d = Math.hypot(p.x - e.pos.x, p.z - e.pos.z);
-    if (d < B.grenadeMin || d > B.grenadeMax) return false;
-    if (ctx.entities.some(o => o.alive && o !== e && o.team === e.team && o.pos.distanceTo(p) < B.grenadeAllyClear)) return false;
-    if (Math.random() > this.diff.grenade) { this.grenadeCd = B.grenadeCooldown; return false; }
+    const allyNear = (r: number) => ctx.entities.some(o => o.alive && o !== e && o.team === e.team && o.pos.distanceTo(p) < r);
+    // flashbang dulu (lalu maju) bila cocok; selain itu K-400 (§11.8). Rekan dekat titik ledak ikut silau → tidak dilempar.
+    let kind: NadeKind | null = null;
+    if (e.flashes >= 1 && d >= F.botMin && d <= F.botMax && !allyNear(F.botAllyClear) && Math.random() < F.botUse[this.difficulty]) kind = 'flash';
+    else if (e.grenades >= 1 && d >= B.grenadeMin && d <= B.grenadeMax && !allyNear(B.grenadeAllyClear) && Math.random() < this.diff.grenade) kind = 'frag';
+    if (!kind) { this.grenadeCd = B.grenadeCooldown; return false; }
     // sudut rendah untuk mengenai titik dx, dy (v = 24, g = 22)
     const v = CFG.grenade.overSpeed, g = -CFG.world.gravity, v2 = v * v;
     e.eye(_eye);
@@ -798,7 +844,10 @@ export class TacticalBot {
     const theta = Math.atan((v2 - Math.sqrt(disc)) / (g * dx));
     const tFlight = dx / (v * Math.cos(theta));
     this.gPlan.pitch = theta - D2R(CFG.grenade.overLiftDeg); // lemparan menambah +8°
-    this.gPlan.cook = THREE.MathUtils.clamp(CFG.grenade.fuse - tFlight - 0.4, 0, 2.0);
+    // flash: dimasak agar meledak di udara dekat sasaran (sulit dihindari); K-400 seperti GDD
+    this.gPlan.cook = kind === 'flash' ? THREE.MathUtils.clamp(F.fuse - tFlight - 0.25, 0, F.fuse - 0.4)
+      : THREE.MathUtils.clamp(CFG.grenade.fuse - tFlight - 0.4, 0, 2.0);
+    this.gPlan.kind = kind;
     this.gPlan.yaw = yawTo(p.x - e.pos.x, p.z - e.pos.z);
     return true;
   }
@@ -806,11 +855,14 @@ export class TacticalBot {
 
   private runGrenade(dt: number) {
     const e = this.e, g = this.gIn;
-    g.equip = false; g.lPress = false; g.lRelease = false;
+    g.equip = null; g.lPress = false; g.lRelease = false;
     this.gT += dt;
     switch (this.gStep) {
       case 0: if (e.ctrl.speedH < 0.3 || this.gT > 1) { this.gStep = 1; this.gT = 0; } break; // berhenti dulu (warisan kecepatan nol)
-      case 1: g.equip = e.grenadeState === 'NONE'; if (e.grenadeState === 'READY') { this.gStep = 2; this.gT = 0; } break;
+      case 1:
+        g.equip = e.grenadeState === 'NONE' ? (this.gPlan.kind === 'flash' ? 'flash' : 'grenade') : null;
+        if (e.grenadeState === 'READY') { this.gStep = 2; this.gT = 0; }
+        break;
       case 2: {
         const aimed = Math.abs(wrap(this.aim.yaw - this.gPlan.yaw)) < D2R(3) && Math.abs(this.aim.pitch - this.gPlan.pitch) < D2R(3);
         if (aimed || this.gT > 1.2) { g.lPress = true; g.lHeld = true; this.gStep = 3; this.gT = 0; }
@@ -967,7 +1019,7 @@ export class TacticalBot {
     e.pitch = THREE.MathUtils.clamp(this.aim.pitch + D2R(e.recoil.recoilPitch), -D2R(85), D2R(85));
 
     if (this.state === 'THROW_GRENADE') { tr.held = false; tr.ads = false; this.runGrenade(dt); return; }
-    this.gIn.equip = false; this.gIn.lPress = false; this.gIn.lHeld = false; this.gIn.lRelease = false;
+    this.gIn.equip = null; this.gIn.lPress = false; this.gIn.lHeld = false; this.gIn.lRelease = false;
     this.gIn.toSlot = e.grenadeState !== 'NONE' && e.grenadeState !== 'THROWN' ? 'ar' : null;
 
     tr.ads = engage && dist > B.adsDist;

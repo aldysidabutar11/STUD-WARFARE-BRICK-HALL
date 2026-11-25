@@ -47,6 +47,8 @@ export interface SaveEnt {
   weapon: string; scope: string; ammo: number; reserve: number; modeIdx: number; grenades: number;
   /** kills, deaths, assists, score, shots, hits, hsHits, hsKills, damage, bestStreak */
   stats: number[]; streak: number; variant: 'm' | 'f';
+  /** Flashbang tersisa (tidak ada di cadangan host versi lama → 1). */
+  flashes: number;
 }
 export interface MatchSave {
   v: number; state: MatchStateName; round: number; timeLeft: number; countdown: number;
@@ -80,6 +82,7 @@ export function parseSave(raw: unknown): MatchSave | null {
       yaw: n('yaw'), pitch: clamp(n('pitch'), -1.6, 1.6), weapon: String(e.weapon ?? ''), scope: String(e.scope ?? ''),
       ammo: clamp(Math.round(n('ammo')), 0, 200), reserve: clamp(Math.round(n('reserve')), 0, 2000), modeIdx: clamp(Math.round(n('modeIdx')), 0, 4),
       grenades: clamp(Math.round(n('grenades')), 0, 9), stats: (e.stats as number[]).map(s => clamp(Math.round(s), 0, 1e7)),
+      flashes: fin(e.flashes) ? clamp(Math.round(e.flashes), 0, 9) : 1,
       streak: clamp(Math.round(n('streak')), 0, 999), variant: e.variant === 'f' ? 'f' : 'm' });
   }
   return { v: SAVE_V, state: r.state as MatchStateName, round: clamp(Math.round(r.round), 0, 99), timeLeft: clamp(r.timeLeft, 0, 7200),

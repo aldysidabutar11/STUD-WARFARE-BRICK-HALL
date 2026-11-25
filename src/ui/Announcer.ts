@@ -65,7 +65,7 @@ export class Announcer {
     });
     bus.on('assist', (e) => {
       if (!ctx.player || e.entityId !== ctx.player.id) return;
-      this.popup(`+${XA.assistScore}`, 'Assist');
+      this.popup(`+${XA.assistScore}`, e.flash ? 'Assist flash' : 'Assist');
       ctx.audio.playUi(R.assistTick, 0.8);
     });
   }

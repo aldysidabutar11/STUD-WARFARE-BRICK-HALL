@@ -71,6 +71,7 @@ export class SpawnSystem {
     e.protectT = CFG.player.spawnProtection;
     e.char.protectT = e.protectT;
     e.grenades = CFG.grenade.perLife; e.grenadeState = 'NONE'; e.cookT = 0; e.throwAnimT = -1;
+    e.flashes = XCFG.flash.perLife; e.nadeKind = 'frag'; e.blindX = null; e.flashedBy = 0; e.flashS = 0;
     e.meleeT = -1; e.meleeCd = 0; e.meleeKind = 'butt'; e.streak = 0; e.dmgBy.clear();
     e.weapon.refill();
     e.recoil.reset();
@@ -90,6 +91,7 @@ export class SpawnSystem {
     e.ctrl.teleport(x, y + 0.05, z);
     e.yaw = yaw; e.alive = true; e.respawnT = 0;
     e.grenadeState = 'NONE'; e.cookT = 0; e.throwAnimT = -1; e.meleeT = -1; e.meleeCd = 0;
+    e.nadeKind = 'frag'; e.blindX = null; e.flashedBy = 0; e.flashS = 0;
     e.recoil.reset();
     e.char.setVisible(true);
     e.renderPos.set(x, y, z);

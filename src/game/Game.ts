@@ -172,7 +172,9 @@ export class Game {
   private readonly trig: TriggerInput = { pressed: false, held: false, reload: false, modeSwitch: false, ads: false, sprinting: false };
   /** Jadwal hentakan kamera serangan pisau (waktu game; 0 = tidak ada). */
   private punchAt = 0; private punchKind: 'slash' | 'stab' = 'slash'; private punchAlt = false;
-  private readonly gIn: GrenadeInput = { equip: false, toSlot: null, lPress: false, lHeld: false, lRelease: false, rPress: false, rHeld: false, rRelease: false };
+  private readonly gIn: GrenadeInput = { equip: null, toSlot: null, lPress: false, lHeld: false, lRelease: false, rPress: false, rHeld: false, rRelease: false };
+  /** Gamepad: waktu RB terakhir (RB dua kali cepat = flashbang). */
+  private rbAt = -1e9;
   private menuT = 0;
   private slowmoEnd = 0;
   private stress: Stress | null = null;
@@ -230,6 +232,9 @@ export class Game {
     ctx.vfx = new Vfx(engine.scene, engine.preset, high);
     ctx.deathFx = new DeathFx(engine.scene);
     ctx.grenades = new GrenadeManager(engine.scene);
+    // flashbang: layar ini silau (putih → pulih) + telinga berdenging; bot yang sempat memalingkan muka kena lebih ringan
+    ctx.grenades.onLocalFlash = (x, s) => { ctx.hud.flash(x); if (s >= 0.2) ctx.audio.tinnitus(XCFG.flash.deafMax * s); };
+    ctx.grenades.noticed = (bot, id) => bot.bot?.flashNoticed(id) ?? false;
     ctx.drops = new WeaponDrops(engine.scene, engine.preset.shadowMap > 0);
     ctx.teams = new TeamManager();
     ctx.match = new MatchManager();
@@ -1278,7 +1283,7 @@ export class Game {
     for (const e of s.ents) {
       if (e.id === me) continue;
       const b = base?.ents.find(x => x.id === e.id);
-      if (b) { e.ammo = b.ammo; e.reserve = b.reserve; e.modeIdx = b.modeIdx; e.grenades = b.grenades; }
+      if (b) { e.ammo = b.ammo; e.reserve = b.reserve; e.modeIdx = b.modeIdx; e.grenades = b.grenades; e.flashes = b.flashes ?? 1; }
       const lat = cr?.latestState(e.id);
       if (lat && e.alive) { e.x = r2(lat.x); e.y = r2(lat.y); e.z = r2(lat.z); e.yaw = r2(lat.yaw); e.pitch = r2(lat.pitch); if (lat.hp > 0) e.hp = lat.hp; }
     }
@@ -2000,7 +2005,10 @@ export class Game {
     this.engine.dynRes.update(rawDt);
   }
 
-  private render() { this.engine.render(); }
+  private render() {
+    this.engine.render();
+    ctx.hud.snapFlash(this.engine.renderer.domElement);   // "bayangan" layar saat kena flash (salin kanvas tepat setelah render)
+  }
 
   /** Kecepatan maju lokal kamera (u/s) untuk inersia viewmodel. */
   private localVz = 0;
@@ -2069,7 +2077,13 @@ export class Game {
     f.aimHold = active && f.rH;
     f.reload = inp.actPressed('reload') && !padPick; f.fireMode = inp.actPressed('fireMode'); f.melee = inp.actPressed('melee');
     // slot: 1 senjata utama · 2 pisau · 3 granat · Q / gamepad Y senjata sebelumnya · scroll siklus · D-pad ↓ pisau
-    f.slot = inp.actPressed('primary') ? 'ar' : inp.actPressed('knife') ? 'knife' : inp.actPressed('grenade') ? 'grenade' : null;
+    f.slot = inp.actPressed('primary') ? 'ar' : inp.actPressed('knife') ? 'knife' : inp.actPressed('grenade') ? 'grenade'
+      : inp.actPressed('flash') ? 'flash' : null;
+    // gamepad: RB sekali = K-400, RB dua kali cepat = flashbang
+    if (inp.padActive && inp.pad.pressed(PAD.RB)) {
+      const now = performance.now();
+      if (now - this.rbAt < XCFG.flash.padDoubleTap * 1000) { f.slot = 'flash'; this.rbAt = -1e9; } else this.rbAt = now;
+    }
     f.last = inp.actPressed('lastWeapon'); f.wheel = inp.wheel;
     const res = driveWeapons(p, f, dt, { active, adsMode: this.settings.adsToggle ? 'toggle' : 'hold', practice: this.mode === 'practice' },
       this.trig, this.gIn);
@@ -2081,7 +2095,7 @@ export class Game {
       let imp = (f.lR ? I.FIRE_R : 0) | (f.rR ? I.ALT_R : 0);
       if (active) {
         imp |= (f.lP ? I.FIRE_P : 0) | (f.rP ? I.ALT_P : 0) | (f.reload ? I.RELOAD : 0) | (f.fireMode ? I.FIREMODE : 0) | (f.melee ? I.MELEE : 0)
-          | (f.slot === 'ar' ? I.SLOT_AR : f.slot === 'knife' ? I.SLOT_KNIFE : f.slot === 'grenade' ? I.SLOT_NADE : 0)
+          | (f.slot === 'ar' ? I.SLOT_AR : f.slot === 'knife' ? I.SLOT_KNIFE : f.slot === 'grenade' ? I.SLOT_NADE : f.slot === 'flash' ? I.SLOT_FLASH : 0)
           | (f.last ? I.LAST : 0) | (f.wheel > 0 ? I.WHEEL_UP : f.wheel < 0 ? I.WHEEL_DN : 0);
       }
       cr.imp |= imp;
