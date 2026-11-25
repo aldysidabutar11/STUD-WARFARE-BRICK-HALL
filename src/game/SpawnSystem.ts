@@ -83,6 +83,21 @@ export class SpawnSystem {
     bus.emit('spawn', { entityId: e.id, slot });
   }
 
+  /** Pulihkan entitas HIDUP di posisinya (pertandingan dilanjutkan setelah pindah host / bergabung ulang) — bukan spawn: tanpa
+   *  isi ulang amunisi, tanpa perlindungan spawn, tanpa event 'spawn' (HP/amunisi diisi pemanggil dari cadangan). */
+  restore(e: Entity, x: number, y: number, z: number, yaw: number) {
+    e.ctrl.setEnabled(true);
+    e.ctrl.teleport(x, y + 0.05, z);
+    e.yaw = yaw; e.alive = true; e.respawnT = 0;
+    e.grenadeState = 'NONE'; e.cookT = 0; e.throwAnimT = -1; e.meleeT = -1; e.meleeCd = 0;
+    e.recoil.reset();
+    e.char.setVisible(true);
+    e.renderPos.set(x, y, z);
+    e.char.root.position.set(x, y, z); e.char.root.rotation.y = yaw;
+    if (e.isPlayer) { ctx.camRig.yaw = yaw; ctx.camRig.pitch = 0; }
+    e.bot?.onSpawn();
+  }
+
   /** Jadwal respawn untuk entitas yang mati. */
   update(dt: number, allowRespawn: boolean) {
     for (const e of ctx.entities) {

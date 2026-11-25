@@ -298,6 +298,22 @@ export const XCFG = {
     hitConfirmWindow: 1.0,   // detik: kena hasil prediksi menunggu konfirmasi host (lebih lama → dianggap meleset)
     connectTimeout: 10,   // detik: batas total gabung (termasuk koneksi WebRTC)
     helloTimeout: 4,      // detik: host tidak menjawab kode room → "room tidak ditemukan"
+    // ── pindah host & AFK (permintaan pengguna 2026-11-25: "kalau host tiba-tiba keluar, langsung otomatis pindah host")
+    saveEvery: 1.0,       // detik: host mengirim cadangan lengkap pertandingan (posisi, HP, amunisi, granat, skor, ronde, waktu)
+    planEvery: 5,         // detik: rencana pengganti host (ping terbaik dulu) + kode room berikutnya disiarkan ulang
+    hostSilence: 5,       // detik tanpa pesan apa pun dari host (snapshot 30 Hz, ping tiap 2 s) → dianggap hilang (ICE baru ±30 s)
+    rejoinWait: 3,        // detik: host hilang → coba sambung ulang ke host LAMA dulu (mungkin hanya kita yang putus)
+    migrateStep: 4,       // detik per urutan: pengganti ke-k menunggu host baru sebelum mengambil alih sendiri
+    migrateMax: 30,       // detik: batas pindah host bila internet KITA tidak tersambung / tidak ada di rencana → layar Main Bareng
+    joinTry: 2.5,         // detik: jendela hello per percobaan gabung saat pindah host (tanpa jadwal pengganti)
+    joinConnect: 5,       // detik setelah host baru menjawab hello: WebRTC + room harus tersambung
+    helloEvery: 1,        // detik: hello diulang selama belum ada host yang menjawab
+    stallShow: 2,         // detik tanpa pesan host (klien, di tengah match) → overlay "koneksi ke host tersendat"
+    ticketTtl: 900,       // detik: tiket "Kembali ke match" (sessionStorage) setelah halaman di-refresh / ditutup masih berlaku
+    lonelyAfter: 15,      // detik: naik jadi host tapi tak ada teman menyusul → saran "Gabung ke host lama"
+    claimEvery: 3,        // detik: host baru hasil pindah host menyiarkan klaimnya (dua pengganti naik bersamaan → yang kalah mengalah)
+    afkAfter: 10,         // detik pause / tab tersembunyi / pindah aplikasi di match online → karakter dimainkan bot
+    silentAfk: 10,        // host: tanpa perintah sama sekali dari teman selama ini → dimainkan bot (tab teman berhenti total)
     ice: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'],
   },
   // ── kehalusan frame (laporan pengguna "FPS 60–80 tapi tidak terasa 60–80"; perubahan §2.3 disetujui pengguna).

@@ -153,9 +153,20 @@ File game di-host gratis di **Vercel** (atau hosting statis lain).
 - **Hitmarker & suara kena instan** dari tembakan/pisau sendiri; damage & kill tetap ditentukan host (tanpa tampil dobel).
 - **Ping** tiap teman tampil di room & papan skor (Tab): hijau < 80 ms, kuning < 150 ms, merah ≥ 150 ms + peringatan di layar.
   Upload host tersumbat → teman itu otomatis menerima 15×/detik sampai lancar lagi. F3 menampilkan ping, jeda interpolasi & koreksi.
-- Host sebaiknya pemain dengan koneksi & laptop paling kuat (upload ±1.2–2.5 Mbps untuk 9 teman). Host jangan menutup tab selama main;
-  pindah tab/aplikasi tetap aman (simulasi tetap jalan di latar belakang).
-- Teman keluar di tengah match → slotnya diambil alih bot. Host keluar → match berakhir, semua kembali ke room.
+- Host sebaiknya pemain dengan koneksi & laptop paling kuat (upload ±1.2–2.5 Mbps untuk 9 teman). Pindah tab/aplikasi tetap aman
+  (simulasi tetap jalan di latar belakang). Selama main online layar & laptop **tidak tidur** sendiri (Screen Wake Lock).
+- **Pindah host otomatis:** host tiba-tiba hilang (tab tertutup/ter-refresh, laptop mati/tidur, internet host putus) → match **tidak
+  bubar**. Host terus mengirim cadangan pertandingan (posisi, HP, amunisi, granat, skor, ronde, sisa waktu) tiap detik + daftar
+  pengganti (ping terbaik dulu); teman dengan ping terbaik melanjutkan sebagai host baru dari cadangan itu dan yang lain otomatis
+  menyambung ke dia (±3 s bila halaman host tertutup, ±9 s bila internet host putus). Karakter host lama dimainkan bot sampai dia kembali.
+  Pemain yang internetnya sendiri putus **tidak** mengambil alih — dia menunggu lalu menyambung ulang ke host yang masih jalan.
+- **Serahkan host:** host yang harus pergi (misal ada telepon) → Esc → *Serahkan host ke …* (klik dua kali) → teman itu jadi host,
+  match lanjut tanpa jeda berarti (±0.6 s). Mau ikut lagi: *Gabung* dengan kode baru yang ditampilkan — slot lamamu dikembalikan.
+- **Kembali ke match:** halaman ter-refresh / tertutup tanpa sengaja → menu utama menampilkan **Kembali ke match** → satu klik, masuk
+  lagi ke slot lamamu (skor & statistik tetap). Teman yang koneksinya putus sebentar menyambung ulang sendiri.
+- **AFK:** pause / pindah aplikasi / tab tersembunyi ≥ 10 detik di match online → karaktermu dimainkan bot; kembali → kendali langsung
+  balik ke kamu. Teman keluar dengan sengaja di tengah match → slotnya dimainkan bot sampai match selesai.
+- Host memilih *Akhiri Match* di menu pause → match berakhir untuk semua, semua kembali ke room.
 - **Pengaman refresh:** selama bermain, **F5 / Ctrl+R** (dan pintasan browser lain seperti Ctrl+S, Alt+←) tidak berfungsi. Kalau halaman
   akan di-refresh / ditutup di tengah match atau saat room online, browser bertanya **"Yakin keluar?"** dulu — pilih *Batal* untuk lanjut.
 - **Grafis tiba-tiba hilang** (driver/GPU bermasalah sesaat): game tetap berjalan dan muncul "Memulihkan grafis…" — biasanya pulih dalam

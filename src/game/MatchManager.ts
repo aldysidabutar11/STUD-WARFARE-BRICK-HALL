@@ -4,6 +4,7 @@ import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import { bus, type MatchStateName } from '../core/EventBus';
 import { newStats } from '../entities/Entity';
+import type { MatchSave } from '../net/Migration';
 import { ctx } from './ctx';
 
 export type Winner = 'blue' | 'red' | 'draw';
@@ -55,6 +56,20 @@ export class MatchManager {
     for (const e of ctx.entities) { e.stats = newStats(); e.streak = 0; e.respawnT = 0; e.dmgBy.clear(); }
     ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear();
     this.set('COUNTDOWN');
+  }
+
+  /** Lanjutkan pertandingan dari cadangan (pindah host / bergabung ulang): aturan, ronde, waktu, skor, pemenang — tanpa reset
+   *  skor & tanpa spawn ulang (entitas diisi applySaveEntities). puppet = klien (transisi tetap datang dari host). */
+  resume(opts: MatchOptions, s: MatchSave, puppet: boolean) {
+    this.puppet = puppet;
+    this.opts = { ...opts };
+    this.round = s.round; this.timeLeft = s.timeLeft; this.countdown = s.countdown;
+    this.winner = s.winner; this.roundWinner = s.roundWinner; this.roundEndT = 0; this.endT = 0;
+    ctx.teams.reset(); ctx.teams.scores.blue = s.sb; ctx.teams.scores.red = s.sr;
+    for (const e of ctx.entities) { e.stats = newStats(); e.streak = 0; e.respawnT = 0; e.dmgBy.clear(); }
+    ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear();
+    this.set(s.state);
+    if (s.state === 'RESULTS') this.onResults?.();
   }
 
   /** Klien: keadaan dari host (snapshot / event). */

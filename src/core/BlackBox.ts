@@ -47,7 +47,8 @@ export function newSession(t = Date.now()): BBSession {
 export function endSummary(s: BBSession): string | null {
   const live = s.state.inMatch || s.state.room;
   if (!live) return null;
-  const where = s.state.inMatch ? `di tengah match ${modeName(s.state.mode)}${s.state.role === 'host' ? ' (kamu host — semua teman ikut terputus)' : ''}`
+  // sejak pindah host otomatis: teman-teman melanjutkan dengan host baru (bukan ikut terputus)
+  const where = s.state.inMatch ? `di tengah match ${modeName(s.state.mode)}${s.state.role === 'host' ? ' (kamu host — teman-teman dipindah ke host baru)' : ''}`
     : 'saat berada di room online';
   if (s.closeReason) return `Halaman dimuat ulang oleh game ${where}: ${s.closeReason}`;
   // grafis hilang yang tidak pernah pulih sebelum halaman berakhir

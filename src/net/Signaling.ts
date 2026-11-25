@@ -3,7 +3,7 @@
 // dan BroadcastChannel (antar-tab di browser yang sama — untuk uji lokal tanpa akun apa pun). Data gameplay TIDAK lewat sini (P2P).
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 
-export type SignalKind = 'hello' | 'welcome' | 'deny' | 'offer' | 'answer' | 'ice' | 'bye';
+export type SignalKind = 'hello' | 'welcome' | 'deny' | 'offer' | 'answer' | 'ice' | 'bye' | 'host';
 export interface SignalMsg { from: string; to: string; kind: SignalKind; data?: unknown }
 
 export interface Signaling {

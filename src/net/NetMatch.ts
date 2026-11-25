@@ -29,6 +29,7 @@ import { SURFACE_COLOR, surfaceCode, surfaceOf } from '../world/surfaces';
 import { physics } from '../physics/Physics';
 import { driveWeapons, emptyFrame, frameFromCommand, type ActionFrame } from '../game/PlayerActions';
 import { cleanLoadout, type NetClient, type NetHost } from './Session';
+import { captureSave } from './Resume';
 
 const NET = XCFG.net, STEP = CFG.world.fixedStep;
 const SLOTS: Slot[] = ['ar', 'knife', 'grenade'];
@@ -36,6 +37,11 @@ const GSTATES = ['NONE', 'EQUIP', 'READY', 'COOKING', 'THROWN'] as const;
 const MKINDS: MeleeKind[] = ['butt', 'slash', 'stab'];
 const NPART = PART_KEYS.length;
 const _v = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3(), _n = new THREE.Vector3();
+
+/** Kenapa pemain remote sedang dimainkan bot: '' = dikendalikan pemiliknya; 'client' = dia melapor AFK (pause / tab
+ *  tersembunyi); 'silent' = tidak ada perintah sama sekali ≥ silentAfk s; 'gone' = koneksinya putus (bisa bergabung ulang);
+ *  'connecting' = sudah bergabung ulang, menunggu perintah pertamanya. */
+export type AfkReason = '' | 'client' | 'silent' | 'gone' | 'connecting';
 
 /** Host: kendali manusia di perangkat lain (antrean perintah + masukan senjata miliknya). */
 export class RemoteHuman {
@@ -48,6 +54,9 @@ export class RemoteHuman {
   /** Tick ini ada perintah (senjata digerakkan setelah world.step) / tidak ada (pemain ditahan). */
   has = false;
   get frozen() { return !this.has; }
+  /** Sedang dimainkan bot (lihat AfkReason) & detik sejak perintah terakhir diterima. */
+  afk: AfkReason = '';
+  silentT = 0;
   constructor(readonly pid: string) {}
 }
 
@@ -127,6 +136,7 @@ export class HostRep {
   private readonly byPid = new Map<string, Entity>();
   private tickN = 0;
   private statsT = 0;
+  private saveT = 0;
   private nowTick = 0;
   private shots: ShotFx[] = [];
   private fx: MiscFx[] = [];
@@ -139,6 +149,8 @@ export class HostRep {
   private baseN = 0;
 
   constructor(private net: NetHost) {}
+  /** Room dibuka ulang di tengah match (host tanpa teman gagal gabung ke room teman) → replikasi pindah ke koneksi baru. */
+  rebind(net: NetHost) { this.net = net; }
 
   /** Setelah entitas dibuat, sebelum match dimulai (spawn pertama ikut tersiar). */
   begin() {
@@ -148,7 +160,9 @@ export class HostRep {
       if (this.shots.length < NET.maxShotFx) this.shots.push({ shooter: e.id, x: end.x, y: end.y, z: end.z, kind,
         nx: n?.x ?? 0, ny: n?.y ?? 0, nz: n?.z ?? 0, mat, victim, part });
     };
-    ctx.net.rewind = (shooter) => (shooter.remote && shooter.remote.viewTick > 0 ? this.lag.rewind(shooter, shooter.remote.viewTick, this.nowTick) : false);
+    // tembakan bot yang sedang memainkan pemain AFK tidak di-rewind (viewTick-nya milik pemain, sudah basi)
+    ctx.net.rewind = (shooter) => (shooter.remote && !shooter.remote.afk && shooter.remote.viewTick > 0
+      ? this.lag.rewind(shooter, shooter.remote.viewTick, this.nowTick) : false);
     ctx.net.restore = () => this.lag.restore();
     const on = <K extends keyof GameEvents>(k: K, fn: (p: GameEvents[K]) => void) => this.offs.push(bus.on(k, fn));
     const all = (m: Record<string, unknown>) => this.net.sendAll({ t: 'ev', ...m });
@@ -182,7 +196,51 @@ export class HostRep {
     if (this.fx.length < 32) this.fx.push({ type, ent, a, x: pos.x, y: pos.y, z: pos.z });
   }
 
-  onCommands(pid: string, cmds: Command[]) { this.byPid.get(pid)?.remote?.queue.push(cmds); }
+  onCommands(pid: string, cmds: Command[]) {
+    const e = this.byPid.get(pid), r = e?.remote;
+    if (!e || !r) return;
+    r.queue.push(cmds); r.silentT = 0;
+    if (r.afk === 'silent' || r.afk === 'connecting') this.setAfk(e, '');   // perintah datang lagi → kendali kembali ke pemiliknya
+  }
+
+  /** Pemain remote dimainkan bot sementara (AFK / terputus / menyambung ulang) atau kembali dikendalikan pemiliknya. */
+  setAfk(e: Entity, reason: AfkReason, quiet = false) {
+    const r = e.remote;
+    if (!r || r.afk === reason) return;
+    const was = r.afk;
+    r.afk = reason;
+    if (reason) {
+      if (!e.bot) { e.bot = new TacticalBot(e, ctx.settings.difficulty, 20 + e.id); if (e.alive) e.bot.onSpawn(); }
+    } else {
+      if (e.bot) { e.bot.dispose(); e.bot = null; }
+      r.has = false; r.silentT = 0;
+      const it = e.intent; it.ix = 0; it.iz = 0; it.jump = false; it.sprint = false; it.wantFire = false;
+    }
+    if (quiet) return;
+    const text = reason === 'gone' ? `${e.name} terputus — dimainkan bot sampai kembali`
+      : reason === 'client' || reason === 'silent' ? `${e.name} AFK — dimainkan bot`
+      : !reason && was ? `${e.name} kembali` : '';
+    if (text) this.notice(text);
+  }
+
+  /** Pesan singkat di layar semua pemain. */
+  notice(text: string) { ctx.hud.toast(text); this.net.sendAll({ t: 'ev', e: 'notice', text }); }
+
+  /** Teman melapor AFK (pause / tab tersembunyi ≥ afkAfter s) atau kembali. */
+  setClientAfk(pid: string, on: boolean) {
+    const e = this.byPid.get(pid), r = e?.remote;
+    if (!e || !r) return;
+    if (on) { if (!r.afk) this.setAfk(e, 'client'); } else if (r.afk === 'client') this.setAfk(e, '');
+  }
+
+  /** Teman bergabung ulang (pid lama): sesi baru → seq perintah mulai dari awal; bot tetap bermain sampai perintah pertamanya. */
+  onPeerRejoined(pid: string) {
+    const e = this.byPid.get(pid), r = e?.remote;
+    if (!e || !r) return;
+    r.queue.restart(); r.silentT = 0; r.has = false;
+    this.slowUntil.delete(pid); this.carry.delete(pid);
+    this.setAfk(e, 'connecting', true);
+  }
 
   /** Fixed step, sebelum KCC: perintah berikutnya tiap pemain remote → niat gerak. Antrean menumpuk → satu perintah ekstra
    *  disimulasikan penuh dulu (kejar). Tanpa perintah → pemain ditahan tick ini (Game memanggil ctrl.hold()). */
@@ -190,6 +248,13 @@ export class HostRep {
     for (const e of this.byPid.values()) {
       const r = e.remote;
       if (!r) continue;
+      r.silentT += dt;
+      if (!r.afk && r.silentT > NET.silentAfk) this.setAfk(e, 'silent');
+      if (r.afk) {   // dimainkan bot: perintah yang masuk dibuang tapi tetap di-ack (prediksi klien terkoreksi ke posisi bot)
+        while (r.queue.pending) r.queue.next(dt, NET.idleCmd);
+        r.has = false;
+        continue;
+      }
       if (r.queue.pending > NET.cmdCatchUp && this.take(e, r, dt)) {
         if (e.alive) { e.ctrl.fixedUpdate(dt, e.intent, e.weapon.adsActive); e.ctrl.syncCollider(); }
         this.drive(e, r, dt);
@@ -231,9 +296,12 @@ export class HostRep {
   /** Setelah world.step: senjata pemain remote (posisi pasca-gerak, seperti prediksi klien), lalu snapshot 20 Hz (per klien:
    *  ack perintah + keadaan geraknya) & statistik tiap detik. */
   afterStep() {
-    for (const e of this.byPid.values()) { const r = e.remote; if (r?.has) this.drive(e, r, STEP); }
+    for (const e of this.byPid.values()) { const r = e.remote; if (r?.has && !r.afk) this.drive(e, r, STEP); }
     this.statsT += STEP;
     if (this.statsT >= NET.statsEvery) { this.statsT = 0; this.sendStats(); }
+    // cadangan lengkap pertandingan → teman mana pun bisa melanjutkan sebagai host bila host ini hilang (pindah host)
+    this.saveT += STEP;
+    if (this.saveT >= NET.saveEvery && this.net.connected > 0) { this.saveT = 0; this.net.sendAll({ t: 'save', s: captureSave() }); }
     if (++this.tickN % NET.snapEvery !== 0) return;
     const m = ctx.match;
     const base = {
@@ -268,24 +336,20 @@ export class HostRep {
 
   /** Statistik papan skor + ping tiap pemain (ms; −1 bot, −2 host, −3 belum terukur). */
   private sendStats() {
-    for (const e of ctx.entities) e.ping = e === ctx.player ? -2 : e.remote ? (this.net.ping(e.remote.pid) ?? -3) : -1;
+    for (const e of ctx.entities) e.ping = e === ctx.player ? -2 : e.remote && !e.remote.afk ? (this.net.ping(e.remote.pid) ?? -3) : -1;
     const s = ctx.entities.map(e => [e.id, e.stats.kills, e.stats.deaths, e.stats.assists, e.stats.score, e.stats.shots, e.stats.hits,
       e.stats.hsHits, e.stats.hsKills, e.stats.damage, e.stats.bestStreak, e.ping]);
     this.net.sendAll({ t: 'ev', e: 'stats', s });
   }
 
-  /** Teman terputus di tengah match: slotnya diambil alih bot (permintaan pengguna). */
+  /** Teman terputus di tengah match: slotnya dimainkan bot (permintaan pengguna) — pid tetap dipetakan ke entitasnya sehingga
+   *  dia bisa bergabung ulang & mengambil kembali slotnya. */
   onPeerLeft(pid: string) {
     const e = this.byPid.get(pid);
     if (!e) return;
-    this.byPid.delete(pid);
     this.slowUntil.delete(pid); this.carry.delete(pid);
-    e.remote = null; e.ping = -1;
-    e.bot = new TacticalBot(e, ctx.settings.difficulty, 20 + e.id);
-    if (e.alive) e.bot.onSpawn();
-    const text = `${e.name} keluar — diganti bot`;
-    ctx.hud.toast(text);
-    this.net.sendAll({ t: 'ev', e: 'notice', text });
+    e.ping = -1;
+    this.setAfk(e, 'gone');
   }
 
   end() {
@@ -566,4 +630,7 @@ export class ClientRep {
 
   /** Diagnostik: jumlah entitas yang punya data interpolasi. */
   get tracked() { return this.bufs.size; }
+
+  /** Keadaan terbaru yang DITERIMA untuk entitas (lebih baru dari posisi tampil yang tertinggal jeda interpolasi) — pindah host. */
+  latestState(id: number) { return this.bufs.get(id)?.latest ?? null; }
 }

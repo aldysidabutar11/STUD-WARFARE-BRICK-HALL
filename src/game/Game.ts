@@ -43,7 +43,7 @@ import { Minimap } from '../ui/Minimap';
 import { Nameplates } from '../ui/Nameplates';
 import { Announcer } from '../ui/Announcer';
 import { loadSettings, saveSettings, validate, type Settings } from '../ui/Settings';
-import { Lobby, cleanName, makeRoomCode, pickMap, type MapChoice, type MatchRoster } from './Lobby';
+import { Lobby, cleanName, formatRoomCode, makeRoomCode, pickMap, type MapChoice, type MatchRoster } from './Lobby';
 import { StatsOverlay } from '../debug/StatsOverlay';
 import { DebugPanel } from '../debug/DebugPanel';
 import { PerfLogger } from '../debug/PerfLogger';
@@ -58,6 +58,9 @@ import { NetClient, NetHost, cleanLoadout, type JoinFail } from '../net/Session'
 import { createSignaling, iceServers } from '../net/Signaling';
 import { ClientRep, HostRep, RemoteHuman } from '../net/NetMatch';
 import { parseStart, type NetEnt, type NetStart } from '../net/start';
+import { makePlan, migrationTimes, parseSave, type MatchSave, type Plan } from '../net/Migration';
+import { applySaveEntities, captureSave } from '../net/Resume';
+import { loadTicket, saveTicket, type Ticket } from '../net/Ticket';
 import { HoldQueue } from '../net/HoldQueue';
 import { H, I, type Command } from '../net/protocol';
 
@@ -94,6 +97,38 @@ export class Game {
   private gfxTimer = 0;
   private matchNo = 0;
   private bbPerfT = 0; private bbFrames = 0;
+  // ── pindah host & AFK (permintaan pengguna 2026-11-25: host ditelepon / keluar mendadak → game tetap jalan untuk semua)
+  /** Online: susunan match yang sedang berjalan (host & klien) — bahan pindah host & bergabung ulang. */
+  private netStart: NetStart | null = null;
+  /** Klien: cadangan pertandingan terbaru dari host, rencana pengganti host, serah-terima sedang berlangsung. */
+  private lastSave: MatchSave | null = null;
+  private plan: Plan | null = null;
+  private handoverPending = false;
+  /** Host: kode room untuk host berikutnya (disiarkan di rencana) + jam siar rencana + pernah punya teman di match ini. */
+  private nextCode = '';
+  private planT = 0;
+  private hadFriends = false;
+  /** Pindah host berjalan (token membatalkan proses lama) + petunjuk gabung ulang (kode room baru & pid lama). */
+  private migrating = 0;
+  private rejoinHint: { code: string; pid: string } | null = null;
+  /** Kita naik jadi host karena host lama hilang: kode room host lama (bila tak ada teman yang menyusul, mungkin host lama masih
+   *  jalan → tombol gabung kembali) + waktu naik (ms) + sudah diberi tahu. */
+  private promotedFrom = '';
+  private promotedAt = 0;
+  private lonelyToast = false;
+  /** Tiket kembali ke match setelah halaman ini hilang (sessionStorage; dari sesi halaman sebelumnya saat boot) + kunci tulis. */
+  private ticket: Ticket | null = loadTicket();
+  private ticketKey = ''; private ticketT = 0;
+  /** Klien: overlay "koneksi ke host tersendat" sedang tampil. */
+  private stallShown = false;
+  /** AFK lokal di match online: sejak kapan tidak aktif (ms, −1 = aktif) & karakter sedang dimainkan bot.
+   *  awayTest = uji otomatis: true paksa AFK, false paksa aktif (jendela uji tanpa fokus), null = deteksi biasa. */
+  private awaySince = -1;
+  private afkOn = false;
+  awayTest: boolean | null = null;
+  /** Layar tidak mati / laptop tidak tidur selama match atau room online (Screen Wake Lock). */
+  private wakeLock: WakeLockSentinel | null = null;
+  private wakeBusy = false;
   mode: GameMode = 'tdm';
   /** Room main bareng (tahap 1: lokal) + id pemain ini; roster = susunan match yang sedang/terakhir dimainkan dari room. */
   private room: Lobby | null = null;
@@ -222,11 +257,15 @@ export class Game {
       click: () => { ctx.audio.unlock(); ctx.audio.click(); }, inMatch: () => this.inMatch,
       refreshHz: () => 1000 / engine.pacing.refreshMs,
       room: () => (this.room ? { lobby: this.room, me: this.roomMe } : null),
-      createRoom: (n) => this.createRoom(n), leaveRoom: () => this.leaveRoom(),
+      createRoom: (n) => this.createRoom(n), leaveRoom: () => { this.dropTicket(); this.leaveRoom(); },
       startRoom: () => void this.startRoom(), addSimFriend: () => this.addSimFriend(),
       roomAct: (a) => this.roomAct(a), joinRoom: (code, name) => this.joinRoom(code, name), netInfo: () => this.netInfo(),
       setPlayerName: (n) => { this.settings.playerName = cleanName(n); saveSettings(this.settings); },
       selectMap: (c) => void this.selectMap(c), mapId: () => currentMap().id, mapChoice: () => this.urlMap ?? this.settings.map,
+      handoverTargets: () => this.handoverTargets(), handover: (pid) => this.handover(pid),
+      mergeBackCode: () => this.mergeBackCode(), mergeBack: () => void this.mergeBack(),
+      ticket: () => (this.ticket && !this.room ? { code: this.ticket.code, match: this.ticket.match } : null),
+      useTicket: () => this.useTicket(), dropTicket: () => this.dropTicket(),
     });
     this.applyVisual();
     this.input.onLockChange = (locked) => {
@@ -248,6 +287,9 @@ export class Game {
       blackbox.log('keluar-halaman', 'dialog "Yakin keluar?" ditampilkan');
       e.preventDefault(); e.returnValue = '';
     });
+    // tiap ±1 s (juga saat tab di belakang): AFK lokal, wake lock, rencana pengganti host
+    setInterval(() => this.netTick(), 1000);
+    document.addEventListener('visibilitychange', () => { this.updateAfk(); void this.syncWakeLock(); });
     bus.on('match:state', (e) => this.onMatchState(e.state));
     bus.on('kill', (e) => this.onKill(e));
     // pisau pemain: hentakan kamera tepat saat bilah menyapu/menyodok (dijadwalkan sedikit sebelum titik kena), + ekstra saat kena
@@ -524,20 +566,30 @@ export class Game {
     const s = this.settings;
     const opts: MatchOptions = net ? net.opts : { mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit * 60, roundsToWin: s.roundsToWin };
     ctx.camRig.mode = 'fps';
-    if (role === 'client') { this.clientRep = new ClientRep(this.client!); ctx.match.startPuppet(opts); }
-    else {
+    const resume = net?.resume ?? null;
+    if (role === 'client') {
+      this.clientRep = new ClientRep(this.client!);
+      if (resume) { ctx.match.resume(opts, resume, true); applySaveEntities(resume); } else ctx.match.startPuppet(opts);
+    } else {
       if (role === 'host') { this.hostRep = new HostRep(this.host!); this.hostRep.begin(); }   // spawn awal ikut tersiar
-      ctx.match.start(opts);
+      if (resume) {
+        // pertandingan DILANJUTKAN (pindah host): keadaan dari cadangan; teman lain dimainkan bot sampai bergabung ulang
+        ctx.match.resume(opts, resume, false); applySaveEntities(resume);
+        if (this.hostRep) for (const e of ctx.entities) if (e.remote) this.hostRep.setAfk(e, 'gone', true);
+      } else ctx.match.start(opts);
     }
-    this.introBanner(opts);
+    this.netStart = net; this.hadFriends = role === 'host' && (this.host?.connected ?? 0) > 0;
+    this.afkOn = false; if (!resume) this.awaySince = -1;   // dilanjutkan (pindah host): masih AFK → langsung dimainkan bot lagi
+    if (!resume) this.introBanner(opts);
     this.matchNo++;
     blackbox.state({ inMatch: true, role, mode, map: this.loadedId ?? '?', match: this.matchNo, room: role !== 'offline' });
     blackbox.log('match-mulai', `#${this.matchNo} ${mode} · ${this.loadedId ?? '?'} · peran ${role}`
-      + (role === 'host' ? ` · ${this.host?.connected ?? 0} teman tersambung` : ''));
+      + (role === 'host' ? ` · ${this.host?.connected ?? 0} teman tersambung` : '') + (resume ? ' · DILANJUTKAN dari cadangan' : ''));
     this.bbPerfT = performance.now(); this.bbFrames = 0;
     this.loop.setKeepAlive(role === 'host');   // tab host di belakang → simulasi tetap jalan
     ctx.hud.setVisible(true);
     this.applyVisual();
+    void this.syncWakeLock();
     if (!this.input.padActive) void (lock ?? this.input.requestLock()).then((ok) => {
       // Chrome menolak mengunci mouse → jangan biarkan game jalan dengan kursor bebas: tunggu satu klik lagi
       if (!ok && !this.autoTest && this.inMatch && !this.paused) { this.paused = true; this.input.clearAll(); this.menus.showClickToResume(); }
@@ -575,18 +627,21 @@ export class Game {
     const midMatch = this.inMatch && ctx.match.state !== 'RESULTS';
     if (this.inMatch) blackbox.log('keluar-ke-menu', midMatch ? `di tengah match (peran ${ctx.net.role})` : 'dari layar hasil');
     if (midMatch && ctx.net.role === 'host') this.host?.sendAll({ t: 'ev', e: 'abort' });
-    if (midMatch && ctx.net.role === 'client') this.leaveRoom();
+    if (midMatch && ctx.net.role === 'client') { this.dropTicket(); this.leaveRoom(); }
     this.endMatch();
-    // match dari room → kembali ke room (klien: map yang dipilih host selama layar hasil dimuat sekarang)
+    // match dari room → kembali ke room (klien: map yang dipilih host selama layar hasil dimuat sekarang); host: teman yang
+    // terputus selama match (masih tercatat agar bisa bergabung ulang) dikeluarkan dari room
+    this.host?.prune();
     if (this.room) { this.menus.showRoom(); this.preloadRoomMap(); } else this.menus.showMain();
   }
 
   /** Bersihkan match (entitas, efek, replikasi) tanpa memilih menu. */
-  private endMatch() {
+  private endMatch(keepLock = false) {
     if (this.inMatch) blackbox.log('match-selesai', `#${this.matchNo}`);
     this.inMatch = false; this.paused = false; this.stress = null;
+    this.afkOn = false; if (!keepLock) this.awaySince = -1;
     this.loop.timeScale = 1; this.slowmoEnd = 0;
-    this.input.exitLock();
+    if (!keepLock) this.input.exitLock();   // pertandingan dilanjutkan (pindah host): kunci mouse dipertahankan
     this.killcam.stop(); this.stopSpectate();
     this.endNet();
     this.disposeEntities();
@@ -624,20 +679,42 @@ export class Game {
     const me = this.room.join(name, { local: true })!;
     me.variant = s.charVariant; me.weapon = s.weapon; me.scope = s.scope;
     this.roomMe = me.id;
+    this.nextCode = makeRoomCode(Math.random);
+    this.dropTicket();
     this.openHost(this.room.code);
   }
 
   /** Dengarkan kode room di signaling (Supabase / antar-tab) → teman bisa masuk lewat WebRTC. */
-  private openHost(code: string) {
+  private openHost(code: string, claim: { pid: string; rank: number } | null = null) {
     const host = new NetHost(createSignaling(), {
       lobby: () => this.room,
       inMatch: () => this.inMatch,
-      onLobbyChanged: () => this.menus.refreshRoom(),
+      onLobbyChanged: () => { this.menus.refreshRoom(); this.sendPlan(); },
       onCommands: (pid, cmds) => this.hostRep?.onCommands(pid, cmds),
-      onPeerLeft: (pid) => { blackbox.log('teman-keluar', `${pid} terputus dari host${this.inMatch ? ' di tengah match (slot diambil bot)' : ''}`); this.hostRep?.onPeerLeft(pid); },
+      onPeerLeft: (pid, left) => {
+        blackbox.log('teman-keluar', `${pid} ${left ? 'keluar' : 'terputus'} dari host${this.inMatch ? ' di tengah match (slot dimainkan bot, bisa bergabung ulang)' : ''}`);
+        this.hostRep?.onPeerLeft(pid);
+        if (left || !this.host || this.host !== host || this.host.connected > 0) return;
+        // semua teman putus sekaligus (bukan keluar): mungkin internet KITA yang putus → mereka lanjut di host baru (kode rencana)
+        if (this.inMatch && this.hadFriends) ctx.hud.toast('Semua teman terputus. Kalau internetmu sempat putus, buka menu (Esc) → "Gabung ke host baru"');
+        else if (!this.inMatch && this.nextCode) {
+          const code = this.nextCode;
+          // ditunda: NetHost menggambar ulang room (onLobbyChanged) tepat setelah hook ini — pesan harus tampil sesudahnya
+          setTimeout(() => {
+            if (this.host === host && host.connected === 0 && !this.inMatch && this.menus.current === 'room')
+              this.menus.showRoom(`Semua teman terputus. Kalau internetmu sempat putus, mereka melanjutkan di room ${formatRoomCode(code)} — `
+                + 'tekan Keluar Room lalu Gabung dengan kode itu.');
+          }, 0);
+        }
+      },
+      canRejoin: (pid) => { const pl = this.room?.find(pid); return !!pl && !pl.local && !pl.sim; },
+      onPeerRejoined: (pid) => this.onPeerRejoined(pid),
+      onAfk: (pid, on) => { blackbox.log('afk', `${pid} ${on ? 'AFK (dimainkan bot)' : 'kembali'}`); this.hostRep?.setClientAfk(pid, on); },
+      onYield: (winner) => { if (this.host === host) void this.yieldHost(winner); },
       onLoadout: (pid, lo, v) => this.hostRep?.setLoadout(pid, lo, v),
       onPings: () => this.menus.updatePings(this.netInfo().pings),
     }, iceServers(XCFG.net.ice));
+    host.claim = claim;
     this.host = host; this.netState = 'connecting';
     host.open(code).then(
       () => { if (this.host === host) { this.netState = 'online'; this.menus.refreshRoom(); } },
@@ -645,9 +722,12 @@ export class Game {
   }
 
   /** Gabung room teman: kode → host menjawab → WebRTC → cermin room. */
-  private async joinRoom(code: string, name: string): Promise<{ ok: true } | { ok: false; reason: JoinFail }> {
+  private async joinRoom(code: string, name: string, rejoin: string | null = null, trySec = 0): Promise<{ ok: true } | { ok: false; reason: JoinFail }> {
     this.leaveRoom();
     const s = this.settings;
+    // bergabung lagi ke room hasil serah-terima host → ambil kembali slot lama
+    if (!rejoin && this.rejoinHint && this.rejoinHint.code === code) rejoin = this.rejoinHint.pid;
+    this.plan = null; this.lastSave = null; this.handoverPending = false;
     const client: NetClient = new NetClient(createSignaling(), {
       onLobby: () => {
         if (this.client !== client || !client.lobby || !client.pid) return;
@@ -662,9 +742,20 @@ export class Game {
       },
       onClosed: (reason) => { if (this.client === client) this.onClientClosed(reason); },
       onPings: () => { if (this.client === client) this.menus.updatePings(this.netInfo().pings); },
+      onPlan: (plan) => { if (this.client === client) this.plan = plan; },
+      onSave: (raw) => { if (this.client !== client) return; const sv = parseSave(raw); if (sv) this.lastSave = sv; },
+      onHandover: (plan, save, start) => {
+        if (this.client !== client) return;
+        if (plan) this.plan = plan;
+        const sv = parseSave(save); if (sv) this.lastSave = sv;
+        const st = start && typeof start === 'object' ? parseStart(start as Record<string, unknown>) : null; if (st) this.netStart = st;
+        this.handoverPending = true;
+        blackbox.log('serah-host', `host menyerahkan room → ${plan ? `pengganti ${plan.order[0]}, kode baru ${plan.code}` : 'rencana rusak'}`);
+      },
     }, iceServers(XCFG.net.ice));
     this.client = client; this.netState = 'connecting';
-    const r = await client.join(code, { name, variant: s.charVariant, weapon: s.weapon, scope: s.scope }, XCFG.net.connectTimeout, XCFG.net.helloTimeout);
+    const total = trySec > 0 ? trySec + XCFG.net.joinConnect : XCFG.net.connectTimeout, hello = trySec > 0 ? trySec : XCFG.net.helloTimeout;
+    const r = await client.join(code, { name, variant: s.charVariant, weapon: s.weapon, scope: s.scope }, total, hello, rejoin);
     if (this.client !== client) return { ok: false, reason: 'failed' };   // dibatalkan (keluar / gabung lagi)
     if (!r.ok) { this.client = null; return r; }
     this.netState = 'online';
@@ -679,7 +770,8 @@ export class Game {
     this.cancelNetHold();
     if (this.client) { const c = this.client; this.client = null; c.leave(); }
     if (this.host) { const h = this.host; this.host = null; h.close(); }
-    this.room = null; this.roster = null;
+    this.room = null; this.roster = null; this.promotedFrom = '';
+    void this.syncWakeLock();
   }
 
   private netInfo() {
@@ -732,6 +824,7 @@ export class Game {
   private async startRoom(fromResults = false) {
     const r = this.room;
     if (!r || this.client) return;
+    this.host?.prune();   // teman yang terputus di match sebelumnya tidak menahan Mulai
     const chk = r.canStart(this.roomMe);
     if (!chk.ok) { if (fromResults) this.menus.showRoom(chk.reason); return; }
     const L = r.settings;
@@ -790,7 +883,8 @@ export class Game {
     const net = parseStart(msg);
     if (!net || !net.ents.some(e => e.pid === this.roomMe)) { console.warn('[net] pesan start tidak valid'); return; }
     if (msg.map !== undefined && msg.map !== net.map) console.warn('[net] map dari host tidak dikenal:', msg.map, '→', net.map);
-    if (this.inMatch) this.endMatch();
+    if (this.inMatch) this.endMatch(!!net.resume);
+    if (net.resume) blackbox.log('match-lanjut', `bergabung ke pertandingan yang sedang berjalan (ronde ${net.resume.round}, skor ${net.resume.sb}–${net.resume.sr})`);
     if (net.map === this.mapId) { this.play(net.opts.mode, null, net, net.map); return; }
     const hold = this.netHold.hold();
     this.loadToken++;                                   // batalkan pratinjau map yang masih tertunda
@@ -830,7 +924,13 @@ export class Game {
   /** Klien: koneksi ke host berakhir. */
   private onClientClosed(reason: 'host' | 'kicked' | 'lost') {
     blackbox.log('koneksi-host', reason === 'lost' ? 'koneksi ke host terputus (halaman host di-refresh/ditutup, atau jaringan putus)'
-      : reason === 'host' ? 'host menutup room' : 'dikeluarkan oleh host');
+      : reason === 'host' ? (this.handoverPending ? 'host menyerahkan room' : 'host menutup room') : 'dikeluarkan oleh host');
+    if (this.migrating) return;   // percobaan gabung saat pindah host — ditangani migrate()
+    // host hilang (atau menyerahkan room) dan ada rencana pengganti → lanjut tanpa host lama, bukan bubar
+    if ((reason === 'lost' || (reason === 'host' && this.handoverPending)) && this.plan && this.roomMe && (this.inMatch || this.room)) {
+      void this.migrate();
+      return;
+    }
     this.cancelNetHold();
     this.client = null; this.room = null; this.roster = null;
     if (this.inMatch) this.endMatch();
@@ -941,6 +1041,348 @@ export class Game {
   }
   /** Sedang di room online: host dengan ≥ 1 teman tersambung, atau klien. */
   private onlineRoom(): boolean { return (!!this.host && this.host.connected > 0) || !!this.client; }
+
+  // ───────────────────────────────── pindah host, bergabung ulang, AFK, wake lock (permintaan pengguna 2026-11-25)
+  /** Tiap ±1 s (juga saat tab di belakang): AFK lokal, wake lock, rencana pengganti host. */
+  private netTick() {
+    this.updateAfk();
+    void this.syncWakeLock();
+    this.syncTicket();
+    if (this.host && !this.client && ++this.planT >= XCFG.net.planEvery) { this.planT = 0; this.sendPlan(); }
+    // naik jadi host tapi tak seorang pun menyusul → mungkin host lama masih jalan & teman-teman tetap di sana
+    if (this.promotedFrom && !this.lonelyToast && this.inMatch && !this.hadFriends && this.host?.connected === 0
+      && performance.now() - this.promotedAt > XCFG.net.lonelyAfter * 1000) {
+      this.lonelyToast = true;
+      ctx.hud.toast('Belum ada teman yang menyambung ke kamu. Kalau host lama masih jalan: Esc → "Gabung ke host lama"');
+    }
+  }
+
+  /** Host: rencana pengganti (ping terbaik dulu) + kode room berikutnya ke semua teman. */
+  private sendPlan() {
+    const h = this.host, L = this.room;
+    if (!h || !L || this.client || h.connected === 0) return;
+    if (!this.nextCode) this.nextCode = makeRoomCode(Math.random);
+    h.sendPlan(makePlan(this.nextCode, h.pids(), h.pings(), L.players.map(pl => pl.id)));
+  }
+
+  /** Host: teman bergabung ulang (pid lama). Di tengah match → susunan + cadangan agar dia melanjutkan dari keadaan sekarang;
+   *  slotnya tetap dimainkan bot sampai perintah pertamanya tiba. */
+  private onPeerRejoined(pid: string) {
+    blackbox.log('teman-kembali', `${pid} bergabung ulang${this.inMatch ? ' di tengah match' : ''}`);
+    this.sendPlan();
+    if (!this.inMatch || !this.netStart || !this.host) return;
+    this.hadFriends = true;
+    this.hostRep?.onPeerRejoined(pid);
+    const st = this.netStart;
+    this.host.sendTo(pid, { t: 'start', seed: st.seed, opts: st.opts, ents: st.ents, map: st.map, resume: captureSave() });
+  }
+
+  /** Klien: host hilang (atau menyerahkan room) → lanjut tanpa host lama (urutan waktu: Migration.migrationTimes):
+   *  1) bukan serah-terima: coba sambung ulang ke host LAMA dulu (mungkin hanya koneksi kita yang putus);
+   *  2) gabung ke host baru (kode di rencana) sampai giliran kita; 3) giliran tiba → kita yang jadi host dari cadangan. */
+  private async migrate() {
+    const tok = ++this.migrating;
+    const plan = this.plan!, me = this.roomMe, handover = this.handoverPending;
+    const oldLobby = this.room, oldCode = oldLobby?.code ?? '', wasInMatch = this.inMatch;
+    const name = oldLobby?.find(me)?.name ?? (cleanName(this.settings.playerName) || 'Pemain');
+    const save = wasInMatch ? (handover && this.lastSave ? this.lastSave : this.freshSave()) : null;
+    const start = this.netStart;
+    this.handoverPending = false;
+    this.cancelNetHold();
+    this.client = null; this.netState = 'connecting';
+    const { rank, promoteAt, giveUpAt } = migrationTimes(plan, me, handover);
+    const succ = rank === 0 ? 'kamu' : oldLobby?.find(plan.order[0])?.name ?? 'teman';
+    this.showNetOverlay(handover ? 'Host menyerahkan room' : 'Host terputus',
+      rank === 0 && handover ? 'Kamu jadi host baru…' : `Memindahkan host (pengganti: ${succ})… Game dilanjutkan sebentar lagi.`);
+    blackbox.log('pindah-host', `${handover ? 'serah-terima' : 'host hilang'} · urutan pengganti ${rank} dari ${plan.order.length} · kode baru ${plan.code}`);
+    const t0 = performance.now(), el = () => (performance.now() - t0) / 1000, N = XCFG.net;
+    // netOk: percobaan terakhir sampai ke kanal signaling (internet KITA jalan). Tanpa itu kita TIDAK naik jadi host — mungkin justru
+    // kita yang putus & teman lain masih main dengan host lama. hostSeen: ada host di kode baru tapi WebRTC gagal → coba lagi,
+    // jangan membuat host tandingan.
+    // alt: giliran kode saat internet belum terbukti jalan (host lama baru saja dicoba → mulai dari kode baru)
+    let netOk = handover, hostSeen = false, alt = !handover && !!oldCode, why = 'Koneksi ke host terputus dan pindah host gagal.', retry = oldCode;
+    const tryJoin = async (code: string, sec: number): Promise<'ok' | 'stop' | JoinFail> => {
+      const r = await this.joinRoom(code, name, me, Math.max(1, sec));
+      if (tok !== this.migrating) return 'stop';
+      if (r.ok) return 'ok';
+      if (r.reason !== 'failed') netOk = true;
+      else {
+        this.showNetOverlay('Internet kamu terputus', 'Menunggu tersambung lagi… karaktermu tetap di match & bisa kembali.');
+        await new Promise(res => setTimeout(res, 500));
+      }
+      return tok === this.migrating ? r.reason : 'stop';
+    };
+    if (!handover && oldCode) {   // 1) host lama dulu: mungkin hanya koneksi kita ke host yang putus
+      const r = await tryJoin(oldCode, N.rejoinWait);
+      if (r === 'stop') return;
+      if (r === 'ok') { this.migrated(tok, 'old'); return; }
+    }
+    while (tok === this.migrating) {
+      const offline = navigator.onLine === false;
+      if (el() >= promoteAt && netOk && !hostSeen && !offline) {   // 3) giliran kita → jadi host dari cadangan
+        if (!this.promote(plan, save, start, oldLobby, wasInMatch, rank)) { retry = plan.code; break; }
+        this.promotedFrom = handover ? '' : oldCode; this.promotedAt = performance.now(); this.lonelyToast = false;
+        this.migrated(tok, 'host'); return;
+      }
+      if (el() >= giveUpAt) {
+        if (!netOk || offline) { why = 'Internet kamu terputus. Tekan Gabung setelah tersambung lagi — slotmu di match dikembalikan.'; retry = oldCode || plan.code; }
+        else retry = plan.code;
+        break;
+      }
+      // 2) gabung ke host baru sampai giliran kita; internet belum terbukti jalan → bergantian coba host lama juga
+      const code = !netOk && !handover && oldCode && (alt = !alt) ? oldCode : plan.code;
+      const left = promoteAt - el();
+      const r = await tryJoin(code, Math.min(left > 0.5 ? left : N.joinTry, Math.max(1, giveUpAt - el())));
+      if (r === 'stop') return;
+      if (r === 'ok') { this.migrated(tok, code === oldCode && code !== plan.code ? 'old' : 'new'); return; }
+      if (r === 'full' || r === 'started') { why = 'Host baru menolak sambungan ulang.'; retry = code; break; }
+      if (code === plan.code) hostSeen = r === 'timeout';
+      if (netOk && code === plan.code && !hostSeen)
+        this.showNetOverlay(handover ? 'Host menyerahkan room' : 'Host terputus', `Memindahkan host… Game dilanjutkan sebentar lagi.`);
+    }
+    if (tok !== this.migrating) return;
+    this.migrating = 0; this.hideNetOverlay();
+    if (this.inMatch) this.endMatch();
+    this.room = null; this.netState = 'error';
+    this.rejoinHint = { code: retry, pid: me };
+    this.setTicket({ code: retry, alt: retry !== plan.code ? plan.code : null, pid: me, name, t: Date.now(), match: wasInMatch });
+    blackbox.log('pindah-host', `gagal — ${why}`);
+    blackbox.state({ room: false, role: 'offline' });
+    this.menus.showLobbyHome(() => this.menus.showMain(), retry, why);
+  }
+
+  private migrated(tok: number, how: 'old' | 'new' | 'host') {
+    if (tok !== this.migrating) return;
+    this.migrating = 0;
+    this.hideNetOverlay();
+    blackbox.log('pindah-host', `berhasil: ${how === 'host' ? 'kamu host baru' : how === 'old' ? 'tersambung ulang ke host lama' : 'gabung ke host baru'}`);
+    blackbox.state({ room: true, role: this.client ? 'client' : 'host' });
+    ctx.hud.toast(how === 'host' ? 'Kamu sekarang host — teman-teman menyambung ulang' : how === 'old' ? 'Tersambung lagi — game dilanjutkan'
+      : 'Tersambung ke host baru — game dilanjutkan');
+    if (!this.inMatch && this.room) this.menus.showRoom(how === 'host' ? 'Kamu sekarang host room ini' : how === 'new' ? 'Pindah ke host baru' : undefined);
+  }
+
+  /** Host baru hasil pindah host yang kalah klaim (dua pengganti naik bersamaan di kode yang sama): teman kita diserahkan ke
+   *  pemenang, lalu kita sendiri ikut bergabung ke sana dengan pid lama (pertandingan lanjut dari keadaan pemenang). */
+  private async yieldHost(winner: string) {
+    const h = this.host, L = this.room, me = this.roomMe;
+    if (!h || h !== this.host || !L || this.client || this.migrating) return;
+    const plan: Plan = { code: L.code, order: [winner, ...h.pids().filter(p => p !== winner && p !== me), me] };
+    const st = this.inMatch ? this.netStart : null, save = this.inMatch ? captureSave() : null;
+    blackbox.log('pindah-host', `dua host baru di kode ${L.code} → mengalah ke ${winner} (${h.connected} teman ikut dipindah)`);
+    this.host = null; this.promotedFrom = '';
+    await h.handover(plan, save, st ? { seed: st.seed, opts: st.opts, ents: st.ents, map: st.map } : null);
+    if (this.host || this.client || this.migrating || this.room !== L) return;   // keluar / gabung lain selama jeda
+    this.plan = plan; this.lastSave = save; this.handoverPending = true;
+    void this.migrate();
+  }
+
+  /** Klien → HOST BARU: room = salinan room lama (kode baru, kita host; pemain lain tetap tercatat agar bisa bergabung ulang),
+   *  room dibuka di signaling, pertandingan dilanjutkan dari cadangan (teman lain dimainkan bot sampai bergabung ulang). */
+  private promote(plan: Plan, save: MatchSave | null, start: NetStart | null, oldLobby: Lobby | null, wasInMatch: boolean, rank: number): boolean {
+    const me = this.roomMe;
+    if (!oldLobby || !oldLobby.find(me)) return false;
+    const st = oldLobby.toState(); st.code = plan.code;
+    const L = Lobby.fromState(st, me);
+    for (const pl of L.players) { pl.host = pl.id === me; if (pl.host) pl.ready = true; }
+    // di layar room: pemain yang tidak tersambung ke host lama (termasuk host lama sendiri) tidak ikut — dia bisa masuk lagi seperti
+    // biasa. Di tengah match semua tetap tercatat agar bisa bergabung ulang ke slotnya (dibersihkan prune() saat Mulai / kembali ke room).
+    if (!wasInMatch) for (const pl of [...L.players]) if (pl.id !== me && !pl.sim && !plan.order.includes(pl.id)) L.leave(pl.id);
+    this.leaveRoom();
+    this.room = L; this.roomMe = me; this.nextCode = makeRoomCode(Math.random); this.lastSave = null;
+    this.settings.difficulty = L.settings.difficulty;   // bot match lanjutan memakai kesulitan room, bukan setelan lokal kita
+    this.openHost(plan.code, { pid: me, rank });
+    blackbox.state({ role: 'host', room: true });
+    if (wasInMatch && save && start) {
+      if (this.inMatch) this.endMatch(true);
+      const net: NetStart = { ...start, resume: save };
+      this.play(net.opts.mode, null, net, net.map);
+    } else if (this.inMatch) this.endMatch();
+    return true;
+  }
+
+  /** Klien sebelum mengambil alih: cadangan dari cermin match + snapshot TERBARU (posisi/HP lebih baru dari posisi tampil yang
+   *  tertinggal jeda interpolasi) + amunisi/granat pemain lain dari cadangan terakhir host. */
+  private freshSave(): MatchSave | null {
+    if (!this.inMatch) return null;
+    const s = captureSave(), base = this.lastSave, cr = this.clientRep, me = ctx.player?.id;
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    for (const e of s.ents) {
+      if (e.id === me) continue;
+      const b = base?.ents.find(x => x.id === e.id);
+      if (b) { e.ammo = b.ammo; e.reserve = b.reserve; e.modeIdx = b.modeIdx; e.grenades = b.grenades; }
+      const lat = cr?.latestState(e.id);
+      if (lat && e.alive) { e.x = r2(lat.x); e.y = r2(lat.y); e.z = r2(lat.z); e.yaw = r2(lat.yaw); e.pitch = r2(lat.pitch); if (lat.hp > 0) e.hp = lat.hp; }
+    }
+    return s;
+  }
+
+  /** Host: teman tersambung yang bisa menerima serah-terima (ping terbaik dulu). */
+  private handoverTargets(): { pid: string; name: string; ping: number | null }[] {
+    const h = this.host, L = this.room;
+    if (!h || !L || this.client) return [];
+    const pings = h.pings();
+    return makePlan('', h.pids(), pings, L.players.map(pl => pl.id)).order
+      .map(pid => ({ pid, name: L.find(pid)?.name ?? 'Teman', ping: pings[pid] ?? null }));
+  }
+
+  /** Host: serahkan room & pertandingan ke teman `pid` (lalu keluar). Teman menerima cadangan TERBARU lalu dia yang jadi host;
+   *  yang lain menyambung ke dia. Kita bisa bergabung lagi kapan saja lewat kode room baru (slot lama kita dikembalikan). */
+  private handover(pid: string) {
+    const h = this.host, L = this.room, me = this.roomMe;
+    if (!h || !L || this.client || !h.pids().includes(pid)) return;
+    const plan = makePlan(this.nextCode || makeRoomCode(Math.random), h.pids(), h.pings(), L.players.map(pl => pl.id));
+    plan.order = [pid, ...plan.order.filter(x => x !== pid)];
+    const name = L.find(pid)?.name ?? 'teman', st = this.inMatch ? this.netStart : null;
+    blackbox.log('serah-host', `ke ${pid} · kode baru ${plan.code}`);
+    void h.handover(plan, this.inMatch ? captureSave() : null, st ? { seed: st.seed, opts: st.opts, ents: st.ents, map: st.map } : null);
+    this.host = null;
+    if (this.inMatch) this.endMatch();
+    this.room = null; this.roster = null; this.netState = 'error';
+    this.rejoinHint = { code: plan.code, pid: me };
+    this.setTicket({ code: plan.code, alt: null, pid: me, name: L.find(me)?.name ?? '', t: Date.now(), match: !!st });
+    blackbox.state({ room: false, role: 'offline' });
+    void this.syncWakeLock();
+    this.menus.showLobbyHome(() => this.menus.showMain(), plan.code,
+      `Host diserahkan ke ${name}. Kode room baru ${formatRoomCode(plan.code)} — tekan Gabung untuk ikut main lagi.`);
+  }
+
+  /** Host yang semua temannya terputus sekaligus di tengah match (mungkin internet KITA yang putus): kode room baru tempat mereka
+   *  melanjutkan (null = tidak relevan). */
+  private mergeBackCode(): { code: string; old: boolean } | null {
+    const h = this.host;
+    if (!this.inMatch || !h || this.client || h.connected > 0) return null;
+    if (this.hadFriends && this.nextCode) return { code: this.nextCode, old: false };   // teman pindah host karena kita terputus
+    if (this.promotedFrom) return { code: this.promotedFrom, old: true };              // kita naik jadi host, tak ada yang menyusul
+    return null;
+  }
+
+  /** Gabung ke host baru teman-teman (mereka sudah pindah host karena kita terputus) dengan pid lama → slot kita dikembalikan. */
+  private async mergeBack() {
+    const t = this.mergeBackCode(), me = this.roomMe, name = this.room?.find(me)?.name ?? (cleanName(this.settings.playerName) || 'Pemain');
+    if (!t) return;
+    const lobby = this.room;
+    this.menus.hide();
+    this.showNetOverlay(t.old ? 'Gabung ke host lama' : 'Gabung ke host baru', 'Menyambung ke room teman-teman…');
+    blackbox.log('pindah-host', `host tanpa teman gabung ke ${t.old ? 'host lama' : 'host baru'} ${t.code}`);
+    const r = await this.joinRoom(t.code, name, me, XCFG.net.joinTry * 2);
+    this.hideNetOverlay();
+    if (r.ok) return;
+    // gagal: joinRoom sudah menutup room kita → buka lagi (kode sama) & sambungkan replikasi match ke koneksi baru — match tetap
+    // jalan, teman tetap bisa bergabung ulang, tombol "Gabung" bisa dicoba lagi
+    if (lobby && this.inMatch && !this.host && !this.client) { this.room = lobby; this.openHost(lobby.code); if (this.host) this.hostRep?.rebind(this.host); }
+    ctx.hud.toast(r.reason === 'failed' ? 'Gagal terhubung — cek internet' : 'Room teman tidak ditemukan — mungkin mereka sudah keluar');
+    if (this.inMatch) this.pause();
+  }
+
+  /** AFK lokal di match online (pause / tab tersembunyi / pindah aplikasi ≥ afkAfter s) → karakter dimainkan bot; kembali →
+   *  kendali langsung dikembalikan. Host: bot dipasang di entitas sendiri; klien: dilaporkan ke host. */
+  private updateAfk() {
+    const online = this.inMatch && ctx.net.role !== 'offline' && ctx.match.state !== 'RESULTS';
+    const away = online && (this.awayTest ?? (this.paused || document.hidden || !document.hasFocus()));
+    if (!away) { this.awaySince = -1; if (this.afkOn) this.setLocalAfk(false); return; }
+    if (this.awaySince < 0) this.awaySince = performance.now();
+    if (!this.afkOn && performance.now() - this.awaySince >= XCFG.net.afkAfter * 1000) this.setLocalAfk(true);
+  }
+
+  private setLocalAfk(on: boolean) {
+    this.afkOn = on;
+    blackbox.log('afk', on ? 'kamu AFK — karakter dimainkan bot' : 'kamu kembali');
+    if (ctx.net.role === 'client') { this.client?.act({ a: 'afk', on }); return; }
+    const p = ctx.player;
+    if (!p || ctx.net.role !== 'host') return;
+    if (on) {
+      if (!p.bot) { p.bot = new TacticalBot(p, this.settings.difficulty, 30 + p.id); if (p.alive) p.bot.onSpawn(); }
+      this.hostRep?.notice(`${p.name} AFK — dimainkan bot`);
+    } else {
+      if (p.bot) { p.bot.dispose(); p.bot = null; }
+      ctx.camRig.yaw = p.yaw; ctx.camRig.pitch = p.pitch;   // lanjut dari arah pandang terakhir bot
+      const it = p.intent; it.ix = 0; it.iz = 0; it.jump = false; it.sprint = false; it.wantFire = false;
+      this.hostRep?.notice(`${p.name} kembali`);
+    }
+  }
+
+  /** Screen Wake Lock: layar tidak mati & laptop tidak tidur selama match / room online (hanya saat tab terlihat — dilepas
+   *  otomatis oleh browser saat tersembunyi, diminta lagi saat terlihat). */
+  private async syncWakeLock() {
+    const wl = (navigator as Navigator & { wakeLock?: { request(type: 'screen'): Promise<WakeLockSentinel> } }).wakeLock;
+    if (!wl || this.wakeBusy) return;
+    const want = (this.inMatch && ctx.net.role !== 'offline') || this.onlineRoom();
+    if (want && !this.wakeLock && document.visibilityState === 'visible') {
+      this.wakeBusy = true;
+      try {
+        const lock = await wl.request('screen');
+        this.wakeLock = lock;
+        lock.addEventListener('release', () => { if (this.wakeLock === lock) this.wakeLock = null; });
+        blackbox.log('wake-lock', 'aktif (layar & laptop tidak tidur selama main online)', 60_000);
+      } catch (err) { blackbox.log('wake-lock', 'ditolak browser: ' + String(err), 60_000); }
+      this.wakeBusy = false;
+    } else if (!want && this.wakeLock) {
+      const lock = this.wakeLock; this.wakeLock = null;
+      void lock.release().catch(() => { /* sudah dilepas */ });
+    }
+  }
+
+  /** Tiket kembali ke match (sessionStorage) diperbarui selagi di room online — dipakai bila halaman ini hilang (refresh / tutup /
+   *  crash). Klien: kode host sekarang (+ kode rencana pindah host). Host: kode room berikutnya (tempat teman melanjutkan). */
+  private syncTicket() {
+    if (this.migrating) return;   // selama pindah host tiket lama tetap berlaku
+    const L = this.room, me = this.roomMe, name = L?.find(me)?.name ?? '';
+    let t: Ticket | null = null;
+    if (L && me && this.client?.connected) t = { code: L.code, alt: this.plan?.code ?? null, pid: me, name, t: 0, match: this.inMatch };
+    else if (L && me && this.host && !this.client && this.host.connected > 0 && this.nextCode)
+      t = { code: this.nextCode, alt: null, pid: me, name, t: 0, match: this.inMatch };
+    if (!t) return;   // tidak di room online: tiket terakhir dibiarkan (dihapus saat keluar dengan sengaja / dipakai)
+    const key = JSON.stringify(t), now = Date.now();
+    if (key === this.ticketKey && now - this.ticketT < 30_000) return;
+    this.ticketKey = key; this.ticketT = now;
+    saveTicket({ ...t, t: now });
+  }
+
+  private setTicket(t: Ticket) { this.ticket = t; this.ticketKey = ''; saveTicket(t); }
+  private dropTicket() { this.ticket = null; this.ticketKey = ''; saveTicket(null); }
+
+  /** Menu utama → "Kembali ke match": gabung dengan pid lama (host mengembalikan slot & mengirim keadaan match terbaru). */
+  private async useTicket(): Promise<string | null> {
+    const t = this.ticket;
+    if (!t) return null;
+    const name = cleanName(t.name) || cleanName(this.settings.playerName) || 'Pemain';
+    blackbox.log('kembali-ke-match', `mencoba ${t.code}${t.alt ? ' / ' + t.alt : ''} sebagai ${t.pid}`);
+    let why = 'Room itu sudah tidak ada — teman-teman mungkin sudah selesai main.';
+    for (const code of t.alt ? [t.code, t.alt] : [t.code]) {
+      const r = await this.joinRoom(code, name, t.pid);
+      if (r.ok) {
+        this.dropTicket();
+        // match berjalan → host langsung mengirim susunan + keadaan terbaru (layar room hanya bila ternyata tidak ada match)
+        setTimeout(() => { if (!this.inMatch && this.room && !this.netHold.holding && this.menus.current === 'main') this.menus.showRoom('Kembali ke room'); },
+          t.match ? 1500 : 0);
+        return null;
+      }
+      if (r.reason === 'failed') return 'Gagal terhubung — cek internet lalu coba lagi.';
+      if (r.reason === 'started') why = 'Match di room itu sedang berjalan dan slotmu sudah tidak tersedia.';
+    }
+    return why;
+  }
+
+  /** Klien di tengah match: host diam > stallShow s (snapshot 30 Hz biasanya) → beri tahu (dunia tampak beku); pulih → hilang.
+   *  > hostSilence s → pindah host (NetClient). */
+  private updateStall() {
+    const c = this.client, stall = !!c && c.connected && this.inMatch && !this.migrating && c.silence > XCFG.net.stallShow;
+    if (stall === this.stallShown) return;
+    this.stallShown = stall;
+    if (stall) this.showNetOverlay('Koneksi ke host tersendat', 'Menunggu host… bila tidak pulih, host dipindahkan otomatis & game dilanjutkan.');
+    else if (!this.migrating) this.hideNetOverlay();
+  }
+
+  private showNetOverlay(title: string, text: string) {
+    let el = document.getElementById('net-overlay');
+    if (!el) { el = document.createElement('div'); el.id = 'net-overlay'; document.body.appendChild(el); }
+    el.innerHTML = `<div class="gr-t"></div><div class="gr-s"></div>`;
+    (el.querySelector('.gr-t') as HTMLElement).textContent = title;
+    (el.querySelector('.gr-s') as HTMLElement).textContent = text;
+    el.classList.remove('hidden');
+  }
+  private hideNetOverlay() { document.getElementById('net-overlay')?.classList.add('hidden'); }
 
   // ───────────────────────────────── pemulihan grafis (konteks WebGL hilang → pulih di tempat, bukan muat ulang)
   /** Konteks hilang: simulasi tetap jalan (host: room & teman aman); layar "Memulihkan grafis…"; > 10 s → tombol muat ulang. */
@@ -1148,7 +1590,7 @@ export class Game {
         e.bot.fixedUpdate(dt);
       }
       if (!e.alive || e.puppet) continue;                // boneka (klien): posisi dari snapshot host
-      if (e.remote?.frozen) e.ctrl.hold();               // host: perintah remote belum tiba → ditahan (tanpa mengarang masukan)
+      if (e.remote?.frozen && !e.bot) e.ctrl.hold();     // host: perintah remote belum tiba → ditahan (AFK/terputus: bot yang menggerakkan)
       else e.ctrl.fixedUpdate(dt, e.intent, e.weapon.adsActive);
     }
     // 3. timer sumbu granat → world.step() → props, mayat
@@ -1174,7 +1616,8 @@ export class Game {
   // ───────────────────────────────── per frame (§2.6)
   private update(dt: number, alpha: number, rawDt: number) {
     ctx.time += dt;
-    if (this.inMatch) this.bbPerf();
+    if (this.inMatch) { this.bbPerf(); if (ctx.net.role !== 'offline') this.updateAfk(); }
+    this.updateStall();
     const p = ctx.player, rig = ctx.camRig, inp = this.input, cam = this.engine.camera;
     if (this.slowmoEnd && performance.now() > this.slowmoEnd) { this.slowmoEnd = 0; this.loop.timeScale = 1; }
     if (this.menus.open && inp.padActive) this.menus.padNav(inp.pad);
@@ -1208,7 +1651,8 @@ export class Game {
         if (ctx.debug.noclip) rig.addLook(dYaw, dPitch);
         else if (p.alive) { p.recoil.onMouseLook(R2D(dPitch)); rig.addLook(dYaw, dPitch); }
       }
-      if (p.alive) {
+      if (p.alive && p.bot) { rig.yaw = p.yaw; rig.pitch = p.pitch; }   // AFK: bot yang membidik, kamera mengikutinya
+      else if (p.alive) {
         const rec = p.recoil.update(dt, ctx.time, p.weapon.def); // pemulihan sadar-kompensasi
         if (rec) rig.addLook(0, D2R(rec));
         p.yaw = rig.yaw; p.pitch = rig.pitch;
@@ -1232,7 +1676,7 @@ export class Game {
     } else this.menuCamera(dt, cam);
 
     // 2. senjata pemain
-    if (p && this.inMatch) this.playerWeapon(dt, looking);
+    if (p && this.inMatch && !p.bot) this.playerWeapon(dt, looking);   // AFK: senjata digerakkan bot (loop bot di bawah)
     // 3. bot: bidik per frame + keputusan tembak
     for (const e of ctx.entities) if (e.bot) e.bot.update(dt);
     // 4. senjata, granat & melee semua bot

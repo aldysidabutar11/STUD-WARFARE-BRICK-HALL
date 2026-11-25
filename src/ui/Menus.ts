@@ -47,6 +47,19 @@ export interface MenuApi {
   mapChoice(): MapChoice;
   /** Map yang sedang dimuat (= map match yang sedang / baru saja dimainkan). */
   mapId(): MapId;
+  /** Host online: teman tersambung yang bisa menerima serah-terima host (ping terbaik dulu). */
+  handoverTargets(): { pid: string; name: string; ping: number | null }[];
+  /** Host: serahkan room & match ke teman `pid` lalu keluar (match jalan terus untuk yang lain). */
+  handover(pid: string): void;
+  /** Host tanpa teman di tengah match: kode room tempat teman-teman melanjutkan (old = host lama yang mungkin masih jalan, setelah
+   *  kita naik jadi host tapi tak ada yang menyusul), null = tidak relevan. */
+  mergeBackCode(): { code: string; old: boolean } | null;
+  mergeBack(): void;
+  /** Tiket kembali ke match online (halaman sebelumnya di-refresh / ditutup di room online), null = tidak ada. */
+  ticket(): { code: string; match: boolean } | null;
+  /** Gabung lagi dengan slot lama; hasil = pesan gagal (null = berhasil). */
+  useTicket(): Promise<string | null>;
+  dropTicket(): void;
 }
 
 /** Urutan kartu pilihan map: semua map lalu "Acak". */
@@ -100,7 +113,14 @@ export class Menus {
     const issueHtml = issue ? `<div class="bb-issue"><b>⚠ Sesi sebelumnya berakhir tidak normal</b> <span class="bb-when">(${esc(issue.when)})</span>
       <div class="bb-why">${esc(issue.text)}</div>
       <div class="bb-btns"><button data-a="bbcopy">Salin laporan</button><button data-a="bbclose">Tutup</button></div></div>` : '';
-    const m = this.mount('main', `<div class="card main"><h1>STUD WARFARE</h1><div class="sub">BRICK HALL</div>${issueHtml}
+    // tiket kembali ke match: halaman sebelumnya hilang di tengah main bareng → teman-teman melanjutkan, slot kita dikembalikan
+    const tk = this.api.ticket();
+    const tkHtml = tk ? `<div class="bb-issue rejoin"><b>↻ Kembali ke ${tk.match ? 'match' : 'room'} teman-teman?</b>
+      <div class="bb-why">Halaman sebelumnya tertutup / ter-refresh saat main bareng. Teman-teman tetap ${tk.match ? 'melanjutkan match' : 'di room'}
+        (kode ${formatRoomCode(tk.code)}) — ${tk.match ? 'slotmu dimainkan bot sampai kamu kembali' : 'kamu bisa masuk lagi'}.</div>
+      <div class="bb-btns"><button class="primary" data-a="tkgo">Kembali ke ${tk.match ? 'match' : 'room'}</button><button data-a="tkno">Abaikan</button></div>
+      <div class="bb-why" data-tkmsg></div></div>` : '';
+    const m = this.mount('main', `<div class="card main"><h1>STUD WARFARE</h1><div class="sub">BRICK HALL</div>${tkHtml}${issueHtml}
       <div class="btns"><button class="primary" data-a="play">▶ Main</button><button data-a="room">👥 Main Bareng (Room)</button>
       <button data-a="practice">◎ Latihan Menembak <small class="bsub">· ${esc(mc === 'random' ? 'map acak' : MAPS[mc].name)}</small></button>
       <button data-a="loadout">Loadout</button><button data-a="settings">Pengaturan</button><button data-a="controls">Kontrol</button>
@@ -111,6 +131,16 @@ export class Menus {
     this.on(m, 'bbcopy', () => this.copyReport(m, m.querySelector('[data-a="bbcopy"]')));
     this.on(m, 'bbreport', () => this.copyReport(m, m.querySelector('[data-a="bbreport"]')));
     this.on(m, 'bbclose', () => { blackbox.dismissPrev(); this.showMain(); });
+    this.on(m, 'tkno', () => { this.api.dropTicket(); this.showMain(); });
+    this.on(m, 'tkgo', () => {
+      const btn = m.querySelector<HTMLButtonElement>('[data-a="tkgo"]')!, msg = m.querySelector<HTMLElement>('[data-tkmsg]')!;
+      if (btn.disabled) return;
+      btn.disabled = true; btn.textContent = 'Menyambung…'; msg.textContent = '';
+      void this.api.useTicket().then((err) => {
+        if (!err) return;
+        btn.disabled = false; btn.textContent = 'Coba lagi'; msg.textContent = err;
+      });
+    });
     this.on(m, 'play', () => this.showMatchSetup(() => this.showMain()));
     this.on(m, 'room', () => (this.api.room() ? this.showRoom() : this.showLobbyHome(() => this.showMain())));
     this.on(m, 'practice', () => this.api.play(true));
@@ -595,12 +625,27 @@ export class Menus {
   showPause(cooldownMs: number) {
     const role = ctx.net.role;
     const quit = role === 'host' ? 'Akhiri Match (semua kembali ke room)' : role === 'client' ? 'Keluar Room' : 'Keluar ke Menu';
-    const note = role !== 'offline' ? 'Main online: game tetap berjalan saat pause.'
+    const note = role !== 'offline' ? `Main online: game tetap berjalan saat pause — setelah ${XCFG.net.afkAfter} detik karaktermu dimainkan bot sampai kamu kembali.`
       : this.api.settings().fullPause ? 'Jeda penuh aktif.' : 'Game tetap berjalan karena ada bot (opsi "jeda penuh" di Pengaturan → HUD & Gameplay).';
+    // host harus pergi → serahkan host ke teman (match jalan terus); host yang tertinggal (teman sudah pindah host) → gabung ke mereka
+    const targets = role === 'host' ? this.api.handoverTargets() : [], merge = role === 'host' ? this.api.mergeBackCode() : null;
+    const ping = (v: number | null) => (v === null || v < 0 ? '' : ` · ${Math.round(v)} ms`);
+    const hand = targets.length ? `<div class="handover"><div class="note">Harus pergi? Serahkan host ke teman — match tetap jalan untuk semua.</div>
+      <div class="btns">${targets.map(t => `<button data-h="${esc(t.pid)}">Serahkan host ke ${esc(t.name)}${ping(t.ping)} &amp; keluar</button>`).join('')}</div></div>` : '';
+    const mergeBtn = merge ? `<div class="handover"><div class="note">${merge.old
+      ? 'Tidak ada teman yang menyambung ke kamu — mungkin host lama masih jalan & teman-teman tetap di sana.'
+      : 'Semua teman terputus — kalau internetmu sempat putus, mereka sudah melanjutkan match dengan host baru.'}</div>
+      <div class="btns"><button class="primary" data-a="merge">Gabung ke host ${merge.old ? 'lama' : 'baru'} (${formatRoomCode(merge.code)})</button></div></div>` : '';
     const m = this.mount('pause', `<div class="card"><h2>Pause</h2><div class="btns">
       <button class="primary" data-a="resume">Lanjut</button><button data-a="loadout">Loadout</button><button data-a="settings">Pengaturan</button>
       <button data-a="controls">Kontrol</button>${role === 'client' ? '' : '<button data-a="restart">Ulangi match</button>'}<button data-a="quit">${quit}</button></div>
-      <div class="note">${note}</div></div>`);
+      ${mergeBtn}${hand}<div class="note">${note}</div></div>`);
+    // serah-terima = keluar dari match → minta klik kedua sebagai konfirmasi
+    m.querySelectorAll<HTMLButtonElement>('[data-h]').forEach(b => b.addEventListener('click', () => {
+      if (b.dataset.sure) { this.api.handover(b.dataset.h!); return; }
+      b.dataset.sure = '1'; b.classList.add('primary'); b.textContent = 'Yakin? Klik lagi untuk menyerahkan host';
+    }));
+    this.on(m, 'merge', () => this.api.mergeBack());
     const btn = m.querySelector<HTMLButtonElement>('[data-a="resume"]')!;
     if (cooldownMs > 0) { btn.disabled = true; setTimeout(() => (btn.disabled = false), cooldownMs); }
     this.on(m, 'resume', () => this.api.resume());

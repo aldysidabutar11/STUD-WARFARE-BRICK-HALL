@@ -241,8 +241,9 @@
     pesan 'start' dulu, lalu spawn tersiar); tanpa teman → match lokal seperti biasa. Klien: semua entitas lain `puppet` (tanpa KCC/AI),
     damage/spawn hanya dari host (TeamManager.applyDamage return di klien), `MatchManager.startPuppet/applyNet`. Online: tanpa jeda penuh,
     slow-mo akhir match & slowmo debug (waktu host = klien); buang/ambil senjata & Latihan offline saja; killcam tetap jalan.
-    Host keluar di tengah match → 'abort' (semua ke room, pesan di status room); klien keluar di tengah match = keluar room → slotnya
-    TacticalBot (HostRep.onPeerLeft). Hasil: host "Main Lagi" (mulai lagi untuk semua; status siap tidak direset online) / klien menunggu.
+    Host memilih "Akhiri Match" → 'abort' (semua ke room, pesan di status room); host HILANG → pindah host (lihat "Pindah host & AFK");
+    klien keluar / terputus di tengah match → slotnya dimainkan bot (HostRep.onPeerLeft → setAfk 'gone'; bisa bergabung ulang).
+    Hasil: host "Main Lagi" (mulai lagi untuk semua; status siap tidak direset online) / klien menunggu.
     `GameLoop.setKeepAlive(true)` saat host: Worker (blob) menjalankan frame tanpa render bila rAF berhenti > 100 ms (tab di belakang).
   - UI (Menus.showLobbyHome(back, code, message) / showRoom(notice) / refreshRoom, CSS hud.css): Gabung = koneksi sungguhan dengan pesan
     gagal (notfound/full/started/timeout/failed); badge status (Menyiapkan / Online — n teman / Uji lokal / Terhubung ke host);
@@ -286,6 +287,63 @@
       teman tetap tersambung & match lanjut; refresh di tengah match → dialog, Batal → tetap main, diterima → banner sebab + laporan
       tersalin; refresh di menu → tanpa dialog; konteks tak pulih → tombol tampil 10 s, klik mouse mentah → muat ulang → banner
       "grafis tidak pulih". Tests: tests/blackbox.test.ts, tests/input.test.ts (pintasan saat terkunci / di menu, label).
+  - Pindah host & AFK (permintaan pengguna 2026-11-25: "kalau gue sebagai host tiba-tiba keluar, langsung otomatis pindah host"; disetujui
+    "gas kerjain semua": wake lock, AFK → bot, serahkan host manual, pindah host otomatis + bergabung ulang + gabung balik). Angka di XCFG.net
+    (saveEvery…claimEvery, afkAfter, silentAfk, stallShow, ticketTtl, lonelyAfter).
+    - Murni (tests/migration.test.ts): `net/Migration.ts` — `makePlan` (teman tersambung, ping terkecil dulu, belum terukur terakhir, seri →
+      urutan room), `parsePlan`, `migrationTimes(plan, me, handover)` → rank / promoteAt (= rejoinWait (0 bila serah-terima) + rank ×
+      migrateStep) / giveUpAt (≥ migrateMax, tiap anggota kebagian giliran), `MatchSave` (v, state, ronde, waktu, hitung mundur, skor,
+      pemenang, entitas: hidup/HP/respawnT/protectT/posisi/yaw/pitch/loadout/isi/cadangan/mode/granat/10 statistik/streak/varian) +
+      `parseSave` (validasi & batas: data teman tidak dipercaya). `Session.claimBeats/parseClaim`, `net/Ticket.parseTicket`.
+    - Host: cadangan `{t:'save'}` tiap saveEvery (1 s, HostRep.afterStep, `net/Resume.captureSave`) + rencana `{t:'plan', code: nextCode,
+      order}` tiap planEvery (5 s) & saat room berubah. Kode room BARU dibuat host sejak createRoom (`nextCode`) — kode lama tidak dipakai
+      ulang agar host lama yang ternyata masih hidup tidak bentrok.
+    - Klien mendeteksi host hilang: kanal tertutup (instan) atau diam > hostSilence (5 s; ICE baru menyatakan gagal ±30 s; > stallShow 2 s
+      → overlay "Koneksi ke host tersendat"). `Game.migrate()`: (1) bukan serah-terima → coba host LAMA dulu (rejoinWait 3 s; mungkin hanya
+      koneksi kita yang putus) → (2) gabung ke `plan.code` sampai giliran → (3) giliran tiba → `promote()`: salinan lobby (kode baru, kita
+      host, pemain lain tetap tercatat), `openHost(code, claim)`, `play(…, {...netStart, resume: save})` (cadangan = cadangan host terakhir
+      + snapshot TERBARU yang diterima (`ClientRep.latestState`) — serah-terima memakai cadangan dari pesan handover). Naik jadi host HANYA
+      bila percobaan terakhir sampai ke kanal signaling (`JoinFail` dibedakan: 'failed' = signaling tak tersambung = internet KITA,
+      'notfound' = tidak ada host, 'timeout' = host menjawab tapi WebRTC gagal → host ada, jangan bikin tandingan) & `navigator.onLine`;
+      internet kita putus → bergantian coba host lama / kode baru sampai giveUpAt, lalu layar Main Bareng + tiket.
+    - Di layar room (belum main): `promote` membuang pemain yang tidak ada di rencana (termasuk host lama) → tidak ada "pemain hantu";
+      host room yang semua temannya terputus (bukan keluar) → pesan kode room baru (ditunda setTimeout 0: NetHost menggambar ulang room
+      lewat onLobbyChanged tepat setelah onPeerLeft). Host baru memakai kesulitan ROOM untuk bot match lanjutan (`settings.difficulty`).
+    - `NetClient.join`: hello diulang tiap helloEvery (1 s) selama belum dijawab; batas sambung dihitung ulang sejak host menjawab
+      (timeoutSec − helloSec, migrasi: joinConnect 5 s). Dua pengganti naik bersamaan (rencana berbeda / host baru lambat) → host hasil
+      pindah host menyiarkan klaim `'host'` {pid, rank, peers} di signaling tiap claimEvery (3 s) + saat dibuka; kalah (`claimBeats`: teman
+      tersambung lebih banyak → rank lebih kecil → pid) → `yieldHost`: serah-terima teman-temannya ke pemenang, lalu ikut migrate
+      (handover). Terukur: dua host di 3.20 s → satu host 3.74 s.
+    - Bergabung ulang: hello/join membawa `rejoin: pid` → host menerima bila `canRejoin` (pid ada di lobby, bukan lokal/simulasi) — juga di
+      tengah match / room penuh, dan walau koneksi lama pid itu masih tampak hidup (dibuang tanpa "teman keluar"). Di tengah match pemain
+      yang terputus TETAP di lobby (kecuali 'leave' sengaja); `prune()` saat kembali ke room / Mulai. Host → 'start' + `resume:
+      captureSave()` ke dia (`onPeerRejoined`; `CommandQueue.restart()` karena seq mulai dari 1). `parseStart` memvalidasi `resume`.
+      `MatchManager.resume`, `SpawnSystem.restore` (tanpa event spawn/isi ulang/perlindungan), `applySaveEntities`.
+    - AFK pemain remote (`RemoteHuman.afk`: 'client' lapor sendiri / 'silent' tanpa perintah ≥ silentAfk / 'gone' terputus / 'connecting'
+      menunggu perintah pertama): TacticalBot memegang entitasnya, perintah yang masuk dibuang tapi tetap di-ack, tembakan bot tidak di-rewind,
+      ping −1. AFK lokal (`Game.updateAfk`: pause / tab tersembunyi / jendela tanpa fokus ≥ afkAfter 10 s di match online; `awayTest` uji):
+      klien → act 'afk'; host → TacticalBot di `ctx.player` (kamera mengikuti yaw/pitch bot, playerWeapon dilewati). Status AFK terbawa
+      saat match dilanjutkan.
+    - Serahkan host (pause host online, klik dua kali): `NetHost.handover(plan, save, start)` → 'handover' lalu tutup 400 ms → penerima
+      promoteAt 0, yang lain menyusul. Host lama → layar Main Bareng dengan kode baru + `rejoinHint` (Gabung = pid lama → slotnya).
+    - Gabung balik: host yang semua temannya terputus sekaligus di tengah match (internet kita sempat putus) → pause "Gabung ke host baru"
+      (`nextCode`); naik jadi host tapi tak ada yang menyusul ≥ lonelyAfter → toast + "Gabung ke host lama" (`promotedFrom`). Gagal →
+      room dibuka lagi & `HostRep.rebind`. Di layar room: semua terputus → pesan kode room baru.
+    - Tiket kembali ke match (`net/Ticket.ts`, sessionStorage `studwarfare.rejoin.v1`, ttl 15 menit; localStorage tetap khusus settings):
+      klien = kode host (+ kode rencana), host = nextCode (hanya bila ada teman). Menu utama → kartu "Kembali ke match" → `useTicket`
+      (gabung dengan pid lama). Dihapus saat keluar room dengan sengaja / dipakai / buat room baru.
+    - Wake lock (`navigator.wakeLock`, 'screen') selama match online / room online, diminta ulang saat tab terlihat lagi.
+    - Kotak hitam: pindah-host, serah-host, afk, teman-kembali, match-lanjut, kembali-ke-match, wake-lock; teks sebab "host di-refresh"
+      kini "teman-teman dipindah ke host baru".
+    - Terukur (Chromium headless, signaling antar-tab, host + 2 teman): halaman host ditutup → host baru 3.22 s (TDM; ronde/skor/waktu/
+      statistik utuh, id entitas sama, host lama [bot]{gone}); internet host putus (Eliminasi) → 9.0–9.6 s, host lama "Gabung ke host baru"
+      0.32–0.34 s ke slotnya; koneksi teman mati diam-diam → sambung ulang otomatis 6.1 s; AFK teman/host → bot ±10 s, kembali instan;
+      serah-terima 0.56 s, host lama gabung lagi ke slotnya; host di-refresh → kartu → kembali 0.44 s setelah klik; teman di-refresh → 0.44 s;
+      host diam 3.2 s → overlay tampil lalu hilang tanpa pindah host; gabung balik ke kode kosong → gagal 5 s, room dibuka lagi +
+      `HostRep.rebind`, match jalan terus; layar room: host ditutup → host room baru 3.14 s tanpa pemain hantu, internet host room putus →
+      8.0 s + pesan kode di host lama; host AFK: kamera tertinggal 1 frame dari bot (median 0.1°, maks 2.2°); 0 error konsol.
+      Skrip uji lokal (scratchpad, bisa hilang): pw/migrate.js, migrate2.js, migrate3.js, migrate4.js. Belum diuji: Supabase asli &
+      dua perangkat/jaringan.
 
 - Multi-map & Steel Yard (permintaan pengguna: map kedua "Steel Yard" — halaman kontainer di gurun, "detail dan lengkap"; dikerjakan
   bertahap: F1 fondasi → C1 denah/nav/test, C2 visual, C3 UI/online → I1 integrasi & uji browser):
@@ -430,7 +488,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 258 test Vitest / 20 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 272 test Vitest / 21 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -438,7 +496,8 @@
   pilihan map room/NetStart, antrean pesan klien saat memuat map (HoldQueue), Props/collider dilepas saat ganti map, bot manusiawi
   (tests/botAim.test.ts: profil sentakan/kelewatan/pelacakan/rencana ulang, reaksi, near-miss, perkiraan arah, callout;
   tests/botTactics.test.ts: cover, posisi tempur, kabur granat di collider Rapier SY & BH), kotak hitam & sebab sesi berakhir
-  (tests/blackbox.test.ts), pintasan browser saat bermain (tests/input.test.ts)) hijau;
+  (tests/blackbox.test.ts), pintasan browser saat bermain (tests/input.test.ts), pindah host / cadangan / klaim / tiket
+  (tests/migration.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

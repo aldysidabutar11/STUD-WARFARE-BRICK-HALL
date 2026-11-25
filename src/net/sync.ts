@@ -193,4 +193,6 @@ export class CommandQueue {
     return { cmd: { ...this.last, imp: 0, held: 0, mx: 0, mz: 0 }, prevHeld };
   }
   reset() { this.q.length = 0; this.last = null; this.idle = 0; this.lastHeld = 0; }
+  /** Klien bergabung ulang (sesi baru → seq mulai dari 1 lagi): lupakan juga seq terakhir. */
+  restart() { this.reset(); this.lastSeq = 0; }
 }
