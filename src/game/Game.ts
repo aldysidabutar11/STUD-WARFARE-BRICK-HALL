@@ -282,6 +282,7 @@ export class Game {
       ctx.directors[e.team].release(e);
     }
     ctx.entities.length = 0; ctx.byId.clear(); ctx.player = null; this.dummies = []; this.movers.clear();
+    for (const d of Object.values(ctx.directors)) d.reset();   // laporan & callout bot match lama
     this.debugPanel.clearLabels();
     this.nameplates.clear();
   }
@@ -407,7 +408,7 @@ export class Game {
       ctx.grenades?.clear(); ctx.drops?.clear(); ctx.vfx?.clear(); ctx.deathFx?.clear();
       ctx.props.dispose();
       ctx.map.dispose();
-      if (ctx.directors) for (const d of Object.values(ctx.directors)) d.reports.clear();
+      if (ctx.directors) for (const d of Object.values(ctx.directors)) d.reset();
     }
     sc.environment = null; engine.vmScene.environment = null;
     if (this.envRT) { this.envRT.dispose(); this.envRT = null; this.envTex = null; }

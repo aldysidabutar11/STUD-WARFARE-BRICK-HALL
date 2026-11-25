@@ -359,14 +359,59 @@
     matahari. Game.captureEnvironment mengompilasi tiap program 2× (varian render target + layar) — ±ratusan ms saat muat, semua map.
     loadMap dua kali berturut-turut TANPA frame di antaranya → peringatan WebGL "Program object expected" (alur normal selalu ada frame).
 
+- Bot manusiawi (permintaan pengguna 2026-11-25: "bot kurang realistis", ide dari obrolan Google AI mode; disetujui "gas kerjakan semua"
+  untuk 3 paket bidikan / tempur / patroli & tim). Tabel kesulitan GDD §11.5 TIDAK diubah; semua angka baru di `XCFG.bots.human`
+  (+ `human.diff` per kesulitan). FSM GDD §11.2 tetap, ditambah state `EVADE`.
+  - Bidik (`src/entities/botAim.ts`, murni): sentakan berprofil minimum-jerk dengan kecepatan PUNCAK = turn rate GDD (dulu putaran
+    kecepatan konstan yang berhenti mendadak = turret), ujung kelewatan/kurang + meleset tegak lurus lalu dikoreksi pelacakan
+    (feedforward kecepatan target); tujuan melompat (> ½ flickMin per langkah) → sentakan direncanakan ulang dari pose sekarang
+    (terukur: kecepatan bidik maks 1775 → 519°/s, p99.9 416). Menoleh santai (patroli) = 45% turn rate.
+  - Reaksi: rata-rata nilai GDD × jitter 0.8–1.2 × (1 + 0.35·(sudut/½FOV)²) × (1 + 0.25·jauh) × waspada 0.85 × sudah membidik ke
+    sana (≤ 15°) 0.85, clamp 0.7–1.8.
+  - Syarat tembak §11.4 (deviasi < 2.5° hip / 1.2° ADS) diukur terhadap titik bidik yang DIMAKSUD (target + error GDD + kaget;
+    `gateIntent` 1). Dulu terhadap pusat target → error GDD hanya MENUNDA tembakan (di jarak ADS bot diam ±1.6 s menunggu error
+    < 1.2°, lalu nyaris selalu kena: akurasi 64–71%); kini tembakan awal meleset lalu membaik (maksud §11.4). `aimLag` (Mudah 0.14 /
+    Normal 0.10 / Sulit 0.07 s): bidikan tertinggal di belakang target yang bergerak (strafe/lompat pemain berguna). Kaget (startle,
+    meluruh 0.45 s): kena tembak 3.0/2.0/1.2°, peluru lewat ≤ 1.6 u dari kepala 1.6/1.1/0.7°. Target tak terlihat → bidik posisi
+    terakhir (dulu bagian tubuh target, menembus dinding).
+  - Tempur (`src/entities/botTactics.ts`, diuji dengan collider Rapier map asli): geser–berhenti–tembak diputuskan per burst
+    (counterStrafe 0/0.6/0.9; tunggu ≤ 0.15 s sampai < movingSpeed); posisi tempur dari balik cover (`fightSpot`: node cover ≤ 9 u,
+    biaya jalur ≤ 1.6× + 2, mata jongkok tersembunyi dari mata ancaman, titik intip = berdiri di balik cover rendah atau geser ±1.6/2.6 u
+    yang punya LOS mata berdiri → dada ancaman; siklus sembunyi 0.45–1.1 s ↔ intip 1.2–2.4 s, reload saat sembunyi; peluang pakai
+    0.5/0.8/0.95); RELOAD saat terlihat → menuju cover ≤ 10 u (GDD "strafe menuju cover"; dulu strafe acak); EVADE: granat musuh ≤ 10 u
+    yang terlihat / terdengar memantul → sadar 50/80/95% → jeda 0.6/0.4/0.25 s → lari ke node yang terhalang dari titik ledak atau
+    ≥ 11 u (`fleeNode`; terpojok: minimal menjauh 2 u); kena tembak penyerang tak terlihat → hanya ARAH ±20° & jarak ×0.7–1.3 (dulu
+    posisi PERSIS = satu-satunya "cheat" bot) → 70% cari cover ≤ 12 u (sisanya menoleh & investigasi); tertekan (≥ 2 peluru lewat,
+    penembak tak terlihat) → cover. TAKE_COVER: biaya JALUR ≤ 25 u (GDD §11.9; dulu jarak lurus) + pengaman keluar 6 s.
+    Granat §11.8 hanya ke posisi yang DILIHAT sendiri (`seenAt`), bukan perkiraan/callout (dulu laju lempar sempat 2× lipat).
+  - Patroli & tim: titik pandang = ±10 u ke depan sepanjang jalur (mengantisipasi belokan), lirik node yang BARU terlihat 6–40 u di
+    depan/samping (4 raycast per think, cooldown 4 s per node, sisi lawan diutamakan), arah waspada (kena tembak / peluru lewat /
+    callout) 2.5 s, arah investigasi; sprint hanya di luar zona kontak (node sisi lawan / waspada ≤ 8 s / laporan musuh ≤ 35 u);
+    jeda 0.35–0.9 s (30%) di persimpangan ≥ 3 cabang sambil melirik cabang lain; callout `BotDirector` (jeda 0.9–1.8 / 0.6–1.4 /
+    0.5–1.0 s, posisi ±2 u, 1 laporan per musuh tiap 2 s, ≤ 45 u; responden ≤ 1/2/2 rekan bebas terdekat → INVESTIGATE, responden
+    ke-2 ke node lain ≥ 6 u dari yang pertama; rekan lain hanya menoleh & waspada). `BotDirector.reset()` tiap match / ganti map.
+  - Navigasi: node awal jalur = node terdekat yang bisa didatangi LURUS selebar badan (2 sinar lutut ±0.8 + dada; beda tinggi ≤ 6 u,
+    juga saat di tangga). Dulu node terdekat saja → bisa di balik dinding (terukur: bot di tangga BH macet ke node arsip; cover di balik
+    dinding 50 s). Node awal dilewati hanya bila node kedua juga lurus; macet 3 s → jalur ulang dengan node awal LAIN.
+    `GrenadeManager.forEachLive` kini memberi id granat (bot mencatat granat yang sudah disadari).
+  - Terukur (bot vs bot 90 s, Normal, pemain dikeluarkan; skrip lokal `.playwright-mcp/bot_measure.js`; lama → baru): akurasi 64–71% →
+    29–42%; sprint di setengah map lawan 33–46% → 0%; bot diam sungguhan ≥ 5 s: 0; median tembakan pertama kena setelah melihat
+    0.56 → 0.58 s; kena ≤ 1 s setelah melihat 19 → 25%; damage/s saat musuh terlihat 48 → 64; kill/menit BH ±24 → ±29, SY 26 → 29
+    (bot menembak di jendela yang dulu dipakai menunggu; dengan gateIntent 0 kembali ±21). Mudah (baru): 36 dmg/s, kena ≤ 1 s 12%,
+    median kena 0.99 s. Sulit SY: 36 kill/menit, akurasi 43%. Frame tetap 11.1 ms (MEDIUM, Iris Xe), 0 error konsol.
+  - Bila pengguna merasa bot terlalu tajam: turunkan `gateIntent` (≤ 0.4 = mendekati perilaku lama, akurasi naik lagi ±60%) atau
+    naikkan `aimLag`; nilai GDD §11.5 tetap perlu persetujuan.
+
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 231 test Vitest / 17 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 248 test Vitest / 19 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
   denah, cermin, collider, nav + validate, lane, garis pandang, permukaan, latar luar pagar, collider ↔ visual, pantulan granat),
-  pilihan map room/NetStart, antrean pesan klien saat memuat map (HoldQueue), Props/collider dilepas saat ganti map) hijau;
+  pilihan map room/NetStart, antrean pesan klien saat memuat map (HoldQueue), Props/collider dilepas saat ganti map, bot manusiawi
+  (tests/botAim.test.ts: profil sentakan/kelewatan/pelacakan/rencana ulang, reaksi, near-miss, perkiraan arah, callout;
+  tests/botTactics.test.ts: cover, posisi tempur, kabur granat di collider Rapier SY & BH)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

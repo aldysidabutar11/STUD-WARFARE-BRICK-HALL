@@ -108,6 +108,49 @@ export const XCFG = {
     grenadeMin: 8, grenadeMax: 24, grenadeAllyClear: 8, grenadeCooldown: 6,
     arriveRadius: 1.2, separation: 2.0, stuckDist: 0.5, stuckJump: 1.5, stuckRepath: 3.0, stairCost: 1.2,
     thinkEveryFixedSteps: 6,
+    // ── Bot manusiawi (permintaan pengguna 2026-11-25: "bot kurang realistis"; disetujui 3 paket bidikan/tempur/patroli & tim).
+    //    Lapisan DI ATAS GDD §11 — tabel kesulitan §11.5 di atas (reaksi, FOV, jarak pandang, e0/eMin/τ, turn rate, kompensasi
+    //    recoil, bias kepala, burst, granat) TIDAK diubah. Lihat CLAUDE.md "Bot manusiawi".
+    human: {
+      // gerak bidik (entities/botAim.ts): sentakan berprofil minimum-jerk dengan kecepatan PUNCAK = turn rate GDD, lalu
+      // pelacakan halus (koreksi proporsional + feedforward kecepatan sudut target). flickMinDeg: galat > ini → sentakan baru.
+      aim: { flickMinDeg: 7, trackGain: 12, trackFeed: 0.85, minFlickT: 0.08, undershoot: 0.05, scatter: 0.04 },
+      // menoleh santai (patroli, cek sudut): kecepatan puncak = turn rate × speedMult
+      look: { speedMult: 0.45, flickMinDeg: 10, trackGain: 6, trackFeed: 0.6, overshootChance: 0.2, overshoot: [0.03, 0.08] },
+      // waktu reaksi: rata-rata ≈ nilai GDD. × acak (jitter) × (1 + periph·(sudut/½FOV)²) × (1 + far·jauh) × alerted × prepared
+      // (prepared = target muncul ≤ preparedDeg dari arah bidik; alerted = ≤ alertDeg dari arah waspada ≤ alertHold s terakhir)
+      react: { jitter: [0.8, 1.2], periph: 0.35, outsideFov: 1.5, far: 0.25, alerted: 0.85, prepared: 0.85, preparedDeg: 15,
+        alertDeg: 35, clamp: [0.7, 1.8] },
+      // syarat tembak GDD §11.4 (deviasi < 2.5° hip / 1.2° ADS) diukur terhadap titik bidik yang DIMAKSUD (target + error GDD),
+      // bukan pusat target sebenarnya: 1 = penuh, 0 = perilaku lama. Dulu error GDD hanya MENUNDA tembakan (bot menunggu sampai
+      // pas) → akurasi bot 64–71%; kini tembakan awal bisa meleset lalu membaik seiring error menyusut (maksud §11.4).
+      gateIntent: 1,
+      startle: { decay: 0.45, max: 6 },          // kaget (derajat) meluruh exp(−t/decay); total maks
+      nearMiss: { radius: 1.6, alertNoise: 0.15 },// peluru musuh lewat ≤ radius dari kepala; perkiraan posisi penembak ± jarak × noise
+      hitDir: { angNoiseDeg: 20, dist: [0.7, 1.3], coverChance: 0.7 }, // kena tembak penyerang tak terlihat: arah ± noise, jarak ×
+      suppress: { decay: 1.0, cover: 2 },        // tingkat tertekan turun 1/s; ≥ cover & penembak tak terlihat → cari cover
+      // bertarung dari balik cover: node cover ≤ maxDist (biaya jalur ≤ 1.6× + 2) yang menyembunyikan mata jongkok dari ancaman,
+      // titik intip = berdiri (cover rendah) atau geser ±offset tegak lurus. Siklus sembunyi (hide) ↔ intip (peekTime).
+      fight: { maxDist: 9, offsets: [1.6, 2.6], hide: [0.45, 1.1], peekTime: [1.2, 2.4], research: 1.0, minDist: 8,
+        reloadBelow: 0.5, peekLost: 0.8, hitBack: 0.6 },
+      coverReloadMax: 10, coverHitMax: 12,       // u: cari cover saat reload terlihat musuh / kena tembak dari arah tak terlihat
+      coverTimeout: 6,                           // s: pengaman TAKE_COVER (cover tak tercapai) → keluar seperti aturan GDD
+      plantWait: 0.15,                           // s maks menunggu berhenti sebelum burst (geser–berhenti–tembak)
+      grenade: { danger: 10, flee: 16, safe: 11, hearBounce: 8, maxEvade: 3.5 },
+      patrol: { lookAhead: 10, checkMin: 6, checkMax: 40, checkPerThink: 4, glance: [0.5, 1.0], glanceCd: 4, pauseChance: 0.3,
+        pause: [0.35, 0.9], contactReport: 35, contactHold: 8, alertHold: 2.5 },
+      callout: { throttle: 2.0, range: 45, noise: 2.0, altMin: 6, altMax: 12 },
+      // aimLag (s): bidikan tertinggal di belakang target yang bergerak (pengejaran visual manusia) — strafe pemain berguna.
+      // Disetel (bersama react.prepared/alerted 0.85) agar laju kena setelah melihat musuh ≈ bot lama (terukur, lihat CLAUDE.md).
+      diff: {
+        easy:   { overshootChance: 0.55, overshoot: [0.06, 0.18], counterStrafe: 0,   peek: 0.5,  startleHit: 3.0, startleNear: 1.6,
+          grenadeNotice: 0.5,  grenadeReact: 0.6,  callout: [0.9, 1.8], responders: 1, aimLag: 0.14 },
+        normal: { overshootChance: 0.40, overshoot: [0.04, 0.12], counterStrafe: 0.6, peek: 0.8,  startleHit: 2.0, startleNear: 1.1,
+          grenadeNotice: 0.8,  grenadeReact: 0.4,  callout: [0.6, 1.4], responders: 2, aimLag: 0.10 },
+        hard:   { overshootChance: 0.25, overshoot: [0.03, 0.08], counterStrafe: 0.9, peek: 0.95, startleHit: 1.2, startleNear: 0.7,
+          grenadeNotice: 0.95, grenadeReact: 0.25, callout: [0.5, 1.0], responders: 2, aimLag: 0.07 },
+      },
+    },
   },
   // §10 audio
   audio: {
@@ -275,3 +318,4 @@ export const XCFG = {
 } as const;
 
 export type BotDifficultyDef = (typeof XCFG.bots.difficulty)[Difficulty];
+export type BotHumanDef = (typeof XCFG.bots.human.diff)[Difficulty];

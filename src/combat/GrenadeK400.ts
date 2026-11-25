@@ -82,10 +82,10 @@ export class GrenadeManager {
 
   get count() { return this.live.length; }
 
-  /** Iterasi granat hidup (posisi, sisa sumbu, pemilik) — dipakai indikator bahaya HUD & radar (klien: dari snapshot). */
-  forEachLive(cb: (x: number, y: number, z: number, fuse: number, owner: number) => void) {
-    for (const g of this.live) { const t = g.body.translation(); cb(t.x, t.y, t.z, g.fuse, g.owner); }
-    for (const n of this.net.values()) cb(n.x, n.y, n.z, n.fuse, n.owner);
+  /** Iterasi granat hidup (posisi, sisa sumbu, pemilik, id) — indikator bahaya HUD, radar (klien: dari snapshot) & bot (kabur). */
+  forEachLive(cb: (x: number, y: number, z: number, fuse: number, owner: number, id: number) => void) {
+    for (const g of this.live) { const t = g.body.translation(); cb(t.x, t.y, t.z, g.fuse, g.owner, g.id); }
+    for (const [id, n] of this.net) cb(n.x, n.y, n.z, n.fuse, n.owner, id);
   }
 
   /** Host: granat hidup untuk snapshot. */

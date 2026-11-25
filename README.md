@@ -17,7 +17,7 @@ tepat waktu; bila preset berat tidak stabil di refresh penuh, pilih **Batas FPS 
 
 | Perintah | Fungsi |
 | :--- | :--- |
-| `npm run test` | Test vector GDD §16.1 + validator map/nav + logika fitur (rebind, settings, Eliminasi, medali, slot senjata & pisau, room & jaringan) |
+| `npm run test` | Test vector GDD §16.1 + validator map/nav + logika fitur (rebind, settings, Eliminasi, medali, slot senjata & pisau, room & jaringan, perilaku bot) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run build` / `npm run preview` | Build produksi & pratinjau |
 
@@ -30,6 +30,20 @@ tepat waktu; bila preset berat tidak stabil di refresh penuh, pilih **Batas FPS 
   siap, setelan host (map, TDM / Eliminasi). Lihat **Main Bareng online** di bawah.
 - **Latihan Menembak** — di map pilihanmu: 12 dummy termasuk 2 target bergerak (Brick Hall: jembatan 10/40/70 u, lantai dasar,
   mezanin; Steel Yard: tersebar 15–70 u dari gerbang Biru), amunisi & granat tak terbatas, angka damage.
+
+## Bot
+
+Bot memakai aturan yang sama dengan pemain (gerak, spread, recoil) dan hanya tahu posisimu lewat penglihatan & pendengaran
+(tidak tembus dinding). Perilakunya dibuat mirip pemain manusia:
+
+- **Bidikan** — menoleh cepat lalu melambat di dekat target (kadang sedikit kelewatan lalu dikoreksi), bukan berputar kaku seperti
+  turret; tembakan awal bisa meleset lalu makin akurat; bidikannya tertinggal saat kamu strafe/lompat; goyah sesaat saat kena
+  tembak atau saat peluru lewat dekat kepalanya.
+- **Bertempur** — geser–berhenti–tembak (Normal/Sulit), baku tembak dari balik cover (sembunyi ↔ intip), reload di balik cover,
+  lari menjauh dari granat, dan bila ditembak dari arah yang tidak terlihat hanya tahu arahnya kira-kira → menoleh / cari cover.
+- **Patroli & tim** — melirik sudut & pintu yang baru terbuka, jalan (tidak sprint) di wilayah lawan, sesekali berhenti di
+  persimpangan, dan saling memberi info posisi musuh dengan jeda (maks. 2 rekan terdekat datang membantu, tidak menumpuk).
+- **Tingkat kesulitan** (Atur Match → Mudah / Normal / Sulit) mengatur reaksi, akurasi, kecepatan menoleh, dll.
 
 ## Memilih map
 
