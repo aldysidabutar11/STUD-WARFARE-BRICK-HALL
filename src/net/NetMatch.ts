@@ -5,6 +5,7 @@
 // KLIEN: gerak sendiri diprediksi (KCC lokal) lalu dikoreksi dengan memutar ulang perintah yang belum dikonfirmasi; pemain lain &
 //        granat diinterpolasi dengan jeda ADAPTIF (±50 ms jaringan bagus … 200 ms buruk); damage/kill/spawn/skor hanya dari host,
 //        tapi hitmarker & suara kena serangan sendiri tampil instan (prediksi, dikonfirmasi host tanpa ganda).
+import { isVariant } from '../entities/variants';
 import * as THREE from 'three';
 import { ctx } from '../game/ctx';
 import { bus, type GameEvents, type HitPart, type KillWeapon, type MatchStateName, type MeleeKind } from '../core/EventBus';
@@ -573,7 +574,7 @@ export class ClientRep {
         if (!e) break;
         const lo = cleanLoadout(m.w, m.s);
         if (lo.weapon !== e.loadout.weapon || lo.scope !== e.loadout.scope) e.pendingLoadout = lo;
-        if ((m.v === 'm' || m.v === 'f') && e !== p && e.char.variant !== m.v) e.char.setVariant(m.v);
+        if (isVariant(m.v) && e !== p && e.char.variant !== m.v) e.char.setVariant(m.v);
         this.bufs.get(e.id)?.clear(); this.lastStep.delete(e.id);
         ctx.spawns.applySpawn(e, num('x'), num('y') - 0.05, num('z'), num('yaw'));
         if (e === p) this.smooth.set(0, 0, 0);

@@ -1,6 +1,7 @@
 // src/net/Session.ts — sesi room online. HOST: mendengar kode room di signaling, menerima teman (WebRTC), room (Lobby) dipegang
 // host & disiarkan ke klien; aksi klien (pindah tim, siap, loadout, keluar) divalidasi host. KLIEN: bergabung lewat kode, menerima
 // cermin room, mengirim aksi. Saat match: biner perintah/snapshot lewat kanal unreliable; event penting lewat kanal reliable.
+import { cleanVariant, type Variant } from '../entities/variants';
 import { Lobby } from '../game/Lobby';
 import { WEAPONS, SCOPES, scopeAllowed, type ScopeId, type WeaponId } from '../config/weaponsData';
 import { Peer } from './Peer';
@@ -10,7 +11,7 @@ import type { Team } from '../entities/BlockyCharacter';
 import { XCFG } from '../config/extraConfig';
 import { parsePlan, type Plan } from './Migration';
 
-export interface Profile { name: string; variant: 'm' | 'f'; weapon: string; scope: string }
+export interface Profile { name: string; variant: Variant; weapon: string; scope: string }
 export type JoinFail = 'notfound' | 'full' | 'started' | 'timeout' | 'failed';
 
 /** Loadout dari jaringan divalidasi (senjata/optik yang ada & cocok). */
@@ -30,7 +31,7 @@ export interface HostHooks {
   /** Pemain terputus / keluar (room: sudah dikeluarkan dari Lobby; match: slot diambil alih bot). left = keluar dengan sengaja. */
   onPeerLeft(pid: string, left: boolean): void;
   /** Pemain mengganti loadout/karakter (room: sudah dicatat di Lobby; match: berlaku pada spawn berikutnya). */
-  onLoadout(pid: string, lo: { weapon: WeaponId; scope: ScopeId }, variant: 'm' | 'f'): void;
+  onLoadout(pid: string, lo: { weapon: WeaponId; scope: ScopeId }, variant: Variant): void;
   /** Ping teman diperbarui (tiap XCFG.net.pingEvery detik). */
   onPings(): void;
   /** Pemain lama (pid sudah ada di room, bukan pemain lokal, sedang tidak tersambung) boleh bergabung ulang — juga di tengah
@@ -161,7 +162,7 @@ export class NetHost {
         // koneksi lama pid ini masih dianggap hidup (ICE baru menyatakan putus ±30 s) → basi: dibuang tanpa "teman keluar"
         for (const [id2, e2] of this.peers) if (e2 !== e && e2.pid === rj) { this.peers.delete(id2); e2.peer.onClose = null; e2.peer.close(); }
         const p = L.find(rj)!, lo = cleanLoadout(msg.weapon, msg.scope);
-        p.variant = msg.variant === 'f' ? 'f' : 'm'; p.weapon = lo.weapon; p.scope = lo.scope; p.host = false;
+        p.variant = cleanVariant(msg.variant); p.weapon = lo.weapon; p.scope = lo.scope; p.host = false;
         e.pid = rj;
         e.peer.sendRel({ t: 'you', pid: rj });
         this.broadcastLobby(); this.hooks.onLobbyChanged();
@@ -172,7 +173,7 @@ export class NetHost {
       const p = L.join(String(msg.name ?? 'Teman'));
       if (!p) { e.peer.sendRel({ t: 'deny', reason: 'full' }); return; }
       const lo = cleanLoadout(msg.weapon, msg.scope);
-      p.variant = msg.variant === 'f' ? 'f' : 'm'; p.weapon = lo.weapon; p.scope = lo.scope;
+      p.variant = cleanVariant(msg.variant); p.weapon = lo.weapon; p.scope = lo.scope;
       e.pid = p.id;
       e.peer.sendRel({ t: 'you', pid: p.id });
       this.broadcastLobby(); this.hooks.onLobbyChanged();
@@ -193,7 +194,7 @@ export class NetHost {
       else if (msg.a === 'chat') { this.hooks.onChat?.(e.pid, msg.scope, msg.text, msg.quick === true); return; }
       else if (msg.a === 'loadout') {
         const lo = cleanLoadout(msg.weapon, msg.scope);
-        p.weapon = lo.weapon; p.scope = lo.scope; p.variant = msg.variant === 'f' ? 'f' : 'm';
+        p.weapon = lo.weapon; p.scope = lo.scope; p.variant = cleanVariant(msg.variant);
         this.hooks.onLoadout(e.pid, lo, p.variant);
       }
       this.broadcastLobby(); this.hooks.onLobbyChanged();

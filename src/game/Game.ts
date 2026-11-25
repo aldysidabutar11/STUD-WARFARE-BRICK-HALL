@@ -25,6 +25,7 @@ import { TacticalBot } from '../entities/TacticalBot';
 import type { AnimState } from '../entities/BlockyCharacter';
 import { mapTempo, moveFeel } from '../entities/moveFeel';
 import { botVariant, characterArt, type Variant } from '../entities/CharacterArt';
+import { vennyTemplate } from '../entities/venny/rig';
 import type { Team } from '../entities/BlockyCharacter';
 import { ScopeSystem } from '../combat/ScopeSystem';
 import { fireOne, spreadDeg } from '../combat/Ballistics';
@@ -392,8 +393,8 @@ export class Game {
     this.menus.showMain();
     this.loop.start();
     // siapkan atlas karakter (±40 ms/varian) saat menu idle → tanpa jeda saat klik Mulai
-    const warm: [Team, Variant][] = [['blue', 'm'], ['red', 'm'], ['blue', 'f'], ['red', 'f']];
-    const warmNext = () => { const w = warm.shift(); if (!w) return; characterArt(w[0], w[1]); setTimeout(warmNext, 120); };
+    const warm: [Team, Variant][] = [['blue', 'm'], ['red', 'm'], ['blue', 'f'], ['red', 'f'], ['blue', 'v'], ['red', 'v']];
+    const warmNext = () => { const w = warm.shift(); if (!w) return; if (w[1] === 'v') vennyTemplate(w[0]); else characterArt(w[0], w[1]); setTimeout(warmNext, 120); };
     setTimeout(warmNext, 400);
     // ?autostart=1|tdm|elim|practice untuk uji otomatis (tanpa pointer lock)
     const auto = new URLSearchParams(location.search).get('autostart');

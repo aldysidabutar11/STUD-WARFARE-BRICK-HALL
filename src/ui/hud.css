@@ -183,6 +183,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #120b06; col
 .charsel > span { font-weight: 700; margin-right: 4px; }
 .charsel button { padding: 6px 14px; font-size: 13px; }
 .charsel button.sel { border-color: var(--gold); background: #5a3a1f; }
+/* Venny (karakter khusus): aksen mawar lembut, tetap sejalan dengan tombol lain */
+.charsel button.special { border-color: rgba(232, 150, 170, 0.6); color: #ffd9e3; }
+.charsel button.special.sel { border-color: #f2a7bb; background: linear-gradient(135deg, #6a2f45, #5a3a1f); color: #fff1f5; }
 .charsel small { opacity: .7; font-size: 12px; }
 .set-row { display: grid; grid-template-columns: 220px 1fr 70px; align-items: center; gap: 10px; margin: 6px 0; font-size: 14px; }
 .set-row input[type=range] { width: 100%; }
@@ -455,7 +458,9 @@ body.dead #game { filter: grayscale(0.85) brightness(0.8); }
   text-align: center; font-size: 12px; opacity: 0.7; }
 .lo-prev.fail .lo-fail { display: flex; }
 .lo-prev.fail .char-preview { display: none; }
-.lo-char .charsel { margin: 0; }
+.lo-char .charsel { margin: 0; gap: 6px; }
+.lo-char .charsel > span { flex-basis: 100%; margin: 0; }   /* label di baris sendiri → Pria · Wanita · Venny satu baris */
+.lo-char .charsel button { padding: 6px 11px; }
 .lo-team { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
 .lo-team > span { opacity: 0.8; margin-right: 2px; }
 .menu .lo-team button { padding: 4px 10px; font-size: 12px; }

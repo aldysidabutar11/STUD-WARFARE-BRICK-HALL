@@ -6,6 +6,7 @@
 //             bergabung ulang): keadaan match + tiap entitas (posisi, HP, amunisi, granat, statistik).
 //  • migrationTimes — kapan tiap peserta mengambil alih: semua mencoba host lama dulu (rejoinWait, kecuali serah-terima), lalu
 //             pengganti ke-k menunggu host baru k × migrateStep detik; tak ada yang menjawab → dia sendiri yang jadi host.
+import { cleanVariant, type Variant } from '../entities/variants';
 import { XCFG } from '../config/extraConfig';
 import { CFG } from '../config/gameConfig';
 import { parseRoomCode } from '../game/Lobby';
@@ -46,7 +47,7 @@ export interface SaveEnt {
   x: number; y: number; z: number; yaw: number; pitch: number;
   weapon: string; scope: string; ammo: number; reserve: number; modeIdx: number; grenades: number;
   /** kills, deaths, assists, score, shots, hits, hsHits, hsKills, damage, bestStreak */
-  stats: number[]; streak: number; variant: 'm' | 'f';
+  stats: number[]; streak: number; variant: Variant;
   /** Flashbang tersisa (tidak ada di cadangan host versi lama → 1). */
   flashes: number;
 }
@@ -83,7 +84,7 @@ export function parseSave(raw: unknown): MatchSave | null {
       ammo: clamp(Math.round(n('ammo')), 0, 200), reserve: clamp(Math.round(n('reserve')), 0, 2000), modeIdx: clamp(Math.round(n('modeIdx')), 0, 4),
       grenades: clamp(Math.round(n('grenades')), 0, 9), stats: (e.stats as number[]).map(s => clamp(Math.round(s), 0, 1e7)),
       flashes: fin(e.flashes) ? clamp(Math.round(e.flashes), 0, 9) : 1,
-      streak: clamp(Math.round(n('streak')), 0, 999), variant: e.variant === 'f' ? 'f' : 'm' });
+      streak: clamp(Math.round(n('streak')), 0, 999), variant: cleanVariant(e.variant) });
   }
   return { v: SAVE_V, state: r.state as MatchStateName, round: clamp(Math.round(r.round), 0, 99), timeLeft: clamp(r.timeLeft, 0, 7200),
     countdown: clamp(r.countdown, 0, 10), sb: clamp(Math.round(r.sb), 0, 999), sr: clamp(Math.round(r.sr), 0, 999),

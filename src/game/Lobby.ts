@@ -2,6 +2,7 @@
 // pindah tim, status siap, setelan host (mode, aturan, kesulitan bot, isi bot), acak tim, roster match. Logika MURNI (tanpa DOM/jaringan):
 // tahap 1 berjalan lokal (kamu + bot / teman simulasi); nanti server online cukup menyinkronkan objek ini (aksi yang sama, divalidasi server).
 // + multi-map: pilihan map room (host) / setelan solo — map tertentu atau 'random' (diundi saat match dimulai, host mengirim id konkret).
+import { cleanVariant, type Variant } from '../entities/variants';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import type { Difficulty } from '../config/extraConfig';
@@ -36,7 +37,7 @@ export interface LobbyPlayer {
   /** Teman simulasi (pratinjau tanpa server) — di match dimainkan bot dengan namanya. */
   sim: boolean;
   /** Tampilan & senjata pilihan pemain (dikirim saat masuk room online; dipakai saat match dimulai). */
-  variant?: 'm' | 'f'; weapon?: string; scope?: string;
+  variant?: Variant; weapon?: string; scope?: string;
 }
 
 export interface RoomSettings {
@@ -84,7 +85,7 @@ export interface RosterEntry {
   pid?: string;
   /** Teman simulasi (tanpa server): dimainkan bot. */
   sim?: boolean;
-  variant?: 'm' | 'f'; weapon?: string; scope?: string;
+  variant?: Variant; weapon?: string; scope?: string;
 }
 /** Susunan match dari room: tim pemain lokal + isi tiap tim berurutan slot. */
 export interface MatchRoster { playerTeam: Team; blue: RosterEntry[]; red: RosterEntry[] }
@@ -230,7 +231,7 @@ export class Lobby {
     for (const p of (Array.isArray(st.players) ? st.players : []) as Partial<LobbyPlayer>[]) {
       if (!p || typeof p !== 'object' || typeof p.id !== 'string' || !/^p\d{1,6}$/.test(p.id) || L.find(p.id)) continue;
       L.players.push({ id: p.id, name: cleanName(String(p.name ?? '')) || 'Pemain', team: p.team === 'red' ? 'red' : 'blue',
-        ready: !!p.ready, host: !!p.host, local: p.id === meId, sim: !!p.sim, variant: p.variant === 'f' ? 'f' : 'm',
+        ready: !!p.ready, host: !!p.host, local: p.id === meId, sim: !!p.sim, variant: cleanVariant(p.variant),
         weapon: typeof p.weapon === 'string' ? p.weapon : undefined, scope: typeof p.scope === 'string' ? p.scope : undefined });
     }
     return L;

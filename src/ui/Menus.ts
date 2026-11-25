@@ -1,6 +1,7 @@
 // src/ui/Menus.ts — menu utama, atur match, loadout, pengaturan (tab), kontrol + ubah tombol, pause, hasil (GDD §13.1–13.2, §14)
 // + navigasi gamepad (D-pad/A/B) untuk semua menu. + multi-map: kartu pilihan map (denah prosedural, ui/MapThumb) di Atur Match
 // & setelan host room (Acak = diundi saat match dimulai); nama map di menu utama, layar hasil (dan banner awal match di Game).
+import { cleanVariant, type Variant } from '../entities/variants';
 import { SCOPES, SCOPE_ORDER, WEAPONS, WEAPON_ORDER, scopeAllowed, type ScopeId, type WeaponId } from '../config/weaponsData';
 import { effectiveZoom } from '../combat/Damage';
 import { ACTIONS, DEFAULT_BINDS, PAD, PAD_HELP, isBindable, keyLabel, rebind, type Action } from '../core/Bindings';
@@ -30,7 +31,7 @@ export interface NetInfo { role: 'host' | 'client'; state: 'connecting' | 'onlin
 
 export interface MenuApi {
   play(practice?: boolean): void; resume(): void; quitToMenu(): void; replay(): void; fullscreen(): void;
-  settings(): Settings; applySettings(s: Settings): void; setLoadout(w: WeaponId, s: ScopeId, v: 'm' | 'f'): void; click(): void;
+  settings(): Settings; applySettings(s: Settings): void; setLoadout(w: WeaponId, s: ScopeId, v: Variant): void; click(): void;
   inMatch(): boolean;
   /** Taksiran refresh layar (Hz) — label pilihan batas FPS. */
   refreshHz(): number;
@@ -98,7 +99,7 @@ export class Menus {
   current: string | null = null;
   private wSel: WeaponId = 'm416';
   private sSel: ScopeId = 'reddot';
-  private vSel: 'm' | 'f' = 'm';
+  private vSel: Variant = 'm';
   private stopCapture: (() => void) | null = null;
   private settingsTab = 'mouse';
 
@@ -403,9 +404,9 @@ export class Menus {
       <div class="lo-cols">
         <div class="lo-char">
           <div class="lo-prev" data-prev><span class="lo-fail">Pratinjau 3D tidak tersedia di perangkat ini</span></div>
-          <div class="charsel"><span>Karakter</span><button data-v="m">Pria</button><button data-v="f">Wanita</button></div>
+          <div class="charsel"><span>Karakter</span><button data-v="m">Pria</button><button data-v="f">Wanita</button><button data-v="v" class="special" title="Karakter khusus">Venny ★</button></div>
           <div class="lo-team"><span>Lihat pakaian</span><button data-tm="blue">Biru</button><button data-tm="red">Merah</button></div>
-          <small>Biru: pasukan taktis · Merah: gerilyawan — pakaian di match mengikuti timmu. Seret karakter untuk memutar.</small>
+          <small>Biru: pasukan taktis · Merah: gerilyawan — pakaian di match mengikuti timmu. Venny = karakter khusus (dua kostum). Seret untuk memutar · gulir / klik dua kali untuk melihat wajah.</small>
         </div>
         <div class="lo-weap"><div class="grid"></div><div class="scopes"></div></div>
       </div>
@@ -420,7 +421,7 @@ export class Menus {
     const vBtns = m.querySelectorAll<HTMLButtonElement>('.charsel button'), tBtns = m.querySelectorAll<HTMLButtonElement>('.lo-team button');
     const renderV = () => vBtns.forEach(b => b.classList.toggle('sel', b.dataset.v === this.vSel));
     const renderT = () => tBtns.forEach(b => b.classList.toggle('sel', b.dataset.tm === tSel));
-    vBtns.forEach(b => b.addEventListener('click', () => { this.api.click(); this.vSel = b.dataset.v as 'm' | 'f'; renderV(); showPrev(); }));
+    vBtns.forEach(b => b.addEventListener('click', () => { this.api.click(); this.vSel = cleanVariant(b.dataset.v); renderV(); showPrev(); }));
     tBtns.forEach(b => b.addEventListener('click', () => { this.api.click(); tSel = b.dataset.tm as Team; renderT(); showPrev(); }));
     renderV(); renderT();
     const render = () => {

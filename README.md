@@ -139,8 +139,16 @@ warna bebas + transparansi, outline (tebal & kepekatan), ukuran garis/celah/titi
 
 Tim **Biru** = pasukan taktis (helm, goggles oranye, rompi, pelindung), tim **Merah** = gerilyawan (topi loreng, kacamata hitam,
 bandana, sabuk peluru, jins sobek); masing-masing pria & wanita — semuanya prosedural (acuan desain di folder `Karakter/`).
-Pilih karakter kamu di **Loadout → Karakter: Pria / Wanita** — di samping pilihan senjata ada pratinjau 3D karakter yang memegang
-senjata & optik pilihanmu (berputar pelan, seret untuk memutar; "Lihat pakaian" Biru / Merah untuk melihat pakaian tim lain).
+Pilih karakter kamu di **Loadout → Karakter: Pria / Wanita / Venny ★** — di samping pilihan senjata ada pratinjau 3D karakter yang
+memegang senjata & optik pilihanmu (berputar pelan, seret untuk memutar, gulir / klik dua kali untuk melihat wajah dari dekat;
+"Lihat pakaian" Biru / Merah untuk melihat pakaian tim lain).
+
+**Venny ★** adalah karakter khusus — satu-satunya yang **tidak kotak-kotak**: model 3D realistis berproporsi manusia (wajah, rambut
+dikuncir, siku & lutut yang menekuk, kedua tangan memegang senapan, berlutut saat jongkok, rebah utuh saat tumbang), tetap 100%
+prosedural. Dua kostum mengikuti tim: Biru versi taktis (rompi pelat bertepi biru dengan papan nama "VENNY", headset bermikrofon, rok
+span hitam, holster paha, bot bertali), Merah versi gerilya (rompi bertepi merah, bandana merah, sabuk peluru, lengan kaus sobek,
+perban, plester di pipi, rok kotor bertepi sobek, pisau di paha). Hitbox-nya sama dengan karakter lain (adil). Hanya pemain yang bisa
+memilihnya — bot tetap memakai karakter pria/wanita.
 
 ## Rasa gerak
 

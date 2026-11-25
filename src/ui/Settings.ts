@@ -1,5 +1,6 @@
 // src/ui/Settings.ts — pengaturan tersimpan (GDD §13.2): localStorage 'studwarfare.settings.v1', divalidasi ke rentang.
 // Tambahan pasca-MVP: aturan match, rebind tombol, gamepad, crosshair kustom, kecerahan, skala resolusi, opsi HUD.
+import { VARIANTS, type Variant } from '../entities/variants';
 import { CFG, type PresetName } from '../config/gameConfig';
 import { XCFG, type Difficulty } from '../config/extraConfig';
 import type { ScopeId, WeaponId } from '../config/weaponsData';
@@ -25,7 +26,7 @@ export interface Settings {
   fullPause: boolean;
   weapon: WeaponId; scope: ScopeId;
   /** Tampilan karakter pemain: 'm' pria / 'f' wanita (desain karakter pengguna). */
-  charVariant: 'm' | 'f';
+  charVariant: Variant;
   /** Nama pemain di room/lobby (lihat game/Lobby.cleanName); '' = belum diisi. */
   playerName: string;
   // aturan match
@@ -90,7 +91,7 @@ export function validate(raw: Partial<Settings> | null): Settings {
     volMaster: clamp(r.volMaster, 0, 100, D.volMaster), volSfx: clamp(r.volSfx, 0, 100, D.volSfx), volUi: clamp(r.volUi, 0, 100, D.volUi),
     showFps: bool(r.showFps, D.showFps), difficulty: oneOf(r.difficulty, ['easy', 'normal', 'hard'] as const, D.difficulty),
     allies: Math.round(clamp(r.allies, 0, 4, D.allies)), enemies: Math.round(clamp(r.enemies, 1, 5, D.enemies)),
-    fullPause: bool(r.fullPause, D.fullPause), weapon, scope, charVariant: oneOf(r.charVariant, ['m', 'f'] as const, D.charVariant),
+    fullPause: bool(r.fullPause, D.fullPause), weapon, scope, charVariant: oneOf(r.charVariant, VARIANTS, D.charVariant),
     playerName: typeof r.playerName === 'string' ? cleanName(r.playerName) : D.playerName,
     mode: oneOf(r.mode, ['tdm', 'elim'] as const, D.mode),
     scoreLimit: pick(r.scoreLimit, SCORE_LIMITS, D.scoreLimit as 50), timeLimit: pick(r.timeLimit, TIME_LIMITS, D.timeLimit as 10),

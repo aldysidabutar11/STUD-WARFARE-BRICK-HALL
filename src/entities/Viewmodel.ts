@@ -9,6 +9,7 @@ import { CFG } from '../config/gameConfig';
 import { Spring, damp, moveFeel } from './moveFeel';
 import type { Team } from './BlockyCharacter';
 import { sleeveTexture, type Variant } from './CharacterArt';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
 /** UV balok diskalakan ke ukuran sisinya (1 ulangan tiap `tile` unit) → tekstur lengan tidak melar di balok panjang.
  *  Urutan sisi BoxGeometry: px, nx (u=z, v=y) · py, ny (u=x, v=z) · pz, nz (u=x, v=y); 4 verteks per sisi. */
@@ -95,6 +96,10 @@ export class Viewmodel {
   private gloveMat = new THREE.MeshLambertMaterial({ color: XCFG.rig.colors.glove });
   private fingerMat = new THREE.MeshLambertMaterial({ color: XCFG.rig.colors.finger });
 
+  /** Bagian lengan FPS (balok) yang dibulatkan saat kostum Venny (model realistis) — geometri asli disimpan untuk kembali. */
+  private readonly armParts: { mesh: THREE.Mesh; box: THREE.BufferGeometry; round: THREE.BufferGeometry | null }[] = [];
+  private rounded = false;
+
   constructor(scene: THREE.Scene, team: Team) {
     this.setOutfit(team);
     scene.add(this.root);
@@ -154,6 +159,14 @@ export class Viewmodel {
     const nade = this.nadeMesh = new THREE.Mesh(grenadeModel(), VM_WEAPON_MATERIAL);
     nade.scale.setScalar(VM_SCALE); nade.position.set(0, 0.03, -0.02);
     this.nadeRig.add(nade, arm(0.44, new THREE.Vector3(0.0, -0.035, 0.03), new THREE.Vector3(0.24, -0.7, 0.32)));
+    // semua balok lengan/kepalan (bukan senjata) → daftar yang bisa dibulatkan untuk Venny
+    const mats = new Set<THREE.Material>([this.sleeveMat, this.cuffMat, this.gloveMat, this.fingerMat]);
+    for (const g of [this.rifle, this.fist, this.nadeRig]) g.traverse(o => {
+      if (o instanceof THREE.Mesh && mats.has(o.material as THREE.Material) && o.geometry instanceof THREE.BoxGeometry) {
+        this.armParts.push({ mesh: o, box: o.geometry, round: null });
+      }
+    });
+    this.applyRound(this.wantRound);
     this.nadeRig.position.set(-0.04, 0.02, 0.12);
     this.knifeRig.visible = false; this.nadeRig.visible = false;
     // muzzle flash: dua quad silang aditif + balok emissive
@@ -171,13 +184,34 @@ export class Viewmodel {
     this.root.visible = false;
   }
 
-  /** Kostum lengan FPS sesuai tim (juga dipakai killcam untuk lengan pembunuh). */
-  /** Kostum lengan FPS = tim + varian: Biru pria baju biru, Biru wanita loreng + manset rajut navy, Merah kulit + balutan. */
+  /** Kostum lengan FPS = tim + varian (juga dipakai killcam untuk lengan pembunuh): Biru pria baju biru, Biru wanita loreng +
+   *  manset rajut navy, Merah kulit + balutan; Venny lengan bawah kulit (kaus lengan pendek) + sarung tangan tanpa jari, manset =
+   *  tali pergelangan hitam (Biru) / perban kasa (Merah), jari warna kulitnya. */
   setOutfit(team: Team, variant: Variant = 'm') {
-    const C = XCFG.rig.colors, camoOn = team === 'blue' && variant === 'f';
+    const C = XCFG.rig.colors, camoOn = team === 'blue' && variant === 'f', venny = variant === 'v';
     this.sleeveMat.map = sleeveTexture(camoOn);
-    this.sleeveMat.color.setHex(camoOn ? 0xffffff : team === 'blue' ? C.blue.shirt : C.skin);
-    this.cuffMat.color.setHex(camoOn ? C.blueF.knit : team === 'blue' ? C.blue.gear : C.red.wrap);
+    this.sleeveMat.color.setHex(camoOn ? 0xffffff : venny ? C.venny.skin : team === 'blue' ? C.blue.shirt : C.skin);
+    this.cuffMat.color.setHex(camoOn ? C.blueF.knit : venny ? (team === 'blue' ? C.venny.glove : C.venny.bandage)
+      : team === 'blue' ? C.blue.gear : C.red.wrap);
+    this.gloveMat.color.setHex(venny ? C.venny.glove : C.glove);
+    this.fingerMat.color.setHex(venny ? C.venny.finger : C.finger);
+    this.applyRound(venny);
+  }
+  private wantRound = false;
+
+  /** Venny: lengan bawah, manset, kepalan & jari jadi balok membulat (halus, serasi dengan model realistisnya). Lengan Venny
+   *  berwarna kulit polos (tanpa loreng) → UV RoundedBoxGeometry bawaan cukup. Dipanggil juga sebelum lengan dibuat (konstruktor). */
+  private applyRound(on: boolean) {
+    this.wantRound = on;
+    if (!this.armParts.length || on === this.rounded) return;
+    this.rounded = on;
+    for (const p of this.armParts) {
+      if (on && !p.round) {
+        const q = (p.box as THREE.BoxGeometry).parameters;
+        p.round = new RoundedBoxGeometry(q.width, q.height, q.depth, 3, Math.min(q.width, q.height, q.depth) * 0.45);
+      }
+      p.mesh.geometry = on ? p.round! : p.box;
+    }
   }
 
   private key = '';

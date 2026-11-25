@@ -39,7 +39,8 @@
   di 60–80 FPS dengan judder). Target = vsync × batas FPS; min/max/langkah/jeda 2 s/waktu baik 4 s tetap nilai GDD (lihat "Kehalusan frame").
 - Preset ULTRA di luar §15 (CFG.render.presets tetap verbatim): `presetOf()` di src/config/presets.ts; tipe `Preset` dilebarkan jadi interface.
 - Tampilan karakter = desain pengguna (Karakter/*.png, HANYA acuan; tidak dimuat game): Biru = pasukan taktis, Merah = gerilyawan,
-  masing-masing pria/wanita. Dibangun 100% prosedural di src/entities/CharacterArt.ts (lihat "Fitur pasca-MVP").
+  masing-masing pria/wanita (balok R6, src/entities/CharacterArt.ts + perkakas charKit.ts), + karakter khusus Venny (dua kostum) =
+  model realistis ber-skin (src/entities/venny/). Semua 100% prosedural (lihat "Fitur pasca-MVP").
 - Multi-map (Brick Hall + Steel Yard, lihat "Multi-map & Steel Yard"): modul game membaca data map HANYA lewat `currentMap()`
   (src/world/maps/registry.ts; Physics lewat maps/current.ts agar tidak impor melingkar) — jangan impor data Brick Hall langsung.
   Steel Yard = layout ORISINAL (gaya "halaman kontainer gurun" hanya inspirasi, bukan replika map game lain); peti 2.8 u, bukan 3.0
@@ -106,9 +107,59 @@
   - Teknik: per (tim, varian) 1 atlas kanvas 1024² (80 px/unit, ±40 ms, disiapkan saat menu idle) + 1 geometri gabungan per bagian
     (balok tubuh + aksesoris) → 7 draw call per karakter (decal wajah lama dihapus). HITBOX tetap balok GDD persis, material
     `visible:false` (tidak digambar, Mesh.raycast tetap menguji); tampilan = mesh anak hitbox. alphaTest 0.5 untuk cutout.
-  - Varian: bot campuran (`botVariant`), pemain pilih Pria/Wanita di Loadout (`settings.charVariant`, langsung berlaku). Lengan FPS
+  - Varian: bot campuran (`botVariant`), pemain pilih Pria/Wanita/Venny di Loadout (`settings.charVariant`, langsung berlaku). Lengan FPS
     mengikuti kostum tim (`Viewmodel.setOutfit`), killcam & balok mati (DeathFx) memakai geometri/atlas yang sama.
   - Terukur (TDM 15 s, Iris Xe): frame 11.1 ms (tak berubah), draw call rata-rata 103 / maks 117 (≤150), segitiga maks ±35k.
+  - Karakter khusus "Venny" (permintaan pengguna 2026-11-25; acuan Karakter/ROBLOX-VENNY-BLUE-TIM (KHUSUS).png & ...-RED-TIM (KHUSUS).png;
+    revisi pengguna: "jangan kotak-kotak, harus mirip gambar" → MODEL REALISTIS, satu-satunya karakter non-balok; palet
+    XCFG.rig.colors.venny). Varian ke-3 'v' (`entities/variants.ts`: Variant, VARIANTS, isVariant, cleanVariant — modul daun tanpa
+    three.js; semua data luar (settings, room, hello/loadout host, 'start', 'spawn', cadangan pindah host) lewat cleanVariant/isVariant,
+    nilai asing → 'm'). Hanya dipilih pemain (Loadout: Pria · Wanita · Venny ★); `botVariant` tetap pria/wanita.
+    - `entities/venny/` (100% prosedural, tanpa file model): `kit.ts` (SkinMesh: satu geometri ber-skin ≤ 4 tulang/verteks; ring
+      superelips, loft, cap, strap = pita tebal sepanjang lintasan, rbox = RoundedBoxGeometry dengan region atlas per sisi, plainBox,
+      ellipsoid, tube), `paint.ts` (tekstur kanvas: wajah planar resolusi tinggi 224×290 (alis tebal, mata almond cokelat tua bereyeliner
+      + bulu mata, hidung, bibir merona tersenyum, pipi merona; Merah: plester silang), rambut per piksel (helai "tertarik" ke ikat kuncir
+      di tengkuk, belahan kanan, sapuan poni ke kiri, kilau kebiruan; alpha = garis rambut `hairLimit(a)`), kuncir, kaus, lengan, kepalan
+      sarung tangan tanpa jari, rok span (kup, ritsleting, belahan = potongan alpha; Merah sobek/kotor), kaki (lutut; Merah lecet), bot,
+      rompi, perlengkapan), `rig.ts` (kerangka 20 tulang, templat per tim = geometri + atlas 1024² (±17k segitiga Biru / ±18.7k Merah,
+      1 SkinnedMesh = 1 draw call), `VennyRig` per karakter).
+    - Bentuk: tinggi ±4.9 (≤ hitbox 5.0), proporsi manusia ramping; kepala = grid bola 56×40 dipahat `headR` (wajah bulat, pipi penuh,
+      rahang lembut, hidung, bibir, dagu, rongga mata) dengan UV planar untuk wajah & UV bola untuk sisanya (normal dari grid penuh →
+      tanpa jahitan); cangkang rambut + kuncir rendah (pangkal ikut kepala, ujung ikut dada) + helai lepas; badan loft superelips; lengan
+      (kubah bahu, siku) + lengan kaus + kepalan rbox + ibu jari; kaki loft (betis, lutut); rok = satu loft melingkupi dua paha, bobot
+      kulit per sisi (pinggul di atas → paha kiri/kanan di bawah, tengah = rata-rata) → mengikuti langkah; bot (batang berbibir, kaki,
+      sol, tali gesper); rompi pelat (miring 0.06, melengkung), cummerbund, tali bahu bertepi warna tim, papan nama "VENNY", 3 kantong,
+      granat; sabuk + kantong; holster paha kanan (ikut bobot rok); Biru headset + boom mic; Merah bandana (lingkar + segitiga + simpul),
+      sabuk peluru selempang + peluru kuningan 3D, perban, earpiece + kabel, pisau bersarung, tabung asap.
+    - Pose (BlockyCharacter.update → `VennyRig.pose(R6Pose)` tanpa alokasi): hitbox & rig R6 GDD tetap menghitung segalanya; Venny
+      membaca sudut sendi R6: pinggul (tinggi + hentakan mendarat, yaw kaki), tulang belakang/dada (condong, puntir), leher/kepala
+      (pitch; membidik → kepala menunduk & miring ke popor), kaki (ayunan R6 + tekuk lutut saat kaki di belakang/di udara; jongkok =
+      berlutut). Senapan: weaponMount R6 dipindah ke `gunPivot` di bahu kanan (anak tulang dada), pitch = sudut bahu R6 − 90° (bidik /
+      low-ready / ayun lari / angkat popor otomatis ikut), senjata dunia diskalakan 0.8 (`VENNY_GUN_SCALE`; muzzleWorld & tracer ikut),
+      kedua tangan IK dua tulang ke gagang & handguard (posisi dari bounding box senjata; bullpup dikenali), reload → tangan kiri ke
+      magazen. Pisau/granat/kosong: weaponMount di tangan kanan, lengan FK dari bahu R6 + siku menekuk.
+    - Mati (DeathFx): Venny TIDAK pecah balok (untuk manusia realistis = mutilasi) — `VennyRig` mayat per entitas (pool) membekukan pose
+      terakhir lalu lunglai (berlutut, membungkuk, lengan jatuh ±0.55 s) di atas satu body Rapier yang rebah pelan searah dorongan,
+      menyusut & hilang dengan waktu yang sama; ikut dorongan ledakan.
+    - Kilat kena tembak / denyut perlindungan spawn: emissive satu material. Pratinjau Loadout, killcam (ghost), lengan FPS (Viewmodel:
+      balok lengan/kepalan dibulatkan RoundedBox, warna kulit/sarung tangan/perban Venny) memakai jalur yang sama.
+    - Wajah (revisi pengguna "masih kurang mirip dari sisi muka", dibandingkan berdampingan dengan foto acuan): bentuk `headR` (pipi
+      bulat di tulang pipi, rahang ramping ke dagu lembut, hidung mancung membulat + cuping, bibir, dagu); tekstur wajah: volume
+      (tepi/rahang gelap, dahi/tulang pipi/batang hidung/dagu terang), alis cokelat tua tebal menipis ke ujung + helai, mata almond
+      besar (iris cokelat tua lebar + kilau, garis bulu mata lembut bersayap pendek, lipatan kelopak, sudut dalam), hidung (bayang samping,
+      kilau ujung, lubang hidung), bibir merah muda penuh tersenyum; garis rambut = lengkung berpuncak di belahan (`hairLimit`), tepi
+      rambut di dahi DILUKIS di tekstur wajah (resolusi tinggi, helai memancar dari belahan, tepi lembut) dan cangkang rambut berhenti
+      `HAIR_INSET` di atasnya; helai rambut = meridian antara belahan & tengkuk, kilau kebiruan; volume rambut naik halus dari garis rambut
+      dan mengembang di samping; leher lebih tebal.
+    - Pratinjau Loadout (CharPreview): pantulan ruang studio kini HANYA di material senjata pratinjau (`gunMat`) — three r186 menerapkan
+      `scene.environment` juga ke material Lambert (warna × cahaya studio) sehingga SEMUA karakter tampak pucat/putih; zoom ke wajah
+      (gulir / klik dua kali; kamera 17.5 u → 4.2 u, halus).
+    - Perbaikan ikut: CharPreview dt dijepit ≥ 0 (stempel rAF bisa < performance.now() saat start → damp meledak di frame pertama).
+    - Hitbox tetap balok GDD (adil, sama dengan karakter lain); karena tubuh Venny lebih ramping, sebagian hitbox (terutama kotak lengan
+      R6 di samping badan) berada di luar tubuh yang terlihat.
+    - Terukur (Iris Xe, TDM 10 karakter): frame 11.1 ms / p95 11.5 tanpa maupun dengan 10 Venny (kasus terberat), draw call maks 129 → 64,
+      segitiga maks 159k → 315k (10 Venny; 1–2 Venny ≈ 176–193k). Browser: pratinjau Loadout, BH & SY, berlutut, pisau, lengan FPS,
+      mati lunglai, online (teman pilih Venny → host melihat Venny), 0 error konsol.
 - Aturan Eliminasi: skor tim = ronde dimenangkan (kill tidak menambah skor tim); ronde 2:00, waktu habis → jumlah hidup, lalu total HP.
 - Slot senjata + pisau + buang/ambil senjata (permintaan pengguna, disetujui; angka di XCFG.knife / XCFG.drop):
   - Tombol: 1 senjata utama · 2 pisau · 3 granat K-400 · Q senjata sebelumnya · scroll siklus · G buang senjata utama · E ambil/tukar.
@@ -552,7 +603,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 309 test Vitest / 24 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 315 test Vitest / 25 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -562,7 +613,8 @@
   tests/botTactics.test.ts: cover, posisi tempur, kabur granat di collider Rapier SY & BH), kotak hitam & sebab sesi berakhir
   (tests/blackbox.test.ts), pintasan browser saat bermain (tests/input.test.ts), pindah host / cadangan / klaim / tiket
   (tests/migration.test.ts), chat teks / tombol chat / allTalk (tests/chat.test.ts), voice: aturan dengar, kurva jarak, paket, routing
-  host (tests/voice.test.ts), flashbang: kekuatan/durasi/slot 4/perintah/cadangan (tests/flash.test.ts)) hijau;
+  host (tests/voice.test.ts), flashbang: kekuatan/durasi/slot 4/perintah/cadangan (tests/flash.test.ts), karakter Venny: varian di settings/room/'start'/
+  cadangan, bot tanpa Venny (tests/variants.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

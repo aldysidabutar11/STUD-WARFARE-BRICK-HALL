@@ -33,6 +33,11 @@ export const XCFG = {
         lips: 0xc47c74, iris: 0x5b3522 },
       red: { tankM: 0x3a3e3b, tankF: 0x8e9190, jeans: 0x3e5f8d, bandana: 0xb3302b, cap: 0x5f6a39, boot: 0x5c3b27,
         wrap: 0x5a5644, strap: 0x4a4e2c, brass: 0xd3a24a, hairM: 0x3a2a20, hairF: 0x7d3b22 },
+      // Venny — karakter khusus realistis (acuan Karakter/ROBLOX-VENNY-BLUE/RED-TIM (KHUSUS).png; entities/venny/): kulit cerah, rambut
+      // hitam dikuncir rendah, kaus hitam, rompi pelat abu-arang bertepi biru royal (Biru) / merah tua (Merah), rok span selutut.
+      venny: { skin: 0xdc9b78, finger: 0xd09070, hair: 0x140f0d, brow: 0x24170f, iris: 0x351d12, lips: 0xb2423f,
+        shirt: 0x141517, shirtRed: 0x1f2120, vest: 0x232526, trimBlue: 0x2b4bb2, trimRed: 0xad2a37, skirt: 0x161618,
+        skirtRed: 0x221f1d, boot: 0x1c1b1a, glove: 0x202123, bandana: 0x74202a, bandage: 0xb5a285, plaster: 0xcf9870 },
     },
   },
   // §3.7 animasi prosedural

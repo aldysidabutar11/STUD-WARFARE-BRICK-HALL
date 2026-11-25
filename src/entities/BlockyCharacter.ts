@@ -10,6 +10,7 @@ import { WEAPON_MATERIAL, grenadeModel, knifeModel, flashbangModel } from '../co
 import type { Held } from '../combat/Slots';
 import { RIG_SLASH_A, RIG_SLASH_B, RIG_STAB, sampleKeys } from './knifeAnim';
 import { BAKE_UNIFORMS } from '../world/LightBake';
+import { VENNY_GUN_SCALE, VennyRig, type R6Pose } from './venny/rig';
 
 export type Team = 'blue' | 'red';
 export type PartKey = 'head' | 'upper' | 'lower' | 'armR' | 'armL' | 'legR' | 'legL';
@@ -97,10 +98,15 @@ export class BlockyCharacter {
   private heldKind: Held = 'ar';
   /** Probe cahaya (medan bake): x = pengali cahaya lingkungan, y = cahaya pantul hangat (lihat setProbe). */
   private readonly probeU = { value: new THREE.Vector2(1, 0) };
+  /** Venny (varian 'v'): model realistis ber-skin menggantikan balok tampilan; hitbox balok GDD tetap (venny/rig.ts). */
+  venny: VennyRig | null = null;
+  private readonly castShadow: boolean;
+  private vp: R6Pose | null = null;
 
   constructor(readonly entityId: number, readonly team: Team, castShadow: boolean, variant: Variant = 'm') {
     const g = geos(), art = characterArt(team, variant);
     this.variant = variant;
+    this.castShadow = castShadow;
     for (const k of PART_KEYS) {
       const hb = new THREE.Mesh(g[k], HITBOX_MAT);
       hb.userData = { entityId, part: PART_HIT[k], key: k };
@@ -146,6 +152,35 @@ uniform vec3 uBounce;`)
     this.knifeMesh.scale.setScalar(XCFG.knife.tpsScale);  // tangan blocky besar → pisau diperbesar agar terbaca
     this.nadeMesh = new THREE.Mesh(grenadeModel(), WEAPON_MATERIAL);
     for (const m of [this.knifeMesh, this.nadeMesh]) { m.castShadow = castShadow; m.visible = false; this.weaponMount.add(m); }
+    if (variant === 'v') this.enableVenny();
+  }
+
+  /** Pasang model Venny realistis: balok tampilan disembunyikan, weaponMount dipindah ke rig Venny (bahu/tangan). */
+  private enableVenny() {
+    if (this.venny) return;
+    const v = this.venny = new VennyRig(this.team, this.castShadow, this.probeU, BAKE_UNIFORMS.uBounce);
+    const mask = this.root.layers.mask;
+    v.root.traverse(o => { o.layers.mask = mask; });
+    this.root.add(v.root);
+    for (const k of PART_KEYS) this.visuals[k].visible = false;
+    if (this.gun) this.gun.scale.setScalar(VENNY_GUN_SCALE);
+    this.knifeMesh.scale.setScalar(1);
+    const C = XCFG.rig.colors.venny;
+    this.colors.head = C.skin; this.colors.upper = C.vest; this.colors.lower = C.skirt;
+    this.colors.armR = C.skin; this.colors.armL = C.skin; this.colors.legR = C.skirt; this.colors.legL = C.skirt;
+  }
+
+  /** Kembali ke balok (ganti varian dari Venny). */
+  private disableVenny() {
+    const v = this.venny;
+    if (!v) return;
+    this.root.remove(v.root); v.dispose(); this.venny = null;
+    for (const k of PART_KEYS) this.visuals[k].visible = true;
+    this.parts.armR.add(this.weaponMount);
+    this.weaponMount.position.set(RIG.weaponMount[0], RIG.weaponMount[1], RIG.weaponMount[2]);
+    this.weaponMount.rotation.set(0, 0, 0);
+    if (this.gun) this.gun.scale.setScalar(1);
+    this.knifeMesh.scale.setScalar(XCFG.knife.tpsScale);
   }
 
   /** Cahaya lingkungan karakter dari medan bake (langit 0..1, pantul 0..1); minimum dijaga agar musuh tetap terlihat. */
@@ -159,6 +194,7 @@ uniform vec3 uBounce;`)
     this.weaponMount.add(mesh);
     this.gun = mesh;
     mesh.visible = this.heldKind === 'ar';
+    if (this.venny) mesh.scale.setScalar(VENNY_GUN_SCALE);
   }
 
   /** Tampilkan benda yang dipegang (senapan / pisau / granat / kosong). */
@@ -181,6 +217,7 @@ uniform vec3 uBounce;`)
       this.mats[k].map = art.texture; this.mats[k].needsUpdate = true;
       this.colors[k] = art.chip[k];
     }
+    if (v === 'v') this.enableVenny(); else this.disableVenny();
   }
 
   /** Material bersama untuk balok tubuh yang berhamburan saat mati. */
@@ -204,21 +241,25 @@ uniform vec3 uBounce;`)
     if (this.flashPart && this.flashPart !== part) this.mats[this.flashPart].emissive.setHex(0);
     this.flashPart = part; this.flashT = XCFG.vfx.hitFlash;
     this.mats[part].emissive.setHex(0xffffff);
+    if (this.venny) this.venny.mat.emissive.setHex(0x8a8a8a);   // satu material: kilat lebih lembut
   }
 
   update(dt: number, s: AnimState) {
     this.t += dt;
+    const vm = this.venny?.mat;
     // kilat hit
     if (this.flashT > 0) {
       this.flashT -= dt;
-      if (this.flashT <= 0 && this.flashPart) { this.mats[this.flashPart].emissive.setHex(0); this.flashPart = null; }
+      if (this.flashT <= 0 && this.flashPart) { this.mats[this.flashPart].emissive.setHex(0); this.flashPart = null; vm?.emissive.setHex(0); }
     }
     // perlindungan spawn: denyut emissive 4 Hz
     if (this.protectT > 0) {
       const k = 0.25 + 0.25 * Math.sin(this.t * Math.PI * 2 * XCFG.player.protectPulseHz);
       for (const p of PART_KEYS) if (p !== this.flashPart) this.mats[p].emissive.setRGB(k, k, k * 1.2);
+      if (vm && !this.flashPart) vm.emissive.setRGB(k * 0.6, k * 0.6, k * 0.75);
     } else if (!this.flashPart) {
       for (const p of PART_KEYS) if (this.mats[p].emissive.r !== 0) this.mats[p].emissive.setHex(0);
+      if (vm && vm.emissive.r !== 0) vm.emissive.setHex(0);
     }
 
     const c = s.crouchT;
@@ -322,5 +363,14 @@ uniform vec3 uBounce;`)
       chestYaw += D2R(28) * w;
     }
     this.chest.rotation.y = chestYaw;
+    if (this.venny) {
+      const vp = this.vp ??= { hipsY: 0, hipsYaw: 0, chestX: 0, chestY: 0, chestDy: 0, neckX: 0, shoulderR: this.shoulderR.rotation,
+        shoulderL: this.shoulderL.rotation, legL: 0, legR: 0, crouch: 0, air: 0, low: 0, walk: 0, held: 'ar', reload: -1, gun: null };
+      vp.hipsY = this.hips.position.y; vp.hipsYaw = this.hips.rotation.y; vp.chestX = this.chest.rotation.x; vp.chestY = chestYaw;
+      vp.chestDy = this.chest.position.y - RIG.chestY; vp.neckX = this.neck.rotation.x;
+      vp.legL = legL; vp.legR = legR; vp.crouch = c; vp.air = this.airW; vp.low = this.lowW; vp.walk = this.walkW;
+      vp.held = held; vp.reload = s.reload; vp.gun = this.gun instanceof THREE.Mesh ? this.gun : null;
+      this.venny.pose(vp, this.weaponMount, this.root);
+    }
   }
 }
