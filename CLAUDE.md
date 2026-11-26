@@ -32,7 +32,23 @@
 - Dinding luar Utara/Selatan ditambahkan (manifest PDF hanya punya Barat/Timur; gambar 4.1/4.2 menggambarnya).
 - Kode recoil §7.2 memakai CFG.combat.recoil.* (bentuk di §15.2 — §15 menang).
 - KCC: integrasi vertikal parabola eksak (y += v·dt + ½·g·dt²) agar lulus test vector puncak lompat 1.383 ± 0.05;
-  gaya tempel tanah kecil + proyeksi lereng agar tidak nyangkut dan kecepatan di tangga sesuai §3.4.
+  proyeksi lereng agar kecepatan di tangga sesuai §3.4. Gaya tempel tanah = 0 (dulu −0.5 u/s: membuat KCC sesekali membatalkan gerak
+  horizontal di lantai datar) — lihat "Kehalusan lari".
+- Kehalusan lari (laporan pemain 2026-11-26: "lari terasa cepat → tiba-tiba pelan → cepat lagi, terus seperti itu", online & offline,
+  semua map; BUKAN jaringan — koreksi prediksi 0). Tiga sebab di PlayerController, semuanya terukur:
+  1. `XCFG.player.groundStick` −0.5 → 0: komponen turun kecil di gerak KCC membuat Rapier sesekali menghitung gerak horizontal 0 di
+     lantai DATAR (lantai sintetis 20/808 tick sprint; TDM 30 s: BH 125×, SY 241×, Boston 111× kecepatan → ±0 lalu akselerasi lagi
+     ±0.15 s). Tetap menapak lewat snapToGround (0.5) + proyeksi lereng. `normalNudgeFactor` Rapier tidak menolong (diuji).
+  2. "Dinding menahan → kecepatan nyata" kini hanya bila KCC menyentuh permukaan tak bisa didaki (`touchedWall`: normal1.y <
+     cos maxSlopeClimb) — dulu kaki ramp (lereng) ikut memotong kecepatan ±40%.
+  3. Lepas tanah TANPA lompat (puncak ramp: KCC melayang 2–4 tick; tepi lantai) → `airCap` = max(kecepatan horizontal saat lepas
+     landas, 3.0·T) sesuai teks GDD §3.4 "batas kecepatan di udara = max(v_horizontal saat lepas landas, 3.0)" — dulu hanya diisi saat
+     lompat, jadi sisa batas lama (bawaan 3.0) memotong sprint 11.5 → 3.0 u/s di setiap puncak tangga. Sprint juga berlaku selama
+     waktu coyote (0.1 s, sama dengan coyote lompat; lompat menolkannya) → tidak ada penurunan ±13% saat melayang di puncak.
+  Sesudah: TDM 30 s ketiga map 0 macet / 0 potongan, tangga Boston naik & turun konstan 11.48 u/s, online 0 koreksi (SY, Boston),
+  489 test. Dijaga tests/runSmooth.test.ts (gagal dengan kode lama: lantai datar → 0, tangga → 3). Skrip lokal: pw/run_ground_bots.js
+  (macet & potongan per map, `git stash` untuk sebelum/sesudah), pw/run_feel.js (online: koreksi + kecepatan layar/simulasi —
+  pakai stempel waktu rAF, bukan performance.now()).
 - Rapier: world.step() dijalankan sekali setelah membangun map sebelum raycast/validator; setelah teleport/respawn
   panggil world.propagateModifiedBodyPositionsToColliders().
 - PCFSoftShadowMap deprecated sejak three r186 → HIGH memakai PCFShadowMap + shadow.radius.
@@ -771,7 +787,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 486 test Vitest / 30 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 489 test Vitest / 31 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -788,7 +804,8 @@
   bolt, dua senjata api, migrasi tombol v3, loadout/protokol, garis bidik 30 model, jarak dekat (tests/weaponsX.test.ts), lemparan 34 u/s & garis
   lintasan = body Rapier (lantai/dinding/grup tabrakan/sumbu habis/jarak lempar/rumus balistik bot), flash pelempar × 0.5, setelan nadeArc
   (tests/throw.test.ts), akun & leaderboard: aturan murni + cermin SQL (tests/accounts.test.ts) & keamanan SQL di Postgres asli PGlite
-  (tests/accountsSql.test.ts)) hijau;
+  (tests/accountsSql.test.ts), kehalusan lari: lantai datar tanpa macet, tangga Boston naik/turun konstan, batas udara saat lepas
+  tanah (tests/runSmooth.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

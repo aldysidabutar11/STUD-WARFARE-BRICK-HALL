@@ -12,6 +12,8 @@ const P = CFG.player, K = CFG.kcc;
 const D2R = THREE.MathUtils.degToRad;
 const STAND_HH = (P.standHeight - 2 * P.capsuleRadius) / 2;   // 1.7
 const CROUCH_HH = (P.crouchHeight - 2 * P.capsuleRadius) / 2; // 1.05
+/** Normal permukaan dengan komponen Y ≥ ini = lantai/lereng yang bisa didaki (maxSlopeClimbDeg), bukan penahan gerak. */
+const WALKABLE_NY = Math.cos(THREE.MathUtils.degToRad(K.maxSlopeClimbDeg)) - 0.01;
 
 /** Keadaan gerak yang cukup untuk memutar ulang langkah KCC (prediksi + rekonsiliasi online). */
 export interface CtrlState {
@@ -55,6 +57,7 @@ export class PlayerController {
   private standShape = new RAPIER.Capsule(STAND_HH, P.capsuleRadius);
   private ident = { x: 0, y: 0, z: 0, w: 1 };
   private tv = { vx: 0, vz: 0 };
+  private hit = new RAPIER.CharacterCollision();   // wadah tabrakan KCC dipakai ulang (mengurangi alokasi di hot loop)
   onFallDamage: ((dmg: number) => void) | null = null;
   enabled = true;
   /** Replay prediksi klien: tanpa suara langkah / fall damage (event sudah terjadi saat langkah aslinya). */
@@ -145,10 +148,12 @@ export class PlayerController {
     const target = this.crouched ? 1 : 0;
     this.crouchT = THREE.MathUtils.clamp(this.crouchT + Math.sign(target - this.crouchT) * dt / P.crouchTransition, 0, 1);
 
-    // ── sprint: W ditahan (komponen maju > 0.5), menapak, tidak ADS, tidak jongkok, tidak memasak granat
+    // ── sprint: W ditahan (komponen maju > 0.5), menapak, tidak ADS, tidak jongkok, tidak memasak granat. "Menapak" termasuk waktu
+    // coyote (0.1 s setelah lepas tanah TANPA lompat; lompat menolkan coyote): di puncak tangga KCC melayang 2–4 tick → dulu sprint
+    // mati sesaat dan kecepatan turun ±13%.
     const len = Math.hypot(it.ix, it.iz) || 1;
-    this.sprinting = it.sprint && it.iz / len > XCFG.player.sprintMinForward && this.grounded && !adsActive && !this.crouched
-      && !it.cooking && !it.wantFire;
+    this.sprinting = it.sprint && it.iz / len > XCFG.player.sprintMinForward && (this.grounded || this.coyote > 0) && !adsActive
+      && !this.crouched && !it.cooking && !it.wantFire;
 
     // ── kecepatan target (kode §3.4) → vektor dunia
     const hasInput = it.ix !== 0 || it.iz !== 0;
@@ -201,15 +206,20 @@ export class PlayerController {
     this.pos.x += m.x; this.pos.y += m.y; this.pos.z += m.z;
     this.body.setNextKinematicTranslation({ x: this.pos.x, y: this.pos.y, z: this.pos.z });
 
-    // dinding menahan → kecepatan nyata (hanya mengecil)
+    // dinding menahan → kecepatan nyata (hanya mengecil). Hanya bila benar-benar menyentuh DINDING (bukan lantai / lereng yang bisa
+    // didaki): di kaki ramp KCC membelokkan sebagian gerak ke atas pada tick transisi → dulu kecepatan ikut terpotong ±40% lalu
+    // harus berakselerasi lagi (laporan "lari cepat → tiba-tiba pelan").
     const ax = m.x / dt, az = m.z / dt;
-    if (Math.hypot(ax, az) < this.speedH - 0.01) { this.vel.x = ax; this.vel.z = az; }
+    if (Math.hypot(ax, az) < this.speedH - 0.01 && this.touchedWall()) { this.vel.x = ax; this.vel.z = az; }
 
     const wasGrounded = this.grounded;
     this.grounded = this.kcc.computedGrounded() && this.velY <= 0;
     if (!this.grounded) this.peakY = Math.max(this.peakY, this.pos.y);
     if (!wasGrounded && this.grounded) this.land();
-    if (wasGrounded && !this.grounded && !jumped) this.peakY = this.pos.y;
+    // lepas tanah TANPA lompat (puncak tangga/ramp, tepi lantai): batas kecepatan udara = kecepatan horizontal saat lepas landas (§3.4).
+    // Dulu tetap batas lompatan terakhir (bawaan 3.0) → sprint 11.5 u/s terpotong jadi 3 u/s di setiap puncak tangga Boston/BH
+    // (laporan "lari cepat → tiba-tiba pelan → cepat lagi").
+    if (wasGrounded && !this.grounded && !jumped) { this.peakY = this.pos.y; this.airCap = Math.max(this.speedH, P.airMinSpeedCap * T); }
 
     // ── langkah kaki (interval §3.7): fase kontinu, suara tiap melewati bilangan bulat; diam/di udara = fase berhenti
     if (this.grounded && this.speedH > 1.0) {
@@ -239,6 +249,16 @@ export class PlayerController {
     if (H > 0.6) bus.emit('footstep', { entityId: this.entityId, material: physics.surfaceBelow(this.pos.x, this.pos.y, this.pos.z),
       position: this.pos, loud: true, land: true });
     this.peakY = this.pos.y;
+  }
+
+  /** Langkah KCC terakhir menyentuh permukaan yang tidak bisa didaki (dinding, sisi peti, plafon) — bukan lantai/ramp. */
+  private touchedWall(): boolean {
+    const k = this.kcc;
+    for (let i = 0, n = k.numComputedCollisions(); i < n; i++) {
+      const c = k.computedCollision(i, this.hit);
+      if (c && c.normal1.y < WALKABLE_NY) return true;
+    }
+    return false;
   }
 
   private approach(tx: number, tz: number, maxDelta: number) {

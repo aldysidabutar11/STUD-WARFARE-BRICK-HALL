@@ -8,7 +8,10 @@ export const XCFG = {
     regenDelay: 5, regenRate: 8,          // §3.8 (opsi config, default mati)
     protectPulseHz: 4,                    // §3.8
     sprintMinForward: 0.5,                // §3.4 syarat sprint
-    groundStick: -0.5,                    // gaya tempel tanah (lihat CLAUDE.md)
+    // gaya tempel tanah (u/s ke bawah saat menapak). 0: komponen turun kecil membuat KCC Rapier sesekali MEMBATALKAN gerak horizontal
+    // di lantai datar (terukur ±2.5% tick sprint = 1–2× per detik → "lari cepat, tiba-tiba pelan"); tetap menapak lewat snapToGround
+    // + proyeksi lereng (lihat CLAUDE.md "Kehalusan lari").
+    groundStick: 0,
     hipsCrouchY: 0.5,                     // §3.1 / E-02
   },
   // §3.1 rig R6 v2 — ukuran (X,Y,Z), pusat saat berdiri, pivot
