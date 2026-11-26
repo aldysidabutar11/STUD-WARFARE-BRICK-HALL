@@ -2,7 +2,7 @@
 // (data dari jaringan: id unik & dalam batas, nama dibersihkan, loadout harus ada di daftar senjata/optik, map harus dikenal).
 import { cleanVariant } from '../entities/variants';
 import { XCFG } from '../config/extraConfig';
-import type { ScopeId, WeaponId } from '../config/weaponsData';
+import type { Loadout } from '../combat/Loadout';
 import type { Team } from '../entities/BlockyCharacter';
 import type { Variant } from '../entities/CharacterArt';
 import type { MatchOptions } from '../game/MatchManager';
@@ -12,7 +12,7 @@ import { cleanLoadout } from './Session';
 import { parseSave, type MatchSave } from './Migration';
 
 /** Susunan match online (host → semua klien): id entitas per slot room, nama, pemilik (pid) / bot, tampilan & loadout. */
-export interface NetEnt { id: number; team: Team; name: string; pid: string | null; bot: boolean; variant: Variant; weapon: WeaponId; scope: ScopeId }
+export interface NetEnt extends Loadout { id: number; team: Team; name: string; pid: string | null; bot: boolean; variant: Variant }
 export interface NetStart { seed: number; opts: MatchOptions; ents: NetEnt[];
   /** Map match ini — selalu id konkret ('Acak' sudah diundi host); host & klien memuat map ini sebelum membuat entitas. */
   map: MapId;
@@ -33,7 +33,7 @@ export function parseStart(m: Record<string, unknown>): NetStart | null {
     if (!Number.isInteger(id) || id < 1 || id > 255 || ids.has(id)) return null;
     ids.add(id);
     ents.push({ id, team: r.team === 'red' ? 'red' : 'blue', name: cleanName(String(r.name ?? '')) || 'Pemain',
-      pid: typeof r.pid === 'string' ? r.pid : null, bot: !!r.bot, variant: cleanVariant(r.variant), ...cleanLoadout(r.weapon, r.scope) });
+      pid: typeof r.pid === 'string' ? r.pid : null, bot: !!r.bot, variant: cleanVariant(r.variant), ...cleanLoadout(r.weapon, r.scope, r.pistol, r.pscope, r.melee) });
   }
   const opts: MatchOptions = { mode: o.mode === 'elim' ? 'elim' : 'tdm', scoreLimit: lim(o.scoreLimit, 50, 1, 999),
     timeLimit: lim(o.timeLimit, 600, 30, 7200), roundsToWin: lim(o.roundsToWin, 5, 1, 15) };

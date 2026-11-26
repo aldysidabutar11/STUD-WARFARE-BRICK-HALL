@@ -7,16 +7,19 @@ import type { SurfaceMaterial } from '../../core/EventBus';
 import type { Box, SpawnFloor, Stair } from '../MapData';
 import type { EdgeKind } from '../NavGraph';
 
-export type MapId = 'brickhall' | 'steelyard';
+export type MapId = 'brickhall' | 'steelyard' | 'boston';
 /** Urutan tampil di menu. */
-export const MAP_IDS: readonly MapId[] = ['brickhall', 'steelyard'];
+export const MAP_IDS: readonly MapId[] = ['brickhall', 'steelyard', 'boston'];
 
 /** Template graf navigasi (gaya GDD §11.6). {H} = S (Biru, Z negatif) / N (Merah, Z positif); {X} = W (X negatif) / E;
  *  awalan C_ = garis tengah Z = 0. Koordinat ditulis untuk H=S, X=W lalu dicerminkan otomatis (N: z → −z, E: x → −x). */
 export interface NavTemplate {
   /** [nama, x, z, level y lantai (0 = lantai dasar, 10 = lantai 2 Brick Hall)] */
   nodes: [string, number, number, number][];
-  edges: [string, string, EdgeKind][];
+  /** [a, b, jenis, gerbang?] — edge bergerbang hanya dilalui bila gerbangnya terbuka (NavGraph.setGate; mis. kaca pecah). */
+  edges: ([string, string, EdgeKind] | [string, string, EdgeKind, string])[];
+  /** Map asimetris (Boston): nama node apa adanya (tanpa {H}/{X}/cermin); sisi node S/N/C dari posisinya. */
+  asym?: { side(x: number, z: number, level: number): 'S' | 'N' | 'C' };
   /** Drop satu arah (opsional): [takeoff, landing, id balok pendaratan tanpa sufiks sisi]. */
   drops?: [string, string, string][];
   /** Node yang dianggap posisi berlindung. */
@@ -88,11 +91,21 @@ export interface MapDef {
   /** Posisi CubeCamera untuk peta lingkungan (pantulan PBR). */
   envProbe: [number, number, number];
   atmosphere: Atmosphere;
+  /** Radar per lantai (opsional; Boston: [0, 10]) — lantai atas hampir menutupi denah, jadi radar menggambar satu lantai saja
+   *  sesuai ketinggian pemain. Bawaan: satu gambar gabungan (Brick Hall: balkon di atas aula). */
+  radarFloors?: number[];
+  /** Panel kaca destruktibel (opsional; Boston) — runtime: world/Breakables.ts (urutan = indeks jaringan). */
+  breakables?: import('../Breakables').BreakableDef[];
+  /** Spesifikasi lompat drop bot per balok pendaratan (opsional; bawaan = rak Brick Hall). */
+  dropSpec?(boxId: string): { jumpDist: number; sprint: boolean; brake: boolean } | undefined;
   /** Data buku fisika (Props) — hanya Brick Hall. */
   props?: {
     bookPiles: [number, number][];
-    floorArea: { x: [number, number]; z: [number, number] };
-    groundObstacles(): { x: [number, number]; z: [number, number]; top: number }[];
+    /** Lantai kertas (opsional; hanya Brick Hall). */
+    floorArea?: { x: [number, number]; z: [number, number] };
+    groundObstacles?(): { x: [number, number]; z: [number, number]; top: number }[];
+    /** Benda kantor dinamis (opsional; Boston): laptop, tumbler, kursi. */
+    items?: import('../propKinds').PropItem[];
   };
   /** Bangun mesh + collider + lampu + bake cahaya ke scene. */
   build(scene: THREE.Scene, preset: Preset, presetName: PresetName, aniso: number): BuiltMap;

@@ -25,7 +25,7 @@ describe('Registry & ganti map (murni)', () => {
     expect(Object.keys(MAPS).sort()).toEqual([...MAP_IDS].sort());
     for (const id of MAP_IDS) expect(MAPS[id].id).toBe(id);
     expect(mapInfo().map(m => m.id)).toEqual([...MAP_IDS]);
-    expect(mapInfo().map(m => m.name)).toEqual(['Brick Hall', 'Steel Yard']);
+    expect(mapInfo().map(m => m.name)).toEqual(['Brick Hall', 'Steel Yard', 'Boston']);
     for (const m of mapInfo()) expect(m.desc.length).toBeGreaterThan(10);
   });
   it('bawaan Brick Hall; setCurrentMap mengganti map aktif; id tak dikenal ditolak', () => {
@@ -234,9 +234,10 @@ describe('LightBake mode luar ruang + OBB', () => {
 });
 
 describe('Material permukaan baru di jaringan (sand, metal)', () => {
-  it('kode lama tidak bergeser (tile 0, carpet 1, wood 2) + sand/metal di akhir; warna efek lengkap', () => {
+  it('kode lama tidak bergeser (tile 0, carpet 1, wood 2) + sand/metal/glass di akhir; warna efek lengkap', () => {
     expect(SURFACES.slice(0, 3)).toEqual(['tile', 'carpet', 'wood']);
-    expect(SURFACES).toEqual(['tile', 'carpet', 'wood', 'sand', 'metal']);
+    expect(SURFACES).toEqual(['tile', 'carpet', 'wood', 'sand', 'metal', 'glass']);
+    expect(SURFACES.length).toBeLessThanOrEqual(8);       // 3 bit di paket pantulan granat
     for (const m of SURFACES) { expect(surfaceOf(surfaceCode(m))).toBe(m); expect(SURFACE_COLOR[m]).toBeTypeOf('number'); }
     expect(surfaceOf(99)).toBe('tile');
   });

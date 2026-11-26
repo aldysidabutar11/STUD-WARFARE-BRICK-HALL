@@ -2,7 +2,11 @@
 // + navigasi gamepad (D-pad/A/B) untuk semua menu. + multi-map: kartu pilihan map (denah prosedural, ui/MapThumb) di Atur Match
 // & setelan host room (Acak = diundi saat match dimulai); nama map di menu utama, layar hasil (dan banner awal match di Game).
 import { cleanVariant, type Variant } from '../entities/variants';
-import { SCOPES, SCOPE_ORDER, WEAPONS, WEAPON_ORDER, scopeAllowed, type ScopeId, type WeaponId } from '../config/weaponsData';
+import { SCOPES, SCOPE_ORDER, WEAPONS, WEAPON_ORDER, classOf, fitScope, scopeAllowed, type ScopeId, type WeaponClass, type WeaponDef,
+  type WeaponId } from '../config/weaponsData';
+import { MELEES, MELEE_ORDER, X_ORDER, type MeleeId } from '../config/weaponsExtra';
+import type { Loadout } from '../combat/Loadout';
+import { falloffOf, moveMultOf, pelletsOf } from '../combat/weaponStats';
 import { effectiveZoom } from '../combat/Damage';
 import { ACTIONS, DEFAULT_BINDS, PAD, PAD_HELP, isBindable, keyLabel, rebind, type Action } from '../core/Bindings';
 import type { PadState } from '../core/Input';
@@ -31,7 +35,7 @@ export interface NetInfo { role: 'host' | 'client'; state: 'connecting' | 'onlin
 
 export interface MenuApi {
   play(practice?: boolean): void; resume(): void; quitToMenu(): void; replay(): void; fullscreen(): void;
-  settings(): Settings; applySettings(s: Settings): void; setLoadout(w: WeaponId, s: ScopeId, v: Variant): void; click(): void;
+  settings(): Settings; applySettings(s: Settings): void; setLoadout(lo: Loadout, v: Variant): void; click(): void;
   inMatch(): boolean;
   /** Taksiran refresh layar (Hz) — label pilihan batas FPS. */
   refreshHz(): number;
@@ -74,6 +78,8 @@ export interface MenuApi {
   dropTicket(): void;
 }
 
+/** "A, B & C" (daftar nama untuk teks menu). */
+const listNames = (n: string[]) => n.length < 2 ? n.join('') : `${n.slice(0, -1).join(', ')} & ${n[n.length - 1]}`;
 /** Urutan kartu pilihan map: semua map lalu "Acak". */
 const MAP_CHOICES: readonly MapChoice[] = [...MAP_IDS, 'random'];
 const choiceName = (c: MapChoice) => (c === 'random' ? 'Acak' : MAPS[c].name);
@@ -90,6 +96,16 @@ const FIXED_KEYS: [string, string][] = [
 
 const el = (html: string) => { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild as HTMLElement; };
 const norm = (v: number, a: number, b: number) => Math.max(0.08, Math.min(1, (v - a) / (b - a)));
+
+/** Tab kelas senjata utama di Loadout (hanya kelas yang punya senjata yang tampil). */
+const CLASS_TABS: readonly [WeaponClass, string][] = [['AR', 'Assault Rifle'], ['SMG', 'SMG'], ['SG', 'Shotgun'], ['SR', 'Sniper'],
+  ['DMR', 'DMR'], ['LMG', 'LMG']];
+
+/** Bar statistik kartu senjata (skala sama untuk semua kelas → bisa dibandingkan antar-kelas). */
+function weaponBars(w: WeaponDef): [string, number][] {
+  return [['Damage', norm(w.baseDamage * pelletsOf(w), 20, 150)], ['RPM', norm(w.rpm, 40, 1250)],
+    ['Kontrol', norm(5 - w.recoilVert, 0, 4.4)], ['Gerak', norm(moveMultOf(w), 0.82, 1.06)], ['Jarak', norm(falloffOf(w)[0], 8, 90)]];
+}
 const FOCUSABLE = 'button:not(:disabled), select, input[type=range], .wcard, .mode';
 /** Lebar gambar denah kartu map (px CSS, 16:9): besar = Atur Match, kecil = setelan host room. */
 const THUMB = { big: 208, small: 132 };
@@ -99,6 +115,9 @@ export class Menus {
   current: string | null = null;
   private wSel: WeaponId = 'm416';
   private sSel: ScopeId = 'reddot';
+  private pSel: WeaponId = 'deagle';
+  private psSel: ScopeId = 'iron';
+  private mSel: MeleeId = 'knife';
   private vSel: Variant = 'm';
   private stopCapture: (() => void) | null = null;
   private settingsTab = 'mouse';
@@ -138,7 +157,7 @@ export class Menus {
       <button data-a="loadout">Loadout</button><button data-a="settings">Pengaturan</button><button data-a="controls">Kontrol</button>
       <button data-a="fs">Layar Penuh</button></div>
       <div class="note">Biru di Selatan menghadap Utara. Mode: Team Deathmatch atau Eliminasi melawan bot, atau Main Bareng di room (5 lawan 5, slot kosong diisi bot).
-        ${MAP_IDS.length} map: ${MAP_IDS.map(id => MAPS[id].name).join(' & ')} — pilih di ▶ Main (Latihan memakai map yang sama). Gamepad didukung.</div>
+        ${MAP_IDS.length} map: ${listNames(MAP_IDS.map(id => MAPS[id].name))} — pilih di ▶ Main (Latihan memakai map yang sama). Gamepad didukung.</div>
       <button class="bb-link" data-a="bbreport" title="Catatan kejadian teknis (koneksi, grafis, error) untuk dikirim ke pengembang">Salin laporan teknis</button></div>`);
     this.on(m, 'bbcopy', () => this.copyReport(m, m.querySelector('[data-a="bbcopy"]')));
     this.on(m, 'bbreport', () => this.copyReport(m, m.querySelector('[data-a="bbreport"]')));
@@ -398,8 +417,8 @@ export class Menus {
 
   showLoadout(back: () => void, inMatch = false) {
     const s = this.api.settings();
-    this.wSel = s.weapon; this.sSel = s.scope; this.vSel = s.charVariant;
-    let tSel: Team = this.api.myTeam();
+    this.wSel = s.weapon; this.sSel = s.scope; this.pSel = s.pistol; this.psSel = s.pscope; this.mSel = s.melee; this.vSel = s.charVariant;
+    let tSel: Team = this.api.myTeam(), cSel: WeaponClass = classOf(WEAPONS[this.wSel]);
     const m = this.mount('loadout', `<div class="card loadout"><h2>Loadout ${inMatch ? '<small style="font-size:13px;opacity:.7">— senjata berlaku pada spawn berikutnya</small>' : ''}</h2>
       <div class="lo-cols">
         <div class="lo-char">
@@ -408,10 +427,19 @@ export class Menus {
           <div class="lo-team"><span>Lihat pakaian</span><button data-tm="blue">Biru</button><button data-tm="red">Merah</button></div>
           <small>Biru: pasukan taktis · Merah: gerilyawan — pakaian di match mengikuti timmu. Venny = karakter khusus (dua kostum). Seret untuk memutar · gulir / klik dua kali untuk melihat wajah.</small>
         </div>
-        <div class="lo-weap"><div class="grid"></div><div class="scopes"></div></div>
+        <div class="lo-weap">
+          <div class="lo-sec">Senjata utama <i>slot 1</i></div>
+          <div class="lo-cls"></div><div class="grid"></div><div class="scopes"></div>
+          <div class="lo-sec">Pistol <i>slot 2 · cabut cepat saat magazen utama habis</i></div>
+          <div class="grid pgrid"></div><div class="scopes pscopes"></div>
+          <div class="lo-sec">Jarak dekat <i>slot 3 · klik kiri ringan, klik kanan berat · dari belakang lebih mematikan</i></div>
+          <div class="grid mgrid"></div>
+          <div class="lo-keys">1 utama · 2 pistol · 3 pisau · 4 K-400 · 5 flashbang · Q senjata sebelumnya</div>
+        </div>
       </div>
       <div class="row"><button class="primary" data-a="ok">Simpan</button><button data-a="back">Kembali</button></div></div>`);
-    const grid = m.querySelector('.grid')!, scopes = m.querySelector('.scopes')!;
+    const cls = m.querySelector('.lo-cls')!, grid = m.querySelector('.grid:not(.pgrid)')!, scopes = m.querySelector('.scopes:not(.pscopes)')!;
+    const pgrid = m.querySelector('.pgrid')!, pscopes = m.querySelector('.pscopes')!, mgrid = m.querySelector('.mgrid')!;
     // pratinjau karakter 3D (tim, pria/wanita, senjata + optik pilihan) — dirender hanya selama Loadout tampil
     const prev = this.preview ??= new CharPreview(), slot = m.querySelector('[data-prev]')!;
     slot.prepend(prev.el);
@@ -424,22 +452,40 @@ export class Menus {
     vBtns.forEach(b => b.addEventListener('click', () => { this.api.click(); this.vSel = cleanVariant(b.dataset.v); renderV(); showPrev(); }));
     tBtns.forEach(b => b.addEventListener('click', () => { this.api.click(); tSel = b.dataset.tm as Team; renderT(); showPrev(); }));
     renderV(); renderT();
+    const ALL: readonly WeaponId[] = [...WEAPON_ORDER, ...X_ORDER];
+    const primaries = ALL.filter(id => classOf(WEAPONS[id]) !== 'PISTOL'), pistols = ALL.filter(id => classOf(WEAPONS[id]) === 'PISTOL');
+    const classes = CLASS_TABS.filter(([c]) => primaries.some(id => classOf(WEAPONS[id]) === c));
+    const card = (id: WeaponId, sel: boolean) => {
+      const w = WEAPONS[id];
+      return `<div class="wcard ${sel ? 'sel' : ''}" data-w="${id}" tabindex="0"><b>${w.name}</b><span class="wmeta">${w.caliber} · ` +
+        `${w.modes.map(x => x.replace('BURST', 'B')).join('/')} · ${w.magSize} peluru</span>` +
+        (w.role ? `<span class="wrole">${w.role}</span>` : '') +
+        weaponBars(w).map(([n, v]) => `<div class="stat"><span>${n}</span><i><b style="width:${Math.round(v * 100)}%"></b></i></div>`).join('') + '</div>';
+    };
+    const scopeBtns = (w: WeaponDef, sel: ScopeId) => SCOPE_ORDER.filter(sid => w.scopes ? w.scopes.includes(sid) : true).map(sid => {
+      const sc = SCOPES[sid], ok = scopeAllowed(w, sid);
+      return `<button data-s="${sid}" class="${sid === sel ? 'sel' : ''}" ${ok ? '' : `disabled title="Terkunci untuk ${w.name}"`}>${sc.name} · ${effectiveZoom(sc.fov).toFixed(2)}×</button>`;
+    }).join('');
     const render = () => {
-      grid.innerHTML = WEAPON_ORDER.map(id => {
-        const w = WEAPONS[id];
-        const bars: [string, number][] = [['Damage', norm(w.baseDamage, 38, 50)], ['RPM', norm(w.rpm, 560, 820)],
-          ['Kontrol', norm(2.3 - w.recoilVert, 0.1, 1.5)], ['Reload', norm(3.2 - w.reloadTime, 0.05, 1.15)]];
-        return `<div class="wcard ${id === this.wSel ? 'sel' : ''}" data-w="${id}" tabindex="0"><b>${w.name}</b><span style="opacity:.7">${w.caliber} · ${w.modes.map(x => x.replace('BURST', 'B')).join('/')}</span>` +
+      cls.innerHTML = classes.map(([c, label]) => `<button data-c="${c}" class="${c === cSel ? 'sel' : ''}">${label}</button>`).join('');
+      grid.innerHTML = primaries.filter(id => classOf(WEAPONS[id]) === cSel).map(id => card(id, id === this.wSel)).join('');
+      scopes.innerHTML = scopeBtns(WEAPONS[this.wSel], this.sSel);
+      pgrid.innerHTML = pistols.map(id => card(id, id === this.pSel)).join('');
+      mgrid.innerHTML = MELEE_ORDER.map(id => {
+        const d = MELEES[id], bars: [string, number][] = [['Ringan', norm(d.light.damage, 20, 70)], ['Berat', norm(d.heavy.damage, 40, 110)],
+          ['Cepat', norm(1.1 - d.light.duration, 0.3, 0.8)], ['Jangkau', norm(d.reach, 2.6, 3.9)], ['Lari', norm(d.moveMult, 1.0, 1.12)]];
+        return `<div class="wcard ${id === this.mSel ? 'sel' : ''}" data-m="${id}" tabindex="0"><b>${d.name}</b>` +
+          `<span class="wmeta">${d.light.damage} / ${d.heavy.damage} · belakang ${d.heavy.backDamage}</span><span class="wrole">${d.role}</span>` +
           bars.map(([n, v]) => `<div class="stat"><span>${n}</span><i><b style="width:${Math.round(v * 100)}%"></b></i></div>`).join('') + '</div>';
       }).join('');
-      scopes.innerHTML = SCOPE_ORDER.map(sid => {
-        const sc = SCOPES[sid], ok = scopeAllowed(WEAPONS[this.wSel], sid);
-        return `<button data-s="${sid}" class="${sid === this.sSel ? 'sel' : ''}" ${ok ? '' : 'disabled title="Terkunci untuk Groza"'}>${sc.name} · ${effectiveZoom(sc.fov).toFixed(2)}×</button>`;
-      }).join('');
+      pscopes.innerHTML = scopeBtns(WEAPONS[this.pSel], this.psSel);
       showPrev();
+      cls.querySelectorAll<HTMLButtonElement>('button').forEach(b => b.addEventListener('click', () => {
+        this.api.click(); cSel = b.dataset.c as WeaponClass; render();
+        (cls.querySelector(`[data-c="${cSel}"]`) as HTMLElement | null)?.focus();
+      }));
       grid.querySelectorAll<HTMLElement>('.wcard').forEach(c => c.addEventListener('click', () => {
-        this.api.click(); this.wSel = c.dataset.w as WeaponId;
-        if (!scopeAllowed(WEAPONS[this.wSel], this.sSel)) this.sSel = 'x3';
+        this.api.click(); this.wSel = c.dataset.w as WeaponId; this.sSel = fitScope(WEAPONS[this.wSel], this.sSel);
         render();
         (grid.querySelector(`[data-w="${this.wSel}"]`) as HTMLElement | null)?.focus();
       }));
@@ -447,9 +493,24 @@ export class Menus {
         this.api.click(); this.sSel = b.dataset.s as ScopeId; render();
         (scopes.querySelector(`[data-s="${this.sSel}"]`) as HTMLElement | null)?.focus();
       }));
+      pgrid.querySelectorAll<HTMLElement>('.wcard').forEach(c => c.addEventListener('click', () => {
+        this.api.click(); this.pSel = c.dataset.w as WeaponId; this.psSel = fitScope(WEAPONS[this.pSel], this.psSel); render();
+        (pgrid.querySelector(`[data-w="${this.pSel}"]`) as HTMLElement | null)?.focus();
+      }));
+      mgrid.querySelectorAll<HTMLElement>('.wcard').forEach(c => c.addEventListener('click', () => {
+        this.api.click(); this.mSel = c.dataset.m as MeleeId; render();
+        (mgrid.querySelector(`[data-m="${this.mSel}"]`) as HTMLElement | null)?.focus();
+      }));
+      pscopes.querySelectorAll<HTMLButtonElement>('button').forEach(b => b.addEventListener('click', () => {
+        this.api.click(); this.psSel = b.dataset.s as ScopeId; render();
+        (pscopes.querySelector(`[data-s="${this.psSel}"]`) as HTMLElement | null)?.focus();
+      }));
     };
     render();
-    this.on(m, 'ok', () => { prev.stop(); this.api.setLoadout(this.wSel, this.sSel, this.vSel); back(); });
+    this.on(m, 'ok', () => {
+      prev.stop();
+      this.api.setLoadout({ weapon: this.wSel, scope: this.sSel, pistol: this.pSel, pscope: this.psSel, melee: this.mSel }, this.vSel); back();
+    });
     this.on(m, 'back', () => { prev.stop(); back(); });
   }
 
@@ -530,6 +591,7 @@ export class Menus {
         ${onOff('nameplates', 'Nama di atas kepala')}
         ${onOff('killcam', 'Killcam (replay dari mata pembunuh)')}
         ${onOff('dmgNumbers', 'Angka damage melayang')}
+        ${onOff('nadeArc', 'Garis lintasan & titik jatuh granat / flashbang')}
         ${onOff('chatBots', 'Laporan musuh dari bot di chat tim')}
         ${sel('fullPause', 'Jeda penuh saat pause', [['false', 'Off (bot tetap jalan)'], ['true', 'On']])}
       </div>

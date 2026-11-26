@@ -12,12 +12,15 @@ import { ctx } from '../game/ctx';
 import type { Entity } from '../entities/Entity';
 import { currentMap, type MapDef } from '../world/maps/registry';
 import { returnSlot, type Slot } from './Slots';
+import type { WeaponSystem } from './WeaponSystem';
+import { equipTimeOf } from './weaponStats';
+import { MELEES } from '../config/weaponsExtra';
 import { BodyLerp } from '../core/BodyLerp';
 import { WEAPON_MATERIAL, flashbangModel } from './WeaponModels';
-import { combineFlash, flashExposure, flashStrength, type FlashExposure, type NadeKind } from './Flash';
+import { combineFlash, flashExposure, flashStrength, ownerFlash, type FlashExposure, type NadeKind } from './Flash';
+import { throwLaunch, type LaunchIn } from './throwArc';
 
-const GR = CFG.grenade, GT = XCFG.grenadeThrow, FL = XCFG.flash;
-const D2R = THREE.MathUtils.degToRad;
+const GR = CFG.grenade, FL = XCFG.flash;
 const EARLY_GROUPS = ((G.GRENADE << 16) | (G.STATIC | G.PROP)) >>> 0; // 0.15 s pertama: abaikan kapsul pelempar
 
 interface Live { body: RAPIER.RigidBody; collider: RAPIER.Collider; mesh: THREE.Group; fuse: number; owner: number; prev: THREE.Vector3; early: number;
@@ -30,21 +33,23 @@ export const stockOf = (e: Entity, k: NadeKind) => (k === 'flash' ? e.flashes : 
 const kindOfSlot = (s: 'grenade' | 'flash'): NadeKind => (s === 'flash' ? 'flash' : 'frag');
 const slotOfKind = (k: NadeKind): 'grenade' | 'flash' => (k === 'flash' ? 'flash' : 'grenade');
 
-/** Waktu angkat per slot: senapan 0.55 s (GDD §5.1), pisau XCFG.knife, granat / flashbang 0.35 s (GDD §8). */
-export function equipTimeFor(slot: Slot): number {
-  return slot === 'ar' ? CFG.combat.equipTime : slot === 'knife' ? XCFG.knife.equipTime : CFG.grenade.equipTime;
+/** Waktu angkat per slot: senapan 0.55 s (GDD §5.1; senjata tambahan: equipTime sendiri, pistol 0.23–0.30 s), pisau XCFG.knife,
+ *  granat / flashbang 0.35 s (GDD §8). */
+export function equipTimeFor(slot: Slot, w: WeaponSystem): number {
+  return slot === 'ar' ? equipTimeOf(w.primary.def) : slot === 'pistol' ? equipTimeOf(w.secondary.def)
+    : slot === 'knife' ? MELEES[w.melee].equipTime : CFG.grenade.equipTime;
 }
 
 export interface GrenadeInput {
   /** Tombol granat (3) / flashbang (4) / scroll / Q: slot benda lempar yang diminta. */
   equip: 'grenade' | 'flash' | null;
-  toSlot: 'ar' | 'knife' | null; // keluar dari benda lempar (READY) ke senapan / pisau
+  toSlot: 'ar' | 'pistol' | 'knife' | null; // keluar dari benda lempar (READY) ke senapan / pistol / pisau
   lPress: boolean; lHeld: boolean; lRelease: boolean;
   rPress: boolean; rHeld: boolean; rRelease: boolean;
 }
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3(), _f = new THREE.Vector3();
-const _r = new THREE.Vector3(), _u = new THREE.Vector3(), _imp = new THREE.Vector3(), _hand = new THREE.Vector3();
+const _imp = new THREE.Vector3(), _hand = new THREE.Vector3(), _eye = new THREE.Vector3();
 const _bo: V3 = { x: 0, y: 0, z: 0 }, _bd: V3 = { x: 0, y: 0, z: 0 };
 
 /**
@@ -156,7 +161,7 @@ export class GrenadeManager {
         if (e.grenadeT <= 0) e.grenadeState = 'READY';
         break;
       case 'READY':
-        if (inp.toSlot) { e.grenadeState = 'NONE'; w.switchTo(inp.toSlot, equipTimeFor(inp.toSlot)); break; }
+        if (inp.toSlot) { e.grenadeState = 'NONE'; w.switchTo(inp.toSlot, equipTimeFor(inp.toSlot, w)); break; }
         if (want && want !== e.nadeKind && stockOf(e, want) >= 1) { this.equip(e, want); break; }
         if (inp.lPress || inp.rPress) {
           e.grenadeState = 'COOKING'; e.cookT = 0; e.throwOver = inp.lPress;
@@ -197,31 +202,23 @@ export class GrenadeManager {
     return e.char.weaponMount.getWorldPosition(out);
   }
 
+  /** Masukan lemparan entitas (titik lepas & kecepatan awal → throwLaunch; garis lintasan pemain memakai yang sama). `feet` = posisi
+   *  kaki (pemain di layar: posisi render agar garis tidak bergetar terhadap kamera). */
+  launchOf(e: Entity, overhand: boolean, feet: THREE.Vector3 = e.pos): LaunchIn {
+    const L = this.launchIn;
+    L.overhand = overhand; L.yaw = e.yaw; L.pitch = e.pitch;
+    _eye.set(feet.x - Math.sin(e.yaw) * CFG.player.eyeForward, feet.y + e.ctrl.eyeHeight, feet.z - Math.cos(e.yaw) * CFG.player.eyeForward);
+    L.eye = _eye; L.feet = feet;
+    // titik lepas lemparan jauh: FPS & bot dari mata, TPS pemain dari tangan kanan rig (GDD §8)
+    L.hand = overhand && e.isPlayer && !ctx.camRig.isFpsView ? this.handPos(e, _hand) : null;
+    L.vx = e.ctrl.vel.x; L.vz = e.ctrl.vel.z; L.vy = e.ctrl.grounded ? 0 : e.ctrl.velY;   // warisan kecepatan
+    return L;
+  }
+  private readonly launchIn: LaunchIn = { overhand: true, yaw: 0, pitch: 0, eye: _eye, hand: null, feet: _eye, vx: 0, vy: 0, vz: 0 };
+
   throw(e: Entity, overhand: boolean, fuseLeft: number) {
     if (ctx.net.role === 'client') return;   // online: host yang meluncurkan; klien melihatnya lewat snapshot
-    const rig = ctx.camRig;
-    const fps = !e.isPlayer || rig.isFpsView;
-    // basis arah dari yaw/pitch bidik
-    const cp = Math.cos(e.pitch);
-    _f.set(-Math.sin(e.yaw) * cp, Math.sin(e.pitch), -Math.cos(e.yaw) * cp);
-    _r.set(Math.cos(e.yaw), 0, -Math.sin(e.yaw));
-    _u.crossVectors(_r, _f).normalize();
-    let speed: number;
-    if (overhand) {
-      _d.copy(_f).applyAxisAngle(_r, D2R(GR.overLiftDeg)); // +8° ke atas
-      speed = GR.overSpeed;
-      if (fps) { e.eye(_a); _a.addScaledVector(_f, GT.fpsFwd).addScaledVector(_r, GT.fpsRight).addScaledVector(_u, -GT.fpsDown); }
-      else this.handPos(e, _a);
-    } else {
-      const p = THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(e.pitch), GR.underPitchMin, GR.underPitchMax) + GT.underPitchAdd;
-      const pr = D2R(p);
-      _d.set(-Math.sin(e.yaw) * Math.cos(pr), Math.sin(pr), -Math.cos(e.yaw) * Math.cos(pr));
-      speed = GR.underSpeed;
-      _a.set(e.pos.x - Math.sin(e.yaw) * GT.underFwd, e.pos.y + GT.underUp, e.pos.z - Math.cos(e.yaw) * GT.underFwd);
-    }
-    _b.copy(_d).multiplyScalar(speed);
-    _b.x += e.ctrl.vel.x * GR.inheritVel; _b.z += e.ctrl.vel.z * GR.inheritVel; // warisan kecepatan
-    _b.y += (e.ctrl.grounded ? 0 : e.ctrl.velY) * GR.inheritVel;
+    throwLaunch(this.launchOf(e, overhand), _a, _b);
     const body = physics.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(_a.x, _a.y, _a.z)
       .setLinvel(_b.x, _b.y, _b.z).setCcdEnabled(true).setLinearDamping(GR.linDamp).setAngularDamping(GR.angDamp)
       .setAngvel({ x: Math.random() * 6 - 3, y: Math.random() * 6 - 3, z: Math.random() * 6 - 3 }));
@@ -299,6 +296,7 @@ export class GrenadeManager {
       _d.copy(_imp).normalize();
       ctx.teams.applyDamage(v, owner, dmg, 'upper', 'k400', _d, true, _imp);
     }
+    ctx.breakables.explosion(c, R);
     this.explodeFx(c, ownerId);
   }
 
@@ -317,33 +315,38 @@ export class GrenadeManager {
   }
 
   /** Host / main solo: flashbang — tanpa damage; setiap karakter yang melihat titik ledak (termasuk rekan & pelempar) silau sesuai
-   *  arah pandang, jarak & dinding. Bot yang sempat memalingkan muka (pelempar sendiri / sadar flash) kena lebih ringan. Pemain di
-   *  layar ini dihitung dari KAMERA di flashFx (juga dipakai klien). */
+   *  arah pandang, jarak & dinding. Pelempar kena × ownerMult (tahu kapan meledak; kecuali meledak di tangan); bot yang sempat
+   *  memalingkan muka (pelempar sendiri / sadar flash) × lookAway. Pemain di layar ini dihitung dari KAMERA di flashFx (juga klien).
+   *  nadeId −1 = meledak di tangan. */
   flashBang(c: THREE.Vector3, ownerId: number, nadeId: number) {
+    const inHand = nadeId < 0;
     for (const v of ctx.entities) {
       if (!v.alive || (v === ctx.player && !v.bot)) continue;
       v.eye(_a);
       const cp = Math.cos(v.pitch);
       _f.set(-Math.sin(v.yaw) * cp, Math.sin(v.pitch), -Math.cos(v.yaw) * cp);
       let s = flashStrength(_a, _f, c, physics.losBlocked(_a.x, _a.y, _a.z, c.x, c.y, c.z));
+      s = ownerFlash(s, v.id === ownerId, inHand);
       if (s > 0 && v.bot && (v.id === ownerId || (nadeId >= 0 && this.noticed?.(v, nadeId)))) s *= FL.lookAway;
       this.applyFlash(v, s, ownerId, c);
     }
-    this.flashFx(c, ownerId);
+    this.flashFx(c, ownerId, inHand);
   }
 
-  /** Host & klien: kilatan, suara (event), dan efek silau untuk pemain di layar ini (dari posisi & arah KAMERA). */
-  flashFx(c: THREE.Vector3, ownerId: number) {
+  /** Host & klien: kilatan, suara (event), dan efek silau untuk pemain di layar ini (dari posisi & arah KAMERA; pelempar × ownerMult
+   *  kecuali meledak di tangan). */
+  flashFx(c: THREE.Vector3, ownerId: number, inHand = false) {
     ctx.vfx.flashBurst(c);
     const p = ctx.player, cam = ctx.engine?.camera;
     if (p && cam) {
       cam.getWorldDirection(_f);
       const e = cam.position;
-      const s = flashStrength(e, _f, c, physics.losBlocked(e.x, e.y, e.z, c.x, c.y, c.z));
+      let s = flashStrength(e, _f, c, physics.losBlocked(e.x, e.y, e.z, c.x, c.y, c.z));
+      s = ownerFlash(s, p.id === ownerId, inHand);
       const x = this.applyFlash(p, s, ownerId, c);
       if (x) this.onLocalFlash?.(x, s);
     }
-    bus.emit('flash:explode', { position: c.clone(), ownerId });
+    bus.emit('flash:explode', { position: c.clone(), ownerId, inHand });
   }
 
   /** Catat paparan di entitas (yang lebih terang sekarang menang) + beri tahu bot. null = tidak berefek. */

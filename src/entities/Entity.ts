@@ -2,7 +2,11 @@
 import type { RemoteHuman } from '../net/NetMatch';
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
-import type { ScopeId, WeaponId } from '../config/weaponsData';
+import { moveMultOf } from '../combat/weaponStats';
+import { MELEES } from '../config/weaponsExtra';
+import type { Loadout } from '../combat/Loadout';
+import { DEFAULT_LOADOUT } from '../combat/Loadout';
+import type { WeaponId } from '../config/weaponsData';
 import { BlockyCharacter, type PartKey, type Team } from './BlockyCharacter';
 import type { Variant } from './CharacterArt';
 import { PlayerController, type MoveIntent } from './PlayerController';
@@ -59,8 +63,8 @@ export class Entity {
   meleeKind: MeleeKind = 'butt';
   /** Tebasan pisau bergantian: false = kanan→kiri, true = balik kiri→kanan (reset setelah jeda). */
   slashAlt = true; lastSlashT = -99;
-  loadout: { weapon: WeaponId; scope: ScopeId } = { weapon: 'm416', scope: 'reddot' };
-  pendingLoadout: { weapon: WeaponId; scope: ScopeId } | null = null;
+  loadout: Loadout = { ...DEFAULT_LOADOUT };
+  pendingLoadout: Loadout | null = null;
   bot: TacticalBot | null = null;
   /** ADS yang diinginkan pemilik input (tahan/toggle sudah di-resolve) — PlayerActions. */
   adsWanted = false;
@@ -75,6 +79,9 @@ export class Entity {
   lastAttacker = -1;
   readonly worldGun: THREE.Mesh;
   private worldOptic: THREE.Mesh | null = null;
+  /** Pistol (slot 2) di tangan karakter dunia. */
+  readonly worldPistol: THREE.Mesh;
+  private pistolOptic: THREE.Mesh | null = null;
   readonly renderPos = new THREE.Vector3();
 
   constructor(readonly id: number, readonly name: string, readonly team: Team, readonly isPlayer: boolean, castShadow: boolean,
@@ -87,23 +94,44 @@ export class Entity {
     this.worldGun.castShadow = castShadow;
     this.worldGun.rotation.x = -Math.PI / 2; // sumbu −Z senjata searah lengan (−Y mount)
     this.char.setGun(this.worldGun);
+    this.worldPistol = new THREE.Mesh(new THREE.BufferGeometry(), WEAPON_MATERIAL);
+    this.worldPistol.castShadow = castShadow;
+    this.worldPistol.rotation.x = -Math.PI / 2;
+    this.char.setPistol(this.worldPistol);
     this.char.setVisible(false);
   }
 
-  applyLoadout(l: { weapon: WeaponId; scope: ScopeId }) {
+  /** Loadout (senjata utama + pistol) ke sistem senjata & model dunia di tangan karakter. */
+  applyLoadout(l: Loadout) {
     this.loadout = { ...l };
     this.weapon.setLoadout(l.weapon, l.scope);
-    const m = weaponModel(l.weapon, l.scope === 'iron');
-    this.worldGun.geometry = m.geometry;
-    if (this.worldOptic) { this.worldGun.remove(this.worldOptic); this.worldOptic = null; }
-    this.worldOptic = createOpticMesh(l.scope);
-    if (this.worldOptic) {
-      this.worldOptic.position.z = m.opticMount.z;
-      this.worldOptic.castShadow = this.worldGun.castShadow; // kaca (anak) tidak membuat bayangan
-      const mask = this.worldGun.layers.mask; // pemain lokal: ikut layer 1 (tidak mengambang di kamera FPS), termasuk kaca
-      this.worldOptic.traverse(o => { o.layers.mask = mask; });
-      this.worldGun.add(this.worldOptic);
+    this.weapon.setPistol(l.pistol, l.pscope);
+    this.weapon.melee = l.melee; this.char.setMelee(l.melee);
+    this.worldOptic = Entity.dress(this.worldGun, this.worldOptic, l.weapon, l.scope);
+    this.pistolOptic = Entity.dress(this.worldPistol, this.pistolOptic, l.pistol, l.pscope);
+  }
+
+  /** Pasang geometri senjata + optik (lama dilepas) pada mesh dunia; mengembalikan mesh optik baru. */
+  private static dress(gun: THREE.Mesh, old: THREE.Mesh | null, id: WeaponId, scope: Loadout['scope']): THREE.Mesh | null {
+    const m = weaponModel(id, scope === 'iron');
+    gun.geometry = m.geometry;
+    if (old) gun.remove(old);
+    const optic = createOpticMesh(scope);
+    if (optic) {
+      optic.position.z = m.opticMount.z; optic.position.y = m.opticMount.y - 0.38;
+      optic.castShadow = gun.castShadow; // kaca (anak) tidak membuat bayangan
+      const mask = gun.layers.mask; // pemain lokal: ikut layer 1 (tidak mengambang di kamera FPS), termasuk kaca
+      optic.traverse(o => { o.layers.mask = mask; });
+      gun.add(optic);
     }
+    return optic;
+  }
+
+  /** Pengali kecepatan gerak dari benda di tangan: senjata jarak dekat (pisau ×1.10, karambit ×1.12 …), senjata api = moveMult
+   *  senjatanya (AR GDD 1.0). */
+  get moveMult() {
+    const w = this.weapon;
+    return w.slot === 'knife' ? MELEES[w.melee].moveMult : w.holdingGun ? moveMultOf(w.def) : 1;
   }
 
   get pos() { return this.ctrl.pos; }
@@ -130,10 +158,11 @@ export class Entity {
     return out.set(this.pos.x, this.pos.y + (this.crouched ? CFG.player.crouchHeight / 2 : CFG.player.standHeight / 2), this.pos.z);
   }
 
-  /** Posisi muzzle visual senjata dunia (kosmetik untuk tracer/flash di TPS & bot). */
+  /** Posisi muzzle visual senjata dunia yang sedang dipegang (kosmetik untuk tracer/flash di TPS & bot). */
   muzzleWorld(out: THREE.Vector3) {
-    const m = weaponModel(this.loadout.weapon, this.loadout.scope === 'iron');
-    return this.worldGun.localToWorld(out.copy(m.muzzle));
+    const pistol = this.weapon.slot === 'pistol';
+    const m = pistol ? weaponModel(this.loadout.pistol, this.loadout.pscope === 'iron') : weaponModel(this.loadout.weapon, this.loadout.scope === 'iron');
+    return (pistol ? this.worldPistol : this.worldGun).localToWorld(out.copy(m.muzzle));
   }
 
   distanceTo(o: Entity) { return _v.copy(this.pos).sub(o.pos).length(); }

@@ -1,5 +1,6 @@
 // src/ui/Announcer.ts — medali multi-kill / streak / first blood, popup skor (+100), notifikasi streak musuh di kill feed.
 // Umpan balik ala FPS lain (bukan dari GDD). Logika medali murni di `nextMedal` (diuji Vitest).
+import { isMeleeId } from '../config/weaponsExtra';
 import { XCFG } from '../config/extraConfig';
 import { bus, type KillWeapon } from '../core/EventBus';
 import { ctx } from '../game/ctx';
@@ -24,7 +25,7 @@ export function nextMedal(st: KillTrack, now: number, o: { headshot: boolean; fi
   if (st.multi >= 2) return { medal: st.multi >= 5 ? 'MEGA KILL' : MULTI_NAMES[st.multi], tier: Math.min(5, st.multi) };
   if (o.firstBlood) return { medal: 'FIRST BLOOD', tier: 2 };
   if (o.weapon === 'melee') return { medal: 'PUKULAN TELAK', tier: 1 };
-  if (o.weapon === 'knife') return { medal: 'AHLI PISAU', tier: 1 };
+  if (isMeleeId(o.weapon)) return { medal: 'AHLI PISAU', tier: 1 };
   if (o.weapon === 'k400') return { medal: 'LEDAKAN!', tier: 1 };
   if (o.headshot) return { medal: 'HEADSHOT', tier: 0 };
   return { medal: null, tier: 0 };

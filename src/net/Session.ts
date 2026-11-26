@@ -3,7 +3,7 @@
 // cermin room, mengirim aksi. Saat match: biner perintah/snapshot lewat kanal unreliable; event penting lewat kanal reliable.
 import { cleanVariant, type Variant } from '../entities/variants';
 import { Lobby } from '../game/Lobby';
-import { WEAPONS, SCOPES, scopeAllowed, type ScopeId, type WeaponId } from '../config/weaponsData';
+import { cleanLoadout, type Loadout } from '../combat/Loadout';
 import { Peer } from './Peer';
 import { MSG, decodeCommands, decodeSnapshot, msgType, type Command, type Snapshot } from './protocol';
 import type { SignalMsg, Signaling } from './Signaling';
@@ -11,16 +11,10 @@ import type { Team } from '../entities/BlockyCharacter';
 import { XCFG } from '../config/extraConfig';
 import { parsePlan, type Plan } from './Migration';
 
-export interface Profile { name: string; variant: Variant; weapon: string; scope: string }
+export interface Profile { name: string; variant: Variant; weapon: string; scope: string; pistol: string; pscope: string; melee: string }
 export type JoinFail = 'notfound' | 'full' | 'started' | 'timeout' | 'failed';
 
-/** Loadout dari jaringan divalidasi (senjata/optik yang ada & cocok). */
-export function cleanLoadout(weapon: unknown, scope: unknown): { weapon: WeaponId; scope: ScopeId } {
-  const w = (typeof weapon === 'string' && weapon in WEAPONS ? weapon : 'm416') as WeaponId;
-  let s = (typeof scope === 'string' && scope in SCOPES ? scope : 'reddot') as ScopeId;
-  if (!scopeAllowed(WEAPONS[w], s)) s = 'reddot';
-  return { weapon: w, scope: s };
-}
+export { cleanLoadout };
 
 // ───────────────────────────── HOST
 export interface HostHooks {
@@ -31,7 +25,7 @@ export interface HostHooks {
   /** Pemain terputus / keluar (room: sudah dikeluarkan dari Lobby; match: slot diambil alih bot). left = keluar dengan sengaja. */
   onPeerLeft(pid: string, left: boolean): void;
   /** Pemain mengganti loadout/karakter (room: sudah dicatat di Lobby; match: berlaku pada spawn berikutnya). */
-  onLoadout(pid: string, lo: { weapon: WeaponId; scope: ScopeId }, variant: Variant): void;
+  onLoadout(pid: string, lo: Loadout, variant: Variant): void;
   /** Ping teman diperbarui (tiap XCFG.net.pingEvery detik). */
   onPings(): void;
   /** Pemain lama (pid sudah ada di room, bukan pemain lokal, sedang tidak tersambung) boleh bergabung ulang — juga di tengah
@@ -161,8 +155,8 @@ export class NetHost {
       if (rj && this.rejoinable(rj)) {
         // koneksi lama pid ini masih dianggap hidup (ICE baru menyatakan putus ±30 s) → basi: dibuang tanpa "teman keluar"
         for (const [id2, e2] of this.peers) if (e2 !== e && e2.pid === rj) { this.peers.delete(id2); e2.peer.onClose = null; e2.peer.close(); }
-        const p = L.find(rj)!, lo = cleanLoadout(msg.weapon, msg.scope);
-        p.variant = cleanVariant(msg.variant); p.weapon = lo.weapon; p.scope = lo.scope; p.host = false;
+        const p = L.find(rj)!, lo = cleanLoadout(msg.weapon, msg.scope, msg.pistol, msg.pscope, msg.melee);
+        p.variant = cleanVariant(msg.variant); Object.assign(p, lo); p.host = false;
         e.pid = rj;
         e.peer.sendRel({ t: 'you', pid: rj });
         this.broadcastLobby(); this.hooks.onLobbyChanged();
@@ -172,8 +166,8 @@ export class NetHost {
       if (this.hooks.inMatch() || L.full) { e.peer.sendRel({ t: 'deny', reason: this.hooks.inMatch() ? 'started' : 'full' }); return; }
       const p = L.join(String(msg.name ?? 'Teman'));
       if (!p) { e.peer.sendRel({ t: 'deny', reason: 'full' }); return; }
-      const lo = cleanLoadout(msg.weapon, msg.scope);
-      p.variant = cleanVariant(msg.variant); p.weapon = lo.weapon; p.scope = lo.scope;
+      const lo = cleanLoadout(msg.weapon, msg.scope, msg.pistol, msg.pscope, msg.melee);
+      p.variant = cleanVariant(msg.variant); Object.assign(p, lo);
       e.pid = p.id;
       e.peer.sendRel({ t: 'you', pid: p.id });
       this.broadcastLobby(); this.hooks.onLobbyChanged();
@@ -193,8 +187,8 @@ export class NetHost {
       else if (msg.a === 'afk') { this.hooks.onAfk(e.pid, !!msg.on); return; }
       else if (msg.a === 'chat') { this.hooks.onChat?.(e.pid, msg.scope, msg.text, msg.quick === true); return; }
       else if (msg.a === 'loadout') {
-        const lo = cleanLoadout(msg.weapon, msg.scope);
-        p.weapon = lo.weapon; p.scope = lo.scope; p.variant = cleanVariant(msg.variant);
+        const lo = cleanLoadout(msg.weapon, msg.scope, msg.pistol, msg.pscope, msg.melee);
+        Object.assign(p, lo); p.variant = cleanVariant(msg.variant);
         this.hooks.onLoadout(e.pid, lo, p.variant);
       }
       this.broadcastLobby(); this.hooks.onLobbyChanged();

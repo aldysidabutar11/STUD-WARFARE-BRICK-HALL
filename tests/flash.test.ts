@@ -67,9 +67,9 @@ describe('Durasi (angka pengguna)', () => {
   });
 });
 
-describe('Slot 4 & tombol', () => {
-  it('tombol 4 = flashbang; slot tersedia bila stok ≥ 1; Q dari flash → senapan; scroll melewati flash', () => {
-    expect(DEFAULT_BINDS.flash).toBe('Digit4');
+describe('Slot flashbang & tombol', () => {
+  it('tombol 5 = flashbang (ekspansi senjata: 2 = pistol); slot tersedia bila stok ≥ 1; Q dari flash → senapan; scroll melewati flash', () => {
+    expect(DEFAULT_BINDS.flash).toBe('Digit5');
     const av = slotAvail(true, 1, 1);
     expect(av.flash).toBe(true);
     expect(slotAvail(true, 1, 0).flash).toBe(false);
@@ -85,7 +85,7 @@ describe('Slot 4 & tombol', () => {
   it('perintah jaringan: bit slot flash → frame slot "flash"', () => {
     const c: Command = { seq: 1, mx: 0, mz: 0, yaw: 0, pitch: 0, held: 0, imp: I.SLOT_FLASH, viewTick: 0 };
     expect(frameFromCommand(c, 0, emptyFrame()).slot).toBe('flash');
-    expect(I.SLOT_FLASH & (I.SLOT_AR | I.SLOT_KNIFE | I.SLOT_NADE | I.ALT_R)).toBe(0);
+    expect(I.SLOT_FLASH & (I.SLOT_AR | I.SLOT_KNIFE | I.SLOT_NADE | I.ALT_R | I.SLOT_PISTOL)).toBe(0);
     expect(I.SLOT_FLASH).toBeLessThan(65536);                          // muat di u16 perintah
   });
 });

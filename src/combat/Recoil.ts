@@ -39,6 +39,7 @@ export class Recoil {
   }
 }
 
-export function stanceMult(crouched: boolean, airborne: boolean) {
-  return airborne ? R.stance.air : crouched ? R.stance.crouch : R.stance.stand;
+/** Pengali recoil sikap (GDD §7.2); LMG punya bonus jongkok sendiri (crouchRecoil 0.60). */
+export function stanceMult(crouched: boolean, airborne: boolean, w?: WeaponDef) {
+  return airborne ? R.stance.air : crouched ? (w?.crouchRecoil ?? R.stance.crouch) : R.stance.stand;
 }

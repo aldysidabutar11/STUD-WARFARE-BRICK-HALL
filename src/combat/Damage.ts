@@ -5,15 +5,19 @@ import type { HitPart } from '../core/EventBus';
 
 const C = CFG.combat;
 
-/** F(d): 1.0 bila d ≤ 40; max(0.65, 1 − (d − 40)/160) bila d > 40. */
-export function falloff(d: number): number {
-  if (d <= C.falloffStart) return 1.0;
-  return Math.max(C.falloffMin, 1.0 - (d - C.falloffStart) / C.falloffSpan);
+/** F(d): 1.0 bila d ≤ 40; max(0.65, 1 − (d − 40)/160) bila d > 40. Senjata tambahan: [mulai, rentang, min] sendiri (rumus sama). */
+export function falloff(d: number, w?: WeaponDef): number {
+  const [start, span, min] = w?.falloff ?? [C.falloffStart, C.falloffSpan, C.falloffMin];
+  if (d <= start) return 1.0;
+  return Math.max(min, 1.0 - (d - start) / span);
 }
 
-/** D_final = round(D_base × M_hitbox × F(d)) — urutan perkalian WAJIB seperti ini. */
+/** Pengali hitbox: GDD §5.2; shotgun memakai pengali kepala sendiri (headMult). */
+export const hitMultOf = (w: WeaponDef, part: HitPart) => (part === 'head' && w.headMult !== undefined ? w.headMult : C.hitMult[part]);
+
+/** D_final = round(D_base × M_hitbox × F(d)) — urutan perkalian WAJIB seperti ini (shotgun: per pellet). */
 export function damage(w: WeaponDef, part: HitPart, d: number): number {
-  return Math.round(w.baseDamage * C.hitMult[part] * falloff(d));
+  return Math.round(w.baseDamage * hitMultOf(w, part) * falloff(d, w));
 }
 
 /** D_K400(r) = round(135 × max(0, 1 − (r/12)²) × O). */

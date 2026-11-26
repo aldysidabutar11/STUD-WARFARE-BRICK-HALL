@@ -10,7 +10,7 @@
 // matahari).
 import * as THREE from 'three';
 import { XCFG } from '../config/extraConfig';
-import { BOXES, SKYLIGHTS, STAIRS, WINDOWS, boxAabbXZ, type Box, type Stair } from './MapData';
+import { BOXES, SKYLIGHTS, STAIRS, WINDOWS, boxAabbXZ, stairFrame, type Box, type Stair } from './MapData';
 
 const GB = XCFG.gfx.bake;
 
@@ -33,9 +33,15 @@ export interface BakeSource {
     skyY: number;
     /** Y awal sinar matahari yang masuk lewat skylight (tepat di bawah plafon). */
     rayY: number;
-    windows: readonly { x: number; z: number; y: readonly [number, number]; width: number }[];
+    /** v = kekuatan sumber (bawaan GB.windowSky). */
+    windows: readonly { x: number; z: number; y: readonly [number, number]; width: number; v?: number }[];
     /** |X| sel udara di depan jendela (sisi dalam dinding). */
     windowInX: number;
+    /** Opsional (map kantor Boston): lampu plafon = sumber cahaya tidak langsung tambahan di sel udara tepat di bawahnya
+     *  (pusat x/z, y = bawah plafon, ukuran w × d, kekuatan v). */
+    lamps?: readonly { x: number; y: number; z: number; w: number; d: number; v: number }[];
+    /** Opsional: sinar matahari juga masuk lewat jendela → titik jatuhnya jadi sumber pantul (bawaan hanya lewat skylight). */
+    windowSun?: boolean;
   };
   /** Luar ruang: langit terbuka. Sumber langit = sel udara yang melihat langit tegak lurus, kuatnya = keterbukaan (8 sinar
    *  miring); sumber pantul = sel udara tepat di atas permukaan atas (tanah, atap kontainer) yang kena matahari. */
@@ -112,11 +118,14 @@ function occupancy(src: BakeSource): Grid<Uint8Array> {
     if (b.rotY) fillObb(b, b.rotY);
     else fill(b.min[0], b.min[1], b.min[2], b.max[0], b.max[1], b.max[2], b.id === ceilingId);
   }
-  for (const s of src.stairs) {                 // ramp: padat di bawah permukaan miring
-    const len = Math.abs(s.zTop - s.zFoot), zMin = Math.min(s.zFoot, s.zTop), zMax = Math.max(s.zFoot, s.zTop);
-    for (let k = g.ck(zMin); k <= g.ck(zMax); k++) {
-      const z = g.z0 + (k + 0.5) * g.c, top = 10 * Math.min(1, Math.abs(z - s.zFoot) / len);
-      fill(s.x[0], 0, z - g.c / 2, s.x[1], top, z + g.c / 2);
+  for (const s of src.stairs) {                 // ramp: padat di bawah permukaan miring (sumbu X atau Z, tinggi kaki → puncak)
+    const f = stairFrame(s), len = Math.abs(f.top - f.foot);
+    if (f.axis === 'z') for (let k = g.ck(f.z[0]); k <= g.ck(f.z[1]); k++) {
+      const z = g.z0 + (k + 0.5) * g.c, top = f.y0 + (f.y1 - f.y0) * Math.min(1, Math.abs(z - f.foot) / len);
+      fill(f.x[0], 0, z - g.c / 2, f.x[1], top, z + g.c / 2);
+    } else for (let i = g.ci(f.x[0]); i <= g.ci(f.x[1]); i++) {
+      const x = g.x0 + (i + 0.5) * g.c, top = f.y0 + (f.y1 - f.y0) * Math.min(1, Math.abs(x - f.foot) / len);
+      fill(x - g.c / 2, 0, f.z[0], x + g.c / 2, top, f.z[1]);
     }
   }
   return g;
@@ -221,27 +230,38 @@ export class LightField {
       }
     for (const w of I.windows) for (let y = w.y[0]; y <= w.y[1]; y += s.c) for (let z = w.z - w.width / 2; z <= w.z + w.width / 2; z += s.c) {
       const i = s.ci(w.x < 0 ? -I.windowInX : I.windowInX), j = s.cj(y), k = s.ck(z);
-      if (s.inside(i, j, k) && !s.d[s.idx(i, j, k)]) sky.push([s.idx(i, j, k), GB.windowSky]);
+      if (s.inside(i, j, k) && !s.d[s.idx(i, j, k)]) sky.push([s.idx(i, j, k), w.v ?? GB.windowSky]);
     }
+    for (const L of I.lamps ?? []) for (let x = L.x - L.w / 2 + 0.25; x < L.x + L.w / 2; x += s.c / 2)
+      for (let z = L.z - L.d / 2 + 0.25; z < L.z + L.d / 2; z += s.c / 2) {
+        const i = s.ci(x), j = s.cj(L.y - 0.6), k = s.ck(z);
+        if (s.inside(i, j, k) && !s.d[s.idx(i, j, k)]) sky.push([s.idx(i, j, k), L.v]);
+      }
     this.sky = propagate(s, emit => { for (const [i, v] of sky) emit(i, v); }, GB.skyLambda);
     // sumber pantul: titik jatuh sinar matahari yang masuk lewat skylight (sel udara tepat sebelum menabrak permukaan)
     const bounce: [number, number][] = [];
     const f = this.fine, p = new THREE.Vector3(), q = new THREE.Vector3();
-    for (const L of I.skylights) for (let x = L.x - L.size / 2 + 0.25; x < L.x + L.size / 2; x += 0.5)
-      for (let z = L.z - L.size / 2 + 0.25; z < L.z + L.size / 2; z += 0.5) {
-        p.set(x, I.rayY, z);
-        for (let t = 0; t < 80; t += 0.35) {
-          q.copy(p).addScaledVector(sunDir, t);
-          const i = f.ci(q.x), j = f.cj(q.y), k = f.ck(q.z);
-          if (!f.inside(i, j, k)) break;
-          if (f.d[f.idx(i, j, k)]) {
-            q.addScaledVector(sunDir, -0.6);
-            const ci = s.ci(q.x), cj = s.cj(q.y), ck = s.ck(q.z);
-            if (s.inside(ci, cj, ck) && !s.d[s.idx(ci, cj, ck)]) bounce.push([s.idx(ci, cj, ck), 1]);
-            break;
-          }
+    const ray = () => {
+      for (let t = 0; t < 80; t += 0.35) {
+        q.copy(p).addScaledVector(sunDir, t);
+        const i = f.ci(q.x), j = f.cj(q.y), k = f.ck(q.z);
+        if (!f.inside(i, j, k)) break;
+        if (f.d[f.idx(i, j, k)]) {
+          q.addScaledVector(sunDir, -0.6);
+          const ci = s.ci(q.x), cj = s.cj(q.y), ck = s.ck(q.z);
+          if (s.inside(ci, cj, ck) && !s.d[s.idx(ci, cj, ck)]) bounce.push([s.idx(ci, cj, ck), 1]);
+          break;
         }
       }
+    };
+    for (const L of I.skylights) for (let x = L.x - L.size / 2 + 0.25; x < L.x + L.size / 2; x += 0.5)
+      for (let z = L.z - L.size / 2 + 0.25; z < L.z + L.size / 2; z += 0.5) { p.set(x, I.rayY, z); ray(); }
+    // sinar lewat jendela (hanya yang menuju ke dalam: komponen X searah dari sisi jendela ke tengah)
+    if (I.windowSun) for (const w of I.windows) {
+      const xin = w.x < 0 ? -I.windowInX : I.windowInX;
+      if (Math.sign(sunDir.x) !== -Math.sign(xin)) continue;
+      for (let y = w.y[0] + 0.25; y < w.y[1]; y += 0.5) for (let z = w.z - w.width / 2 + 0.25; z < w.z + w.width / 2; z += 0.5) { p.set(xin, y, z); ray(); }
+    }
     this.bounce = propagate(s, emit => { for (const [i, v] of bounce) emit(i, v); }, GB.bounceLambda);
   }
 

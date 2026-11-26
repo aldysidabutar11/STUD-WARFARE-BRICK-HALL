@@ -6,7 +6,7 @@
 import { XCFG } from '../config/extraConfig';
 import { MAPS } from '../world/maps/registry';
 import { MAP_IDS, type MapDef } from '../world/maps/types';
-import type { Box } from '../world/MapData';
+import { stairFrame, type Box } from '../world/MapData';
 import { isMapChoice, type MapChoice } from '../game/Lobby';
 
 interface Pal { bg: string; floor: string; dots: string; upper: string; stair: string; wall: string; pillar: string; shelf: string;
@@ -29,7 +29,7 @@ const dprNow = () => Math.min(2, Math.max(1, (typeof devicePixelRatio === 'numbe
 
 /** Ringkasan map untuk kartu: "Dalam ruang · 2 lantai · 22 × 36 m" (lantai = level node nav berbeda; 1 u = 0.36 m). */
 export function mapFacts(def: MapDef): string {
-  const floors = new Set(def.nav.nodes.map(n => n[3])).size, k = XCFG.killcam.unitToMeter;
+  const floors = new Set(def.nav.nodes.map(n => n[3]).filter(l => l % 10 === 0)).size, k = XCFG.killcam.unitToMeter;   // bordes tangga (Y 5) bukan lantai
   const w = Math.round((def.bounds.x[1] - def.bounds.x[0]) * k), l = Math.round((def.bounds.z[1] - def.bounds.z[0]) * k);
   return `${def.atmosphere.outdoor ? 'Luar ruang' : 'Dalam ruang'} · ${floors} lantai · ${w} × ${l} m`;
 }
@@ -96,10 +96,11 @@ function planCanvas(def: MapDef, W: number, H: number, dpr: number): HTMLCanvasE
   g.fillStyle = P.upper;
   for (const b of def.boxes) if (b.cat === 'mass' || b.cat === 'bridge') box(b);
   for (const st of def.stairs) {
-    const za = Math.min(st.zFoot, st.zTop), zb = Math.max(st.zFoot, st.zTop);
-    g.fillStyle = P.stair; area(st.x[0], st.x[1], za, zb);
+    const f = stairFrame(st), run = 2 * Math.abs(f.top - f.foot) / Math.max(1, Math.round((f.y1 - f.y0) / 0.5));   // tiap 2 anak tangga
+    g.fillStyle = P.stair; area(f.x[0], f.x[1], f.z[0], f.z[1]);
     g.fillStyle = 'rgba(255,232,192,0.28)';
-    for (let z = za; z < zb; z += 1.43) g.fillRect(U(z), V(st.x[1]), Math.max(1, 0.5 * dpr), (st.x[1] - st.x[0]) * s);
+    if (f.axis === 'z') for (let z = f.z[0]; z < f.z[1]; z += run) g.fillRect(U(z), V(f.x[1]), Math.max(1, 0.5 * dpr), (f.x[1] - f.x[0]) * s);
+    else for (let x = f.x[0]; x < f.x[1]; x += run) g.fillRect(U(f.z[0]), V(x), (f.z[1] - f.z[0]) * s, Math.max(1, 0.5 * dpr));
   }
   // area spawn berwarna tim: tapak ruang spawn (kategori 'spawn') atau kotak 6 × 6 u di sekitar slot; titik = slot
   for (const team of ['blue', 'red'] as const) {
@@ -115,6 +116,7 @@ function planCanvas(def: MapDef, W: number, H: number, dpr: number): HTMLCanvasE
     .sort((a, b) => a.max[1] - b.max[1]);
   for (const b of solid) {
     const h = b.max[1] - b.min[1], top = b.max[1];
+    g.globalAlpha = b.min[1] >= 9.9 && def.radarFloors ? 0.5 : 1;   // lantai atas map berlantai banyak (Boston): samar di atas lantai bawah
     const col = (def.atmosphere.outdoor && STYLE_COL[b.style]) || (b.cat === 'shelf' || b.style === 'stack' ? P.shelf
       : b.cat === 'shell' || b.cat === 'wall' || b.cat === 'spawn' ? P.wall : b.cat === 'pillar' ? P.pillar : h < 1.5 ? P.low : P.cover);
     if (h >= 1.5) {
@@ -124,12 +126,13 @@ function planCanvas(def: MapDef, W: number, H: number, dpr: number): HTMLCanvasE
     g.fillStyle = b.cat === 'shell' ? col : shade(col, 0.82 + 0.3 * Math.min(1, top / 15));
     box(b);
   }
+  g.globalAlpha = 1;
   g.fillStyle = P.rail;
   for (const b of def.boxes) if (b.cat === 'rail') box(b);
   // slot spawn: titik kecil terang
   for (const team of ['blue', 'red'] as const) {
     g.fillStyle = team === 'blue' ? '#cfe5ff' : '#ffd6d0';
-    for (const [x, , z] of def.spawnSlots[team].ground) g.fillRect(U(z) - d, V(x) - d, 2 * d, 2 * d);
+    for (const [x, , z] of [...def.spawnSlots[team].upper, ...def.spawnSlots[team].ground]) g.fillRect(U(z) - d, V(x) - d, 2 * d, 2 * d);
   }
   // sisi tim: Biru kiri, Merah kanan (pita + pendar ke dalam)
   const band = 3 * dpr, glow = 16 * dpr;

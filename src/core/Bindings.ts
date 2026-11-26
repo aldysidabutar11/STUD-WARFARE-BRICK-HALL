@@ -2,7 +2,7 @@
 // Fitur pasca-MVP: rebind tombol & dukungan gamepad (GDD §1 "Pasca-MVP").
 
 export type Action = 'forward' | 'back' | 'left' | 'right' | 'jump' | 'sprint' | 'crouch' | 'reload' | 'fireMode' | 'melee'
-  | 'primary' | 'knife' | 'grenade' | 'flash' | 'lastWeapon' | 'drop' | 'pickup' | 'view' | 'shoulder' | 'scoreboard' | 'loadout'
+  | 'primary' | 'pistol' | 'knife' | 'grenade' | 'flash' | 'lastWeapon' | 'drop' | 'pickup' | 'view' | 'shoulder' | 'scoreboard' | 'loadout'
   | 'chatAll' | 'chatTeam' | 'quickChat' | 'voiceTeam' | 'voiceAll';
 export type Binds = Record<Action, string>;
 
@@ -10,8 +10,8 @@ export const ACTIONS: readonly { id: Action; label: string }[] = [
   { id: 'forward', label: 'Maju' }, { id: 'back', label: 'Mundur' }, { id: 'left', label: 'Geser kiri' }, { id: 'right', label: 'Geser kanan' },
   { id: 'jump', label: 'Lompat' }, { id: 'sprint', label: 'Sprint (tahan, hanya ke depan)' }, { id: 'crouch', label: 'Jongkok' },
   { id: 'reload', label: 'Reload' }, { id: 'fireMode', label: 'Ganti mode tembak' }, { id: 'melee', label: 'Pukul (melee)' },
-  { id: 'primary', label: 'Senjata utama (slot 1)' }, { id: 'knife', label: 'Pisau (slot 2)' }, { id: 'grenade', label: 'Granat K-400 (slot 3)' },
-  { id: 'flash', label: 'Flashbang (slot 4)' },
+  { id: 'primary', label: 'Senjata utama (slot 1)' }, { id: 'pistol', label: 'Pistol (slot 2)' }, { id: 'knife', label: 'Pisau (slot 3)' },
+  { id: 'grenade', label: 'Granat K-400 (slot 4)' }, { id: 'flash', label: 'Flashbang (slot 5)' },
   { id: 'lastWeapon', label: 'Senjata sebelumnya' }, { id: 'drop', label: 'Buang senjata utama' },
   { id: 'pickup', label: 'Ambil / tukar senjata (tim sendiri)' }, { id: 'view', label: 'Ganti FPS / TPS' },
   { id: 'shoulder', label: 'Tukar bahu (TPS)' }, { id: 'scoreboard', label: 'Papan skor (tahan)' }, { id: 'loadout', label: 'Loadout' },
@@ -21,24 +21,34 @@ export const ACTIONS: readonly { id: Action; label: string }[] = [
 
 export const DEFAULT_BINDS: Binds = {
   forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', sprint: 'ShiftLeft', crouch: 'KeyC',
-  reload: 'KeyR', fireMode: 'KeyB', melee: 'KeyF', primary: 'Digit1', knife: 'Digit2', grenade: 'Digit3', flash: 'Digit4', lastWeapon: 'KeyQ',
+  reload: 'KeyR', fireMode: 'KeyB', melee: 'KeyF', primary: 'Digit1', pistol: 'Digit2', knife: 'Digit3', grenade: 'Digit4', flash: 'Digit5',
+  lastWeapon: 'KeyQ',
   drop: 'KeyG', pickup: 'KeyE', view: 'KeyV', shoulder: 'KeyX', scoreboard: 'Tab', loadout: 'KeyL',
   chatAll: 'KeyY', chatTeam: 'KeyU', quickChat: 'KeyH', voiceTeam: 'KeyT', voiceAll: 'KeyZ',
 };
 
-/** Versi skema tombol tersimpan. v2: slot 1/2/3 + Q senjata sebelumnya, tukar bahu Q → X, granat G → 3, G = buang senjata. */
-export const BINDS_VERSION = 2;
+/** Versi skema tombol tersimpan. v2: slot 1/2/3 + Q senjata sebelumnya, tukar bahu Q → X, granat G → 3, G = buang senjata.
+ *  v3 (ekspansi senjata): 2 = pistol, pisau 2 → 3, K-400 3 → 4, flashbang 4 → 5. */
+export const BINDS_VERSION = 3;
 
 /**
- * Migrasi binds tersimpan v1 → v2: tombol yang masih default lama dipindah ke default baru (bila tujuannya belum dipakai),
- * sehingga Q & G kosong untuk "senjata sebelumnya" & "buang senjata". Tombol yang sudah diubah pengguna tidak disentuh.
+ * Migrasi binds tersimpan → versi terbaru: tombol yang masih default lama dipindah ke default baru (bila tujuannya belum dipakai).
+ * v1 → v2: Q & G kosong untuk "senjata sebelumnya" & "buang senjata". v2 → v3: angka bergeser satu (flashbang dulu, lalu granat,
+ * lalu pisau) sehingga 2 kosong untuk pistol (diisi validateBinds). Tombol yang sudah diubah pengguna tidak disentuh.
  */
 export function migrateBinds(raw: unknown, fromVersion: number): unknown {
   if (fromVersion >= BINDS_VERSION || !raw || typeof raw !== 'object') return raw;
   const b = { ...(raw as Record<string, unknown>) };
   const used = (code: string) => Object.values(b).includes(code);
-  if (b.shoulder === 'KeyQ' && !used('KeyX')) b.shoulder = 'KeyX';
-  if (b.grenade === 'KeyG' && !used('Digit3')) b.grenade = 'Digit3';
+  if (fromVersion < 2) {
+    if (b.shoulder === 'KeyQ' && !used('KeyX')) b.shoulder = 'KeyX';
+    if (b.grenade === 'KeyG' && !used('Digit3')) b.grenade = 'Digit3';
+  }
+  if (fromVersion < 3) {
+    if (b.flash === 'Digit4' && !used('Digit5')) b.flash = 'Digit5';
+    if (b.grenade === 'Digit3' && !used('Digit4')) b.grenade = 'Digit4';
+    if (b.knife === 'Digit2' && !used('Digit3')) b.knife = 'Digit3';
+  }
   return b;
 }
 
@@ -99,7 +109,7 @@ export const PAD_ACTION: Partial<Record<Action, number>> = {
 };
 export const PAD_HELP: [string, string][] = [
   ['Stik kiri / kanan', 'Gerak / bidik'], ['RT / LT', 'Tembak / ADS (pisau: tebas / tusuk; granat: lempar jauh / gelinding)'], ['A', 'Lompat'], ['B', 'Jongkok'],
-  ['X', 'Reload / ambil senjata (dekat senjata tim)'], ['Y', 'Senjata sebelumnya'], ['RB', 'Granat K-400 · RB 2× cepat = flashbang'], ['LB', 'Ganti mode tembak'],
+  ['X', 'Reload / ambil senjata (dekat senjata tim)'], ['Y', 'Senjata sebelumnya (utama ↔ pistol)'], ['RB', 'Granat K-400 · RB 2× cepat = flashbang'], ['LB', 'Ganti mode tembak'],
   ['L3', 'Sprint (toggle)'], ['R3', 'Pukul (melee)'], ['D-pad ↑ / →', 'FPS-TPS / tukar bahu'], ['D-pad ↓', 'Pisau'], ['D-pad ←', 'Loadout'],
   ['View (Back)', 'Papan skor'],
   ['Menu (Start)', 'Pause'], ['Di menu', 'D-pad pilih · A oke · B kembali'],

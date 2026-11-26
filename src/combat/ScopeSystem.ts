@@ -3,6 +3,7 @@ import { CFG } from '../config/gameConfig';
 import type { CameraRig } from '../entities/CameraRig';
 import type { Entity } from '../entities/Entity';
 import { sensRatio } from './Damage';
+import { adsTimeOf } from './weaponStats';
 
 export class ScopeSystem {
   /** progres ADS 0..1 (untuk viewmodel), linier terhadap waktu transisi optik. */
@@ -11,12 +12,12 @@ export class ScopeSystem {
   dotOn = false;
 
   update(dt: number, p: Entity, rig: CameraRig, baseFov: number) {
-    const s = p.weapon.scope, on = p.weapon.adsActive;
-    this.ads = Math.min(1, Math.max(0, this.ads + (on ? 1 : -1) * dt / s.adsTime));
+    const s = p.weapon.scope, on = p.weapon.adsActive, T = adsTimeOf(p.weapon.def, s);   // sniper berat: waktu ADS senjata
+    this.ads = Math.min(1, Math.max(0, this.ads + (on ? 1 : -1) * dt / T));
     rig.baseFov = baseFov;
     // optik ≥2× di TPS: otomatis masuk tampilan lensa FPS selama ADS
     rig.lensForced = on && s.lensOverlay && rig.mode === 'tps';
-    rig.setFovTarget(on ? s.fov : baseFov, s.adsTime);
+    rig.setFovTarget(on ? s.fov : baseFov, T);
     this.lensOn = on && s.lensOverlay && this.ads > 0.6;
     this.dotOn = on && !s.lensOverlay && (s.id === 'reddot' || s.id === 'holo') && this.ads > 0.5;
   }

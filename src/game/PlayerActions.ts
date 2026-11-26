@@ -1,4 +1,4 @@
-// src/game/PlayerActions.ts — logika tombol senjata manusia (slot 1/2/3/Q/scroll, ADS, tembak, reload, mode tembak, popor/pisau,
+// src/game/PlayerActions.ts — logika tombol senjata manusia (slot 1–5/Q/scroll, ADS, tembak, reload, mode tembak, popor/pisau,
 // granat) yang SAMA untuk: pemain lokal (input keyboard/mouse/gamepad) dan pemain remote di host (perintah jaringan per tick).
 // Masukan = ActionFrame (tombol ditahan + tepi tekan/lepas), bukan Input langsung → host menjalankan aturan persis sama.
 import { ctx } from './ctx';
@@ -32,7 +32,8 @@ export function frameFromCommand(c: Command, prevHeld: number, out: ActionFrame)
   out.rR = !!(c.imp & I.ALT_R) || (!!(prevHeld & H.ALT) && !rH);
   out.aimHold = !!(c.held & H.AIM);
   out.reload = !!(c.imp & I.RELOAD); out.fireMode = !!(c.imp & I.FIREMODE); out.melee = !!(c.imp & I.MELEE);
-  out.slot = c.imp & I.SLOT_AR ? 'ar' : c.imp & I.SLOT_KNIFE ? 'knife' : c.imp & I.SLOT_NADE ? 'grenade' : c.imp & I.SLOT_FLASH ? 'flash' : null;
+  out.slot = c.imp & I.SLOT_AR ? 'ar' : c.imp & I.SLOT_PISTOL ? 'pistol' : c.imp & I.SLOT_KNIFE ? 'knife' : c.imp & I.SLOT_NADE ? 'grenade'
+    : c.imp & I.SLOT_FLASH ? 'flash' : null;
   out.last = !!(c.imp & I.LAST);
   out.wheel = c.imp & I.WHEEL_UP ? 1 : c.imp & I.WHEEL_DN ? -1 : 0;
   return out;
@@ -57,7 +58,7 @@ export function driveWeapons(e: Entity, f: ActionFrame, dt: number, o: DriveOpts
   const w = e.weapon, active = o.active;
   const lP = active && f.lP, lH = active && f.lH, lR = f.lR;
   const rP = active && f.rP, rH = active && f.rH, rR = f.rR;
-  // slot: 1 senjata utama · 2 pisau · 3 granat · 4 flashbang · Q senjata sebelumnya · scroll siklus
+  // slot: 1 senjata utama · 2 pistol · 3 pisau · 4 granat · 5 flashbang · Q senjata sebelumnya · scroll siklus
   const av = slotAvail(w.hasPrimary, e.grenades, e.flashes);
   let want: Slot | null = null;
   if (active) {
@@ -70,14 +71,14 @@ export function driveWeapons(e: Entity, f: ActionFrame, dt: number, o: DriveOpts
   g.toSlot = want && !isThrowable(want) && isThrowable(w.slot) ? want : null;      // keluar dari benda lempar (READY)
   if (want && !isThrowable(want) && !isThrowable(w.slot) && e.grenadeState === 'NONE' && (e.meleeT < 0 || e.meleeHit)) {
     cancelMelee(e);
-    w.switchTo(want, equipTimeFor(want));
+    w.switchTo(want, equipTimeFor(want, w));
   }
   const nade = isThrowable(w.slot) || e.grenadeState !== 'NONE';
-  const gun = w.slot === 'ar' && !nade, knife = w.slot === 'knife' && !nade;
+  const gun = w.holdingGun && !nade, knife = w.slot === 'knife' && !nade;
   g.lPress = nade && lP; g.lHeld = nade && lH; g.lRelease = nade && lR;
   g.rPress = nade && rP; g.rHeld = nade && rH; g.rRelease = nade && rR;
   const meleeing = e.meleeT >= 0;
-  // ADS (hanya senapan): tahan / toggle
+  // ADS (hanya senjata api): tahan / toggle
   if (o.adsMode === 'hold') e.adsWanted = f.aimHold && gun;
   else if (rP && gun) e.adsWanted = !e.adsWanted;
   if (w.reloading || !gun || !e.alive || meleeing) e.adsWanted = o.adsMode === 'toggle' ? false : e.adsWanted;
@@ -91,7 +92,7 @@ export function driveWeapons(e: Entity, f: ActionFrame, dt: number, o: DriveOpts
   if (active && f.melee && (startMelee(e) || (knife && startKnife(e, false)))) { e.adsWanted = false; res.meleeStarted = true; }
   if (knife && (lH || rH)) startKnife(e, !lH);
   if (o.practice) { // latihan: amunisi cadangan & granat tak terbatas
-    w.reserve = w.def.reserveAmmo;
+    w.primary.reserve = w.primary.def.reserveAmmo; w.secondary.reserve = w.secondary.def.reserveAmmo;
     if (e.grenades < 1 && e.grenadeState === 'NONE') e.grenades = 1;
     if (e.flashes < 1 && e.grenadeState === 'NONE') e.flashes = 1;
   }

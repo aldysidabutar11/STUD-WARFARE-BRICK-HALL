@@ -3,12 +3,13 @@
 import { MAP_IDS, type MapDef, type MapId } from './types';
 import { BRICKHALL } from './brickhall';
 import { STEELYARD } from './steelyard/index';
+import { BOSTON } from './boston/index';
 import { currentMap, setActiveMap } from './current';
 
 export { currentMap };
 export type { MapDef, MapId };
 
-export const MAPS: Readonly<Record<MapId, MapDef>> = { brickhall: BRICKHALL, steelyard: STEELYARD };
+export const MAPS: Readonly<Record<MapId, MapDef>> = { brickhall: BRICKHALL, steelyard: STEELYARD, boston: BOSTON };
 
 /** Map bawaan (setelan baru / nilai tidak dikenal). */
 export const DEFAULT_MAP: MapId = 'brickhall';

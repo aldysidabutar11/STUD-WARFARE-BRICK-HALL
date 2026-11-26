@@ -6,6 +6,7 @@ import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import { flashWhite, type FlashExposure } from '../combat/Flash';
 import { SCOPES, WEAPONS, type ScopeId } from '../config/weaponsData';
+import { MELEES, isMeleeId } from '../config/weaponsExtra';
 import { bus, type KillWeapon } from '../core/EventBus';
 import { keyLabel } from '../core/Bindings';
 import { ctx } from '../game/ctx';
@@ -25,6 +26,7 @@ const _v = new THREE.Vector3();
 
 export const weaponLabel = (w: KillWeapon) => w === 'k400' ? 'K-400' : w === 'fall' ? 'jatuh' : w === 'melee' ? 'Pukul'
   : w === 'knife' ? 'Pisau'
+  : isMeleeId(w) ? MELEES[w].name
   : WEAPONS[w as keyof typeof WEAPONS]?.name ?? w;
 
 /** Reticle SVG prosedural per optik (§6.1, ukuran @1080p, diskalakan ke tinggi layar). */
@@ -85,8 +87,8 @@ export class Hud {
   private feed = h('div', 'killfeed');
   private center = h('div', 'center-msg');
   private prompt = h('div', 'prompt');
-  /** Bar slot senjata (1 utama · 2 pisau · 3 granat), slot aktif menyala. */
-  private slots = h('div', 'slots', '<div class="s"><b></b><span></span></div><div class="s"><b></b><span>Pisau</span></div><div class="s"><b></b><span>K-400</span></div><div class="s"><b></b><span>Flash</span></div>');
+  /** Bar slot senjata (1 utama · 2 pistol · 3 pisau · 4 granat · 5 flashbang), slot aktif menyala. */
+  private slots = h('div', 'slots', '<div class="s"><b></b><span></span></div><div class="s"><b></b><span></span></div><div class="s"><b></b><span>Pisau</span></div><div class="s"><b></b><span>K-400</span></div><div class="s"><b></b><span>Flash</span></div>');
   /** Flashbang: layar putih + "bayangan" gambar terakhir (afterimage) yang memudar (combat/Flash.flashWhite). */
   private readonly flashImg = document.createElement('canvas');
   private readonly flashEl = h('div', 'flashbang', '');
@@ -268,21 +270,22 @@ export class Hud {
     });
     this.vign.style.opacity = p.alive && p.hp < XCFG.vfx.lowHpVignette ? '1' : '0';
     // amunisi, mode, optik, granat (pisau: tanpa angka amunisi)
-    const grenadeHeld = w.slot === 'grenade', flashHeld = w.slot === 'flash', knifeHeld = w.slot === 'knife';
-    const lowAmmo = w.slot === 'ar' && w.ammo <= Math.ceil(w.def.magSize * 0.3);
-    this.set('am', `${v.id}|${w.ammo}|${w.reserve}|${w.slot}|${v.grenades}|${v.flashes}`, () => {
+    const grenadeHeld = w.slot === 'grenade', flashHeld = w.slot === 'flash', knifeHeld = w.slot === 'knife', gunHeld = w.holdingGun;
+    const lowAmmo = gunHeld && w.ammo <= Math.ceil(w.def.magSize * 0.3);
+    this.set('am', `${v.id}|${w.ammo}|${w.reserve}|${w.slot}|${v.grenades}|${v.flashes}|${w.melee}`, () => {
       (this.ammo.children[1] as HTMLElement).innerHTML = grenadeHeld ? `K-400 <small>| ${v.grenades}</small>`
-        : flashHeld ? `Flash <small>| ${v.flashes}</small>` : knifeHeld ? 'Pisau' : `${w.ammo} <small>| ${w.reserve}</small>`;
+        : flashHeld ? `Flash <small>| ${v.flashes}</small>` : knifeHeld ? MELEES[w.melee].name : `${w.ammo} <small>| ${w.reserve}</small>`;
       this.ammo.classList.toggle('low', lowAmmo);
       this.ammo.classList.toggle('knife', knifeHeld);
-      this.ammo.classList.toggle('alt', w.slot !== 'ar');   // pisau/granat: sembunyikan mode tembak & optik
+      this.ammo.classList.toggle('alt', !gunHeld);   // pisau/granat: sembunyikan mode tembak & optik
     });
-    const wn = knifeHeld ? 'Pisau komando · lari +10%' : grenadeHeld ? 'Granat K-400' : flashHeld ? 'Flashbang · membutakan, tanpa damage'
-      : w.hasPrimary ? `${w.def.name} · ${SCOPES[w.scope.id].name}` : 'Senjata utama dibuang';
+    const md = MELEES[w.melee];
+    const wn = knifeHeld ? `${md.name} · lari +${Math.round((md.moveMult - 1) * 100)}%` : grenadeHeld ? 'Granat K-400' : flashHeld ? 'Flashbang · membutakan, tanpa damage'
+      : gunHeld ? `${w.def.name} · ${SCOPES[w.scope.id].name}` : 'Senjata utama dibuang';
     this.set('wn', wn, () => ((this.ammo.children[0] as HTMLElement).textContent = wn));
     // bar slot: tombol sesuai binds, slot aktif menyala, slot kosong redup
     const b = ctx.settings.binds;
-    const sk = `${w.slot}|${w.hasPrimary ? w.def.name : ''}|${v.grenades}|${v.flashes}|${b.primary}|${b.knife}|${b.grenade}|${b.flash}`;
+    const sk = `${w.slot}|${w.hasPrimary ? w.primary.def.name : ''}|${w.secondary.def.name}|${w.melee}|${v.grenades}|${v.flashes}|${b.primary}|${b.pistol}|${b.knife}|${b.grenade}|${b.flash}`;
     this.set('slots', sk, () => {
       const el = this.slots.children;
       const fill = (i: number, key: string, name: string | null, on: boolean, empty: boolean) => {
@@ -291,10 +294,11 @@ export class Hud {
         if (name !== null) (d.children[1] as HTMLElement).textContent = name;
         d.className = 's' + (on ? ' on' : '') + (empty ? ' empty' : '');
       };
-      fill(0, b.primary, w.hasPrimary ? w.def.name : '—', w.slot === 'ar', !w.hasPrimary);
-      fill(1, b.knife, null, knifeHeld, false);
-      fill(2, b.grenade, `K-400 ×${v.grenades}`, grenadeHeld, v.grenades < 1);
-      fill(3, b.flash, `Flash ×${v.flashes}`, flashHeld, v.flashes < 1);
+      fill(0, b.primary, w.hasPrimary ? w.primary.def.name : '—', w.slot === 'ar', !w.hasPrimary);
+      fill(1, b.pistol, w.secondary.def.name, w.slot === 'pistol', false);
+      fill(2, b.knife, w.melee === 'knife' ? 'Pisau' : MELEES[w.melee].name, knifeHeld, false);
+      fill(3, b.grenade, `K-400 ×${v.grenades}`, grenadeHeld, v.grenades < 1);
+      fill(4, b.flash, `Flash ×${v.flashes}`, flashHeld, v.flashes < 1);
     });
     this.set('md', MODE_LABEL[w.mode], () => (this.ammo.querySelector('.mode')!.textContent = MODE_LABEL[w.mode]));
     this.set('op', w.scope.name, () => (this.ammo.querySelector('.optic')!.textContent = w.scope.name));
@@ -318,7 +322,7 @@ export class Hud {
       this.ringArc.setAttribute('stroke', left < 1 ? '#ff2a2a' : '#f4efe6');
     }
     // bar progres reload di bawah crosshair
-    const rp = p.alive ? p.weapon.reloadProgress : -1;
+    const rp = p.alive ? p.weapon.reloadTotal : -1;   // shotgun: seluruh pengisian selongsong
     this.rbar.classList.toggle('on', rp >= 0);
     if (rp >= 0) (this.rbar.firstChild as HTMLElement).style.width = `${(rp * 100).toFixed(0)}%`;
     // pesan tengah: respawn / perlindungan / menonton
@@ -333,10 +337,10 @@ export class Hud {
     const pk = keyLabel(ctx.settings.binds.pickup) + (ctx.input.padActive ? ' / X' : '');
     const pr = d ? `[${pk}] ${w.hasPrimary ? 'Tukar dengan' : 'Ambil'} ${WEAPONS[d.weapon].name} · ${SCOPES[d.scope].name} (${d.ammo}/${d.reserve})`
       : this.toastT > 0 ? this.toastText
-      : !p.alive || w.slot !== 'ar' || w.reloading ? ''
-      : w.ammo === 0 && w.reserve === 0 ? `Amunisi habis — [${mk}] pukul`
+      : !p.alive || !gunHeld || w.reloading ? ''
+      : w.ammo === 0 && w.reserve === 0 ? (w.slot === 'ar' ? `Amunisi habis — [${keyLabel(ctx.settings.binds.pistol)}] pistol · [${mk}] pukul` : `Amunisi habis — [${mk}] pukul`)
       : lowAmmo && w.reserve > 0 ? `[${rk}] Reload` : '';
-    this.set('pr', pr, () => { this.prompt.textContent = pr; this.prompt.classList.toggle('warn', !d && this.toastT <= 0 && w.slot === 'ar' && w.ammo === 0); });
+    this.set('pr', pr, () => { this.prompt.textContent = pr; this.prompt.classList.toggle('warn', !d && this.toastT <= 0 && gunHeld && w.ammo === 0); });
     // kartu "Dibunuh oleh" (selama mati) & label menonton
     const info = !p.alive && kc?.active && !(kc.done && !kc.hold) ? kc.info : null;
     const kkey = info ? `${info.name}|${info.weapon}|${info.headshot}|${info.hp}` : '';

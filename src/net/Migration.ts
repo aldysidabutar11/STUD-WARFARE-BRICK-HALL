@@ -50,10 +50,16 @@ export interface SaveEnt {
   stats: number[]; streak: number; variant: Variant;
   /** Flashbang tersisa (tidak ada di cadangan host versi lama → 1). */
   flashes: number;
+  /** Pistol (slot 2) + optiknya, isi, cadangan, mode tembak (cadangan host versi lama: tidak ada → pistol bawaan, penuh = −1). */
+  pistol: string; pscope: string; ammo2: number; reserve2: number; mode2: number;
+  /** Senjata jarak dekat (cadangan lama: tidak ada → pisau). */
+  melee: string;
 }
 export interface MatchSave {
   v: number; state: MatchStateName; round: number; timeLeft: number; countdown: number;
   sb: number; sr: number; winner: Win; roundWinner: Win | null; ents: SaveEnt[];
+  /** Panel kaca destruktibel yang sudah pecah (indeks MapDef.breakables; Boston). */
+  glass?: number[];
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -84,9 +90,13 @@ export function parseSave(raw: unknown): MatchSave | null {
       ammo: clamp(Math.round(n('ammo')), 0, 200), reserve: clamp(Math.round(n('reserve')), 0, 2000), modeIdx: clamp(Math.round(n('modeIdx')), 0, 4),
       grenades: clamp(Math.round(n('grenades')), 0, 9), stats: (e.stats as number[]).map(s => clamp(Math.round(s), 0, 1e7)),
       flashes: fin(e.flashes) ? clamp(Math.round(e.flashes), 0, 9) : 1,
+      pistol: String(e.pistol ?? '').slice(0, 24), pscope: String(e.pscope ?? '').slice(0, 24),
+      ammo2: fin(e.ammo2) ? clamp(Math.round(e.ammo2), 0, 200) : -1, reserve2: fin(e.reserve2) ? clamp(Math.round(e.reserve2), 0, 2000) : -1,
+      mode2: fin(e.mode2) ? clamp(Math.round(e.mode2), 0, 4) : 0, melee: String(e.melee ?? '').slice(0, 24),
       streak: clamp(Math.round(n('streak')), 0, 999), variant: cleanVariant(e.variant) });
   }
   return { v: SAVE_V, state: r.state as MatchStateName, round: clamp(Math.round(r.round), 0, 99), timeLeft: clamp(r.timeLeft, 0, 7200),
     countdown: clamp(r.countdown, 0, 10), sb: clamp(Math.round(r.sb), 0, 999), sr: clamp(Math.round(r.sr), 0, 999),
-    winner: isWin(r.winner) ? r.winner : 'draw', roundWinner: isWin(r.roundWinner) ? r.roundWinner : null, ents };
+    winner: isWin(r.winner) ? r.winner : 'draw', roundWinner: isWin(r.roundWinner) ? r.roundWinner : null, ents,
+    ...(Array.isArray(r.glass) ? { glass: [...new Set(r.glass.filter((i): i is number => Number.isInteger(i) && (i as number) >= 0 && (i as number) < 32))].slice(0, 32) } : {}) };
 }

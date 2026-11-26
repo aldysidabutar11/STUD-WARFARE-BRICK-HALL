@@ -4,7 +4,8 @@
 import * as THREE from 'three';
 import { XCFG } from '../config/extraConfig';
 import { CFG } from '../config/gameConfig';
-import type { Box } from '../world/MapData';
+import { WEAPONS } from '../config/weaponsData';
+import { stairFrame, type Box } from '../world/MapData';
 import { currentMap, type MapDef } from '../world/maps/registry';
 import { physics } from '../physics/Physics';
 import { bus } from '../core/EventBus';
@@ -20,8 +21,10 @@ const PAL = {
   outdoor: { floor: '#3a3226', upper: '#6a5a40', stair: '#4d4232', wall: '#131210', pillar: '#3b3328', shelf: '#7d6a4a', cover: '#a99a78', rail: '#d9c58a' },
 };
 
-/** Gambar peta statis map `def` (1 unit = RD.pxPerUnit px; asal kanvas = (X0, Z0) = sudut batas − 1 u). */
-function buildMapImage(def: MapDef, X0: number, Z0: number, W: number, H: number): HTMLCanvasElement {
+/** Gambar peta statis map `def` (1 unit = RD.pxPerUnit px; asal kanvas = (X0, Z0) = sudut batas − 1 u). floorY (map berlantai
+ *  banyak, MapDef.radarFloors) = hanya lantai itu: lantai = tanah (Y 0) atau tapak pelat di Y itu, penghalang = balok yang memotong
+ *  pita badan (lantai + 0.5 … + 5), ruang spawn = yang ada di lantai itu. */
+function buildMapImage(def: MapDef, X0: number, Z0: number, W: number, H: number, floorY?: number): HTMLCanvasElement {
   const S = RD.pxPerUnit, c = document.createElement('canvas'), P = def.atmosphere.outdoor ? PAL.outdoor : PAL.indoor;
   c.width = W * S; c.height = H * S;
   const g = c.getContext('2d')!;
@@ -36,20 +39,26 @@ function buildMapImage(def: MapDef, X0: number, Z0: number, W: number, H: number
     g.fillRect(-w / 2, -h / 2, w, h);
     g.restore();
   };
-  const bx = def.bounds.x, bz = def.bounds.z;
-  g.fillStyle = P.floor; g.fillRect((bx[0] - X0) * S, (bz[0] - Z0) * S, (bx[1] - bx[0]) * S, (bz[1] - bz[0]) * S);   // lantai dasar
-  for (const b of def.boxes) if (b.cat === 'mass' || b.cat === 'bridge') rect(b, P.upper);                           // lantai 2 (Y 10)
+  const bx = def.bounds.x, bz = def.bounds.z, per = floorY !== undefined, fy = floorY ?? 0;
+  if (!per || fy < 1) { g.fillStyle = P.floor; g.fillRect((bx[0] - X0) * S, (bz[0] - Z0) * S, (bx[1] - bx[0]) * S, (bz[1] - bz[0]) * S); }  // lantai dasar
+  if (!per) { for (const b of def.boxes) if (b.cat === 'mass' || b.cat === 'bridge') rect(b, P.upper); }                                       // lantai 2 (Y 10)
+  else if (fy >= 1) for (const b of def.boxes) if ((b.cat === 'mass' || b.cat === 'bridge') && Math.abs(b.max[1] - fy) < 0.6) rect(b, P.floor);
   for (const s of def.stairs) {                                                                                      // tangga: garis anak tangga
-    const z0 = Math.min(s.zFoot, s.zTop), z1 = Math.max(s.zFoot, s.zTop);
-    g.fillStyle = P.stair; g.fillRect((s.x[0] - X0) * S, (z0 - Z0) * S, (s.x[1] - s.x[0]) * S, (z1 - z0) * S);
+    const f = stairFrame(s);
+    if (per && (f.y1 < fy - 5.5 || f.y0 > fy + 0.5)) continue;
+    g.fillStyle = P.stair; g.fillRect((f.x[0] - X0) * S, (f.z[0] - Z0) * S, (f.x[1] - f.x[0]) * S, (f.z[1] - f.z[0]) * S);
     g.strokeStyle = 'rgba(255,230,190,0.25)'; g.lineWidth = 1;
-    for (let z = z0; z < z1; z += 1.43) { g.beginPath(); g.moveTo((s.x[0] - X0) * S, (z - Z0) * S); g.lineTo((s.x[1] - X0) * S, (z - Z0) * S); g.stroke(); }
+    const run = 2 * Math.abs(f.top - f.foot) / Math.max(1, Math.round((f.y1 - f.y0) / 0.5));   // garis tiap 2 anak tangga (Brick Hall: 1.43 u seperti dulu)
+    if (f.axis === 'z') for (let z = f.z[0]; z < f.z[1]; z += run) { g.beginPath(); g.moveTo((f.x[0] - X0) * S, (z - Z0) * S); g.lineTo((f.x[1] - X0) * S, (z - Z0) * S); g.stroke(); }
+    else for (let x = f.x[0]; x < f.x[1]; x += run) { g.beginPath(); g.moveTo((x - X0) * S, (f.z[0] - Z0) * S); g.lineTo((x - X0) * S, (f.z[1] - Z0) * S); g.stroke(); }
   }
+  const onFloor = (b: Box) => !per || (b.min[1] < fy + 5 && b.max[1] > fy + 0.5);
   // area spawn diberi warna tim: tapak balok kategori 'spawn' di sisi tim (Brick Hall: ruang spawn), atau — bila map tidak
   // punya — kotak 6 × 6 u di sekitar tiap slot (satu path → tanpa tumpukan alfa)
   for (const [team, fill, sgn] of [['blue', 'rgba(61,142,224,0.35)', -1], ['red', 'rgba(224,72,61,0.35)', 1]] as const) {
-    const rooms = def.boxes.filter(b => b.cat === 'spawn' && Math.sign(b.min[2] + b.max[2]) === sgn);
+    const rooms = def.boxes.filter(b => b.cat === 'spawn' && Math.sign(b.min[2] + b.max[2]) === sgn && onFloor(b));
     g.fillStyle = fill;
+    if (per && !rooms.length) continue;
     if (rooms.length) {
       const x0 = Math.min(...rooms.map(b => b.min[0])), x1 = Math.max(...rooms.map(b => b.max[0]));
       const z0 = Math.min(...rooms.map(b => b.min[2])), z1 = Math.max(...rooms.map(b => b.max[2]));
@@ -62,13 +71,14 @@ function buildMapImage(def: MapDef, X0: number, Z0: number, W: number, H: number
   }
   for (const b of def.boxes) {
     const h = b.max[1] - b.min[1];
-    if (b.max[1] <= 0.01 || b.min[1] > 10.5 || h < 1.5) continue;                                     // tanah, plafon/lintel/rel tipis
+    if (per) { if (!onFloor(b) || b.cat === 'mass' || b.cat === 'bridge' || b.cat === 'rail' || b.min[1] > fy + 4) continue; }
+    else if (b.max[1] <= 0.01 || b.min[1] > 10.5 || h < 1.5) continue;                                // tanah, plafon/lintel/rel tipis
     if (b.cat === 'shell' || b.cat === 'wall' || b.cat === 'spawn') rect(b, P.wall);
     else if (b.cat === 'pillar') rect(b, P.pillar);
     else if (b.cat === 'shelf') rect(b, P.shelf);
     else if (b.cat === 'cover' || b.cat === 'prop') rect(b, P.cover);
   }
-  for (const b of def.boxes) if (b.cat === 'rail') rect(b, P.rail);
+  for (const b of def.boxes) if (b.cat === 'rail' && onFloor(b)) rect(b, P.rail);
   return c;
 }
 
@@ -77,6 +87,8 @@ export class Minimap {
   private canvas = document.createElement('canvas');
   private g: CanvasRenderingContext2D;
   private img: HTMLCanvasElement;
+  /** Map berlantai banyak: gambar per lantai (Y lantai urut naik); img = lantai fokus saat ini. */
+  private floors: { y: number; img: HTMLCanvasElement }[] = [];
   private shotT = new Map<number, number>();
   private spotT = new Map<number, number>();
   private frame = 0;
@@ -99,7 +111,8 @@ export class Minimap {
     this.img = this.buildImage(this.def);
     this.resize();
     addEventListener('resize', () => this.resize());
-    bus.on('shot', (e) => this.shotT.set(e.shooterId, ctx.time));
+    // peredam: tembakan tidak menampakkan penembak di radar
+    bus.on('shot', (e) => { if (!WEAPONS[e.weaponId].suppressed) this.shotT.set(e.shooterId, ctx.time); });
   }
 
   private resize() {
@@ -118,7 +131,9 @@ export class Minimap {
 
   private buildImage(def: MapDef): HTMLCanvasElement {
     this.X0 = def.bounds.x[0] - 1; this.Z0 = def.bounds.z[0] - 1;
-    return buildMapImage(def, this.X0, this.Z0, def.bounds.x[1] - def.bounds.x[0] + 2, def.bounds.z[1] - def.bounds.z[0] + 2);
+    const W = def.bounds.x[1] - def.bounds.x[0] + 2, H = def.bounds.z[1] - def.bounds.z[0] + 2;
+    this.floors = (def.radarFloors ?? []).map(y => ({ y, img: buildMapImage(def, this.X0, this.Z0, W, H, y) }));
+    return this.floors[0]?.img ?? buildMapImage(def, this.X0, this.Z0, W, H);
   }
 
   private vis = true;
@@ -146,6 +161,11 @@ export class Minimap {
     g.setTransform(k / S * c, k / S * s, -k / S * s, k / S * c,
       C + k * (c * (X0 - px) - s * (Z0 - pz)), C + k * (s * (X0 - px) + c * (Z0 - pz)));
     g.globalAlpha = 0.95;
+    if (this.floors.length) {   // lantai fokus: tertinggi yang Y-nya ≤ kaki + 3 (di tangga ganti di tengah)
+      let img = this.floors[0].img;
+      for (const f of this.floors) if (focus.renderPos.y >= f.y - 3) img = f.img;
+      this.img = img;
+    }
     g.drawImage(this.img, 0, 0);
     g.globalAlpha = 1;
     g.setTransform(1, 0, 0, 1, 0, 0);

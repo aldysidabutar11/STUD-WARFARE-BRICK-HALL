@@ -439,14 +439,22 @@ function buildBody(m: SkinMesh, R: Regions, look: P.Look) {
 const _v1 = new THREE.Vector3();
 const _bb = new THREE.Box3();
 const Q_GRIP_R = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.245, 0, 0));
+/** Jarak gagang pistol di depan titik putar dada (unit Venny). */
+const PISTOL_REACH = 1.05;
 const Q_GRIP_L = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2));
 const GRIP_AXIS = new THREE.Vector3(0, -0.97, -0.24).normalize();
 const GUN_SCALE = 0.8;
-interface GunInfo { buttZ: number; muzzleZ: number; bullpup: boolean }
+/** leftZ = posisi z tangan kiri (AR GDD: dari panjang laras; senjata tambahan: titik tangan kiri model, userData.custom). */
+interface GunInfo { buttZ: number; muzzleZ: number; bullpup: boolean; leftZ: number }
 const GUN_INFO = new WeakMap<THREE.BufferGeometry, GunInfo>();
 const gunInfo = (g: THREE.BufferGeometry): GunInfo => {
   let i = GUN_INFO.get(g);
-  if (!i) { g.computeBoundingBox(); _bb.copy(g.boundingBox!); i = { buttZ: _bb.max.z, muzzleZ: _bb.min.z, bullpup: _bb.max.z < 0.7 }; GUN_INFO.set(g, i); }
+  if (!i) {
+    g.computeBoundingBox(); _bb.copy(g.boundingBox!);
+    const bullpup = _bb.max.z < 0.7, lh = g.userData.custom ? g.userData.leftHand as number[] | undefined : undefined;
+    i = { buttZ: _bb.max.z, muzzleZ: _bb.min.z, bullpup, leftZ: lh ? lh[2] : _bb.min.z * (bullpup ? 0.72 : 0.62) };
+    GUN_INFO.set(g, i);
+  }
   return i;
 };
 
@@ -464,7 +472,7 @@ export class VennyRig {
   readonly mat: THREE.MeshLambertMaterial;
   /** Wadah senapan di bahu kanan (anak tulang dada); weaponMount R6 dipindah ke sini (senapan) atau ke tangan (pisau/granat). */
   readonly gunPivot = new THREE.Group();
-  private mode: 'rifle' | 'hand' | null = null;
+  private mode: 'rifle' | 'pistol' | 'hand' | null = null;
   private readonly bindUp: THREE.Vector3[] = [];
 
   constructor(team: Team, castShadow: boolean, probe: { value: THREE.Vector2 }, bounce: { value: THREE.Color | THREE.Vector3 }) {
@@ -506,14 +514,19 @@ uniform vec3 uBounce;`)
   dispose() { this.mat.dispose(); }
 
   /** Pindahkan weaponMount R6 ke wadah yang sesuai mode (senapan di bahu / benda di tangan kanan). */
-  private attach(mount: THREE.Group, mode: 'rifle' | 'hand', gun: THREE.Mesh | null) {
-    if (this.mode === mode && mount.parent === (mode === 'rifle' ? this.gunPivot : this.bones[B.handR])) return;
+  private attach(mount: THREE.Group, mode: 'rifle' | 'pistol' | 'hand', gun: THREE.Mesh | null) {
+    if (this.mode === mode && mount.parent === (mode === 'hand' ? this.bones[B.handR] : this.gunPivot)) return;
     this.mode = mode;
     if (mode === 'rifle') {
       this.gunPivot.add(mount);
       mount.rotation.x = Math.PI / 2;
       const gi = gun ? gunInfo(gun.geometry) : { buttZ: 0.95 };
       mount.position.set(0, -0.15 * GUN_SCALE, -(gi.buttZ - 0.03) * GUN_SCALE);
+    } else if (mode === 'pistol') {
+      // pistol dua tangan: gagang sejauh lengan di depan dada (siku sedikit menekuk)
+      this.gunPivot.add(mount);
+      mount.rotation.x = Math.PI / 2;
+      mount.position.set(0, -0.14, -PISTOL_REACH);
     } else {
       this.bones[B.handR].add(mount);
       mount.rotation.x = 0;
@@ -543,9 +556,27 @@ uniform vec3 uBounce;`)
     legPose(B.thighR, B.shinR, B.footR, p.legR, -0.08, -1.6, 0.6);
     // kepala: pitch R6 dibagi leher/kepala; saat membidik senapan kepala sedikit menunduk & miring ke popor
     const rifle = (p.held === 'ar' || p.held === undefined) && p.gun !== null;
-    const aimW = rifle ? 1 - p.low : 0;
+    const pistol = p.held === 'pistol' && p.gun !== null;
+    const aimW = rifle || pistol ? 1 - p.low : 0;
     b[B.neck].rotation.set(0.45 * p.neckX, 0, 0);
     b[B.head].rotation.set(0.55 * p.neckX - 0.09 * aimW, 0, -0.07 * aimW);
+    if (pistol) {
+      // pistol: pegangan dua tangan di tengah — kanan di gagang, kiri menopang dari bawah-kiri; pitch = sudut lengan R6 − 90°
+      this.attach(mount, 'pistol', p.gun);
+      this.gunPivot.rotation.set(p.shoulderR.x - Math.PI / 2, -0.03, 0);
+      this.gunPivot.position.set(0.05, 0.37 - 0.12 * p.low, -0.22 - 0.05 * p.low);
+      charRoot.updateMatrixWorld(true);
+      const gun = p.gun!, gq = gun.getWorldQuaternion(_gq);
+      gun.localToWorld(_tR.set(0.0, -0.14, 0.04)).addScaledVector(_v1.copy(GRIP_AXIS).applyQuaternion(gq), -0.122);
+      gun.localToWorld(_tL.set(-0.04, -0.24, 0.02)).addScaledVector(_v1.set(1, 0, 0).applyQuaternion(gq), -0.11);
+      if (p.reload >= 0) _tL.lerp(gun.localToWorld(_v1.set(-0.05, -0.6, 0.12)), Math.sin(Math.PI * Math.min(1, p.reload)));
+      const chestQ = b[B.chest].getWorldQuaternion(_cq);
+      _pR.set(0.65, -0.75, 0.15).applyQuaternion(chestQ); _pL.set(-0.65, -0.75, 0.15).applyQuaternion(chestQ);
+      _hR.copy(gq).multiply(Q_GRIP_R); _hL.copy(gq).multiply(Q_GRIP_L);
+      this.ik(B.armR, B.foreR, B.handR, _tR, _pR, _hR);
+      this.ik(B.armL, B.foreL, B.handL, _tL, _pL, _hL);
+      return;
+    }
     if (!rifle) {
       // satu tangan (pisau / granat / kosong): FK dari bahu R6 + siku menekuk
       this.attach(mount, 'hand', p.gun);
@@ -563,7 +594,7 @@ uniform vec3 uBounce;`)
     // tangan kanan: kepalan di gagang (sumbu gagang miring 14°), pergelangan di atasnya
     gun.localToWorld(_tR.set(0.03, -0.14, 0.03)).addScaledVector(_v1.copy(GRIP_AXIS).applyQuaternion(gq), -0.122);
     // tangan kiri: di bawah handguard (atau ke magazen saat reload); jari melingkar ke kanan senjata
-    gun.localToWorld(_tL.set(-0.03, 0.03, gi.muzzleZ * (gi.bullpup ? 0.72 : 0.62)));
+    gun.localToWorld(_tL.set(-0.03, 0.03, gi.leftZ));
     if (p.reload >= 0) _tL.lerp(gun.localToWorld(_v1.set(-0.12, -0.42, gi.bullpup ? 0.3 : -0.42)), Math.sin(Math.PI * Math.min(1, p.reload)));
     _tL.addScaledVector(_v1.set(1, 0, 0).applyQuaternion(gq), -0.122);
     const chestQ = b[B.chest].getWorldQuaternion(_cq);

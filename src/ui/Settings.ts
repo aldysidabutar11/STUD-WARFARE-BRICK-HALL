@@ -4,7 +4,8 @@ import { VARIANTS, type Variant } from '../entities/variants';
 import { CFG, type PresetName } from '../config/gameConfig';
 import { XCFG, type Difficulty } from '../config/extraConfig';
 import type { ScopeId, WeaponId } from '../config/weaponsData';
-import { WEAPONS, SCOPE_ORDER, scopeAllowed } from '../config/weaponsData';
+import { DEFAULT_LOADOUT, cleanLoadout } from '../combat/Loadout';
+import type { MeleeId } from '../config/weaponsExtra';
 import { BINDS_VERSION, DEFAULT_BINDS, migrateBinds, validateBinds, type Binds } from '../core/Bindings';
 import { XH_MODES, XH_SHAPES, type XhMode, type XhShape } from './Crosshair';
 import { cleanName, isMapChoice, type MapChoice } from '../game/Lobby';
@@ -24,7 +25,8 @@ export interface Settings {
   volMaster: number; volSfx: number; volUi: number;
   showFps: boolean; difficulty: Difficulty; allies: number; enemies: number;
   fullPause: boolean;
-  weapon: WeaponId; scope: ScopeId;
+  /** Loadout: senjata utama + optik (slot 1), pistol + optik (slot 2) — combat/Loadout. */
+  weapon: WeaponId; scope: ScopeId; pistol: WeaponId; pscope: ScopeId; melee: MeleeId;
   /** Tampilan karakter pemain: 'm' pria / 'f' wanita (desain karakter pengguna). */
   charVariant: Variant;
   /** Nama pemain di room/lobby (lihat game/Lobby.cleanName); '' = belum diisi. */
@@ -48,6 +50,8 @@ export interface Settings {
   // efek grafik (berlaku bila preset mendukung — lihat XCFG.gfx.profiles)
   gfxBloom: boolean; gfxSsao: boolean; gfxReflect: boolean; gfxFog: boolean; gfxDust: boolean;
   minimap: boolean; nameplates: boolean; killcam: boolean; dmgNumbers: boolean;
+  /** Garis lintasan + titik jatuh saat memegang granat / flashbang (vfx/ThrowArcView). */
+  nadeArc: boolean;
   /** Callout bot (laporan musuh) ikut tampil di chat tim. */
   chatBots: boolean;
   /** Voice chat (dengar & bicara) + volumenya (0–100). */
@@ -58,7 +62,7 @@ export const KEY = 'studwarfare.settings.v1';
 export const DEFAULTS: Settings = {
   sens: 1.0, adsMult: 1.0, fov: 75, invertY: false, adsToggle: false, crouchToggle: true, preset: 'MEDIUM',
   volMaster: 80, volSfx: 100, volUi: 70, showFps: false, difficulty: 'normal', allies: 4, enemies: 5, fullPause: false,
-  weapon: 'm416', scope: 'reddot', charVariant: 'm', playerName: '',
+  ...DEFAULT_LOADOUT, charVariant: 'm', playerName: '',
   mode: 'tdm', scoreLimit: CFG.match.scoreLimit, timeLimit: CFG.match.timeLimit / 60, roundsToWin: XCFG.elim.roundsToWin,
   map: 'brickhall',
   binds: { ...DEFAULT_BINDS }, padSens: 1.0, bindsVer: BINDS_VERSION,
@@ -67,7 +71,7 @@ export const DEFAULTS: Settings = {
   xhOutline: true, xhOutlineThick: 1, xhOutlineAlpha: 0.75, xhDynMult: 1,
   brightness: 1.0, shake: 100, renderScale: 0, fpsCap: 1,
   gfxBloom: true, gfxSsao: true, gfxReflect: true, gfxFog: true, gfxDust: true,
-  minimap: true, nameplates: true, killcam: true, dmgNumbers: false, chatBots: true, voice: true, volVoice: 90,
+  minimap: true, nameplates: true, killcam: true, dmgNumbers: false, nadeArc: true, chatBots: true, voice: true, volVoice: 90,
 };
 
 const clamp = (v: unknown, a: number, b: number, d: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(b, Math.max(a, v)) : d);
@@ -79,9 +83,7 @@ export function validate(raw: Partial<Settings> | null): Settings {
   const r = raw ?? {};
   const legacy = r as Record<string, unknown>;
   const D = DEFAULTS;
-  const weapon = oneOf(r.weapon, Object.keys(WEAPONS) as WeaponId[], D.weapon);
-  let scope = oneOf(r.scope, SCOPE_ORDER, D.scope);
-  if (!scopeAllowed(WEAPONS[weapon], scope)) scope = 'reddot';
+  const lo = cleanLoadout(r.weapon, r.scope, r.pistol, r.pscope, r.melee);
   return {
     sens: clamp(r.sens, 0.1, 5.0, D.sens), adsMult: clamp(r.adsMult, 0.5, 1.5, D.adsMult), fov: clamp(r.fov, 70, 90, D.fov),
     invertY: bool(r.invertY, D.invertY), adsToggle: bool(r.adsToggle, D.adsToggle), crouchToggle: bool(r.crouchToggle, D.crouchToggle),
@@ -91,7 +93,7 @@ export function validate(raw: Partial<Settings> | null): Settings {
     volMaster: clamp(r.volMaster, 0, 100, D.volMaster), volSfx: clamp(r.volSfx, 0, 100, D.volSfx), volUi: clamp(r.volUi, 0, 100, D.volUi),
     showFps: bool(r.showFps, D.showFps), difficulty: oneOf(r.difficulty, ['easy', 'normal', 'hard'] as const, D.difficulty),
     allies: Math.round(clamp(r.allies, 0, 4, D.allies)), enemies: Math.round(clamp(r.enemies, 1, 5, D.enemies)),
-    fullPause: bool(r.fullPause, D.fullPause), weapon, scope, charVariant: oneOf(r.charVariant, VARIANTS, D.charVariant),
+    fullPause: bool(r.fullPause, D.fullPause), ...lo, charVariant: oneOf(r.charVariant, VARIANTS, D.charVariant),
     playerName: typeof r.playerName === 'string' ? cleanName(r.playerName) : D.playerName,
     mode: oneOf(r.mode, ['tdm', 'elim'] as const, D.mode),
     scoreLimit: pick(r.scoreLimit, SCORE_LIMITS, D.scoreLimit as 50), timeLimit: pick(r.timeLimit, TIME_LIMITS, D.timeLimit as 10),
@@ -114,7 +116,7 @@ export function validate(raw: Partial<Settings> | null): Settings {
     renderScale: pick(r.renderScale, RENDER_SCALES, 0), fpsCap: pick(r.fpsCap, FPS_CAPS, 1),
     minimap: bool(r.minimap, D.minimap), nameplates: bool(r.nameplates, D.nameplates), killcam: bool(r.killcam, D.killcam),
     chatBots: bool(r.chatBots, D.chatBots), voice: bool(r.voice, D.voice), volVoice: clamp(r.volVoice, 0, 100, D.volVoice),
-    dmgNumbers: bool(r.dmgNumbers, D.dmgNumbers),
+    dmgNumbers: bool(r.dmgNumbers, D.dmgNumbers), nadeArc: bool(r.nadeArc, D.nadeArc),
   };
 }
 

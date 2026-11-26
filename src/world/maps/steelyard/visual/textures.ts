@@ -10,13 +10,13 @@ import { makeRng, type Rng } from '../../../../core/Rng';
 
 // ───────────────────────── pembantu
 /** Kanvas kerja. gpu = true: kanvas berakselerasi (cepat untuk gradien/blur; dibaca sekali lewat getImageData). */
-function canvas(w: number, h: number, gpu = false): [HTMLCanvasElement, CanvasRenderingContext2D] {
+export function canvas(w: number, h: number, gpu = false): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   return [c, c.getContext('2d', gpu ? undefined : { willReadFrequently: true })!];
 }
 
-function toTex(c: HTMLCanvasElement, aniso: number, srgb: boolean, repeat = true): THREE.Texture {
+export function toTex(c: HTMLCanvasElement, aniso: number, srgb: boolean, repeat = true): THREE.Texture {
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = repeat ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
   t.anisotropy = aniso;
@@ -27,7 +27,7 @@ function toTex(c: HTMLCanvasElement, aniso: number, srgb: boolean, repeat = true
 }
 
 /** Derau nilai berulang (tileable) cells×cells, interpolasi smoothstep. u, v dalam satuan petak (bebas, dibungkus). */
-function vnoise(cellsX: number, cellsY: number, seed: number): (u: number, v: number) => number {
+export function vnoise(cellsX: number, cellsY: number, seed: number): (u: number, v: number) => number {
   const r = makeRng(seed), g = new Float32Array(cellsX * cellsY);
   for (let i = 0; i < g.length; i++) g[i] = r();
   const pow2 = (n: number) => (n & (n - 1)) === 0;
@@ -52,7 +52,7 @@ function vnoise(cellsX: number, cellsY: number, seed: number): (u: number, v: nu
 }
 
 /** fbm berulang: oktaf berlipat (sel ×2), amplitudo ×0.5; hasil ±0..1. */
-function fbm(cellsX: number, cellsY: number, oct: number, seed: number): (u: number, v: number) => number {
+export function fbm(cellsX: number, cellsY: number, oct: number, seed: number): (u: number, v: number) => number {
   const ns = Array.from({ length: oct }, (_, i) => vnoise(cellsX << i, cellsY << i, seed + i * 101));
   let norm = 0;
   for (let i = 0; i < oct; i++) norm += 0.5 ** i;
@@ -60,7 +60,7 @@ function fbm(cellsX: number, cellsY: number, oct: number, seed: number): (u: num
 }
 
 /** Medan derau resolusi rendah (fw×fh) + sampel bilinear berulang — derau per piksel tekstur besar tanpa biaya fbm penuh. */
-function lowField(fw: number, fh: number, fn: (u: number, v: number) => number): (u: number, v: number) => number {
+export function lowField(fw: number, fh: number, fn: (u: number, v: number) => number): (u: number, v: number) => number {
   const f = new Float32Array(fw * fh);
   for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) f[y * fw + x] = fn(x / fw, y / fh);
   return (u, v) => {

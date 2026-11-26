@@ -6,7 +6,9 @@ import type { NavTemplate } from './maps/types';
 export type EdgeKind = 'walk' | 'door' | 'stair' | 'drop';
 /** level = Y lantai node (0 = lantai dasar, 10 = lantai 2 Brick Hall). */
 export interface NavNode { id: string; x: number; y: number; z: number; level: number; cover: boolean; side: 'S' | 'N' | 'C' }
-export interface NavEdge { a: number; b: number; kind: EdgeKind; cost: number; oneWay: boolean }
+export interface NavEdge { a: number; b: number; kind: EdgeKind; cost: number; oneWay: boolean;
+  /** Gerbang (opsional): edge hanya dilalui saat gerbang terbuka (kaca pecah Boston). */
+  gate?: string }
 
 function expandName(t: string, h: 'S' | 'N', x: 'W' | 'E') { return t.replace('{H}', h).replace('{X}', x); }
 
@@ -17,10 +19,13 @@ export class NavGraph {
   readonly byId = new Map<string, number>();
   /** Info drop: takeoff node → landing shelf id. */
   readonly dropInfo = new Map<NavEdge, string>();
+  /** Gerbang yang sedang terbuka (edge bergerbang hanya dilalui bila gerbangnya ada di sini). */
+  private readonly openGates = new Set<string>();
 
   /** {H} = S (Biru, Z negatif) / N (Merah); {X} = W (X negatif) / E; C_ = garis tengah Z = 0. Koordinat template untuk H=S, X=W. */
   constructor(tpl: NavTemplate) {
     const { nodes: NODE_T, edges: EDGE_T, drops: DROP_T = [], cover: COVER_T } = tpl;
+    if (tpl.asym) { this.buildAsym(tpl); return; }
     for (const [t, x0, z0, lvl] of NODE_T) {
       const hs: ('S' | 'N')[] = t.includes('{H}') ? ['S', 'N'] : ['S'];
       const xs: ('W' | 'E')[] = t.includes('{X}') ? ['W', 'E'] : ['W'];
@@ -53,6 +58,32 @@ export class NavGraph {
       this.dropInfo.set(e, `${shelf}_${h}${xx}`);
     }
   }
+
+  /** Map asimetris: node & edge apa adanya, sisi node dari tpl.asym.side, drop = [takeoff, landing, id balok pendaratan]. */
+  private buildAsym(tpl: NavTemplate) {
+    for (const [id, x, z, lvl] of tpl.nodes) {
+      if (this.byId.has(id)) throw new Error(`NavGraph: node ganda ${id}`);
+      this.byId.set(id, this.nodes.length);
+      this.nodes.push({ id, x, y: lvl, z, level: lvl, cover: false, side: tpl.asym!.side(x, z, lvl) });
+      this.adj.push([]);
+    }
+    for (const id of tpl.cover) { const i = this.byId.get(id); if (i !== undefined) this.nodes[i].cover = true; }
+    for (const [ta, tb, kind, gate] of tpl.edges) {
+      const a = this.byId.get(ta), b = this.byId.get(tb);
+      if (a === undefined || b === undefined) throw new Error(`NavGraph: edge ${ta}-${tb}`);
+      const e = this.addEdge(a, b, kind, false);
+      if (gate) e.gate = gate;
+    }
+    for (const [ta, tb, box] of tpl.drops ?? []) {
+      const a = this.byId.get(ta), b = this.byId.get(tb);
+      if (a === undefined || b === undefined) throw new Error(`NavGraph: drop ${ta}-${tb}`);
+      this.dropInfo.set(this.addEdge(a, b, 'drop', true), box);
+    }
+  }
+
+  /** Buka/tutup gerbang (mis. panel kaca pecah → edge lewat panel itu bisa dilalui). */
+  setGate(gate: string, open: boolean) { if (open) this.openGates.add(gate); else this.openGates.delete(gate); }
+  gateOpen(gate: string) { return this.openGates.has(gate); }
 
   private addEdge(a: number, b: number, kind: EdgeKind, oneWay: boolean): NavEdge {
     const A = this.nodes[a], B = this.nodes[b];
@@ -117,6 +148,7 @@ export class NavGraph {
       }
       for (const { to: nb, edge } of this.adj[cur]) {
         if (edge.kind === 'drop' && !allowDrops) continue;
+        if (edge.gate && !this.openGates.has(edge.gate)) continue;
         const g = this.gScore[cur] + edge.cost;
         if (g < this.gScore[nb]) {
           this.came[nb] = cur; this.cameEdge[nb] = edge; this.gScore[nb] = g; this.fScore[nb] = g + h(nb);
@@ -131,7 +163,7 @@ export class NavGraph {
   validate(blocked: (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => boolean): string[] {
     const warn: string[] = [];
     for (const e of this.edges) {
-      if (e.kind === 'drop') continue;
+      if (e.kind === 'drop' || e.gate) continue;   // edge bergerbang (kaca utuh) memang terhalang sampai gerbangnya terbuka
       const A = this.nodes[e.a], B = this.nodes[e.b];
       if (blocked(A.x, A.y + 2.5, A.z, B.x, B.y + 2.5, B.z)) warn.push(`edge ${A.id} ↔ ${B.id} terhalang`);
     }

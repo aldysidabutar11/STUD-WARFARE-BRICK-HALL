@@ -2,7 +2,9 @@
 import * as THREE from 'three';
 import { XCFG } from '../config/extraConfig';
 import { SCOPES, type ScopeId, type WeaponId } from '../config/weaponsData';
-import { KNIFE_MID, KNIFE_TIP, VM_SCALE, VM_WEAPON_MATERIAL, createOpticMesh, flashbangModel, grenadeModel, knifeModel, weaponModel } from '../combat/WeaponModels';
+import { MELEE_SHAPE, VM_SCALE, VM_WEAPON_MATERIAL, createOpticMesh, flashbangModel, grenadeModel, knifeModel, meleeModel, weaponModel,
+  type WeaponModel } from '../combat/WeaponModels';
+import type { MeleeId } from '../config/weaponsExtra';
 import { TRAIL_WINDOW, VM_SLASH_A, VM_SLASH_B, VM_STAB, sampleKeys } from './knifeAnim';
 import type { Held } from '../combat/Slots';
 import { CFG } from '../config/gameConfig';
@@ -46,6 +48,8 @@ export interface VmState {
   knifeAlt?: boolean;   // tebasan balik (kiri → kanan)
   equip?: number;       // sisa animasi angkat 1..0
   cooking?: boolean; overhand?: boolean; // granat: sedang memasak (tangan ditarik ke belakang/atas atau ke bawah)
+  /** Kokang pompa/bolt setelah tembakan 0..1 (−1 = tidak). shell = reload per selongsong (reload = siklus tiap selongsong). */
+  cycle?: number; shell?: boolean;
   /** Opsional (pemain): kecepatan lokal kamera (kanan, maju, atas) & fase langkah — inersia + bob sinkron langkah. */
   vx?: number; vz?: number; vy?: number; stepPhase?: number;
 }
@@ -73,6 +77,13 @@ export class Viewmodel {
   private cookW = 0;
   private gun: THREE.Mesh;
   private optic: THREE.Mesh | null = null;
+  /** Bagian bergerak senjata aktif (pompa / bolt / slide) & model aktif. */
+  private part: THREE.Mesh;
+  private model: WeaponModel | null = null;
+  private armR!: THREE.Group;
+  private armL!: THREE.Group;
+  private slideT = 0;
+  private shellW = 0;
   private flash: THREE.Group;
   private flashT = 0;
   readonly muzzleLocal = new THREE.Vector3();
@@ -108,6 +119,9 @@ export class Viewmodel {
     this.gun = new THREE.Mesh(new THREE.BufferGeometry(), VM_WEAPON_MATERIAL);
     this.gun.scale.setScalar(VM_SCALE);
     this.rifle.add(this.gun);
+    this.part = new THREE.Mesh(new THREE.BufferGeometry(), VM_WEAPON_MATERIAL);
+    this.part.visible = false;
+    this.gun.add(this.part);
     // lengan blocky: sarung tangan (jari kulit di ujung) di grip/handguard, manset/balutan, lengan menjauh ke bawah layar
     const arm = (len: number, hand: THREE.Vector3, dir: THREE.Vector3) => {
       const g = new THREE.Group();
@@ -123,8 +137,8 @@ export class Viewmodel {
       g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.normalize());
       return g;
     };
-    const armR = arm(0.42, new THREE.Vector3(0.0, -0.07, 0.02), new THREE.Vector3(0.22, -0.72, 0.3));
-    const armL = arm(0.4, new THREE.Vector3(-0.02, -0.03, -0.3), new THREE.Vector3(-0.2, -0.8, 0.18));
+    const armR = this.armR = arm(0.42, new THREE.Vector3(0.0, -0.07, 0.02), new THREE.Vector3(0.22, -0.72, 0.3));
+    const armL = this.armL = arm(0.4, new THREE.Vector3(-0.02, -0.03, -0.3), new THREE.Vector3(-0.2, -0.8, 0.18));
     this.rifle.add(armR, armL);
     // pisau: kepalan menggenggam gagang — punggung tangan di kanan, 4 jari melingkar di kiri, telapak di bawah, jempol di
     // atas menekan ke pelindung; pommel menyembul di belakang; manset & lengan bawah turun ke siku (kanan-bawah layar)
@@ -215,21 +229,51 @@ export class Viewmodel {
   }
 
   private key = '';
+  private meleeId: MeleeId = 'knife';
+
+  /** Senjata jarak dekat di kepalan (model, skala, titik jejak kilatan). */
+  setMelee(id: MeleeId) {
+    if (id === this.meleeId) return;
+    this.meleeId = id;
+    this.knifeMesh.geometry = meleeModel(id);
+    this.knifeMesh.scale.setScalar(MELEE_SHAPE[id].vmScale);
+  }
 
   setWeapon(id: WeaponId, scope: ScopeId) {
     if (this.key === id + scope) return;
     this.key = id + scope;
-    const m = weaponModel(id, scope === 'iron');
-    this.gun.geometry = m.geometry;
+    const m = this.model = weaponModel(id, scope === 'iron');
+    this.gun.geometry = m.vmGeometry;
+    // bagian bergerak (pompa / bolt / slide) = anak senjata di titik putarnya; dianimasikan di update()
+    this.part.visible = !!m.part;
+    if (m.part) { this.part.geometry = m.part.geometry; this.part.position.copy(m.part.pivot); this.part.rotation.set(0, 0, 0); }
     if (this.optic) { this.gun.remove(this.optic); this.optic = null; }
     this.optic = createOpticMesh(scope, true); // kaca red dot/holo bening → dunia terlihat tembus saat ADS
+    const railDy = m.opticMount.y - 0.38;
     if (this.optic) {
-      this.optic.position.set(0, 0, m.opticMount.z);
+      this.optic.position.set(0, railDy, m.opticMount.z);
       this.gun.add(this.optic);
     }
-    this.sightH = SCOPES[scope].sightHeight;
+    this.sightH = SCOPES[scope].sightHeight + (scope === 'iron' ? 0 : railDy * VM_SCALE);
     this.muzzleLocal.copy(m.muzzle).multiplyScalar(VM_SCALE);
     this.flash.position.copy(this.muzzleLocal);
+    // lengan: senjata panjang = tangan kiri di handguard / pompa model; pistol = dua tangan di gagang, lengan lurus ke depan
+    const P = V.pistolArms;
+    if (m.pistol) {
+      this.place(this.armR, P.right, P.rightDir);
+      this.place(this.armL, [m.leftHand.x * VM_SCALE, m.leftHand.y * VM_SCALE, m.leftHand.z * VM_SCALE], P.leftDir);
+    } else {
+      this.place(this.armR, [0, -0.07, 0.02], [0.22, -0.72, 0.3]);
+      this.place(this.armL, [m.leftHand.x * VM_SCALE, (m.leftHand.y + 0.0) * VM_SCALE, m.leftHand.z * VM_SCALE], [-0.2, -0.8, 0.18]);
+    }
+    this.armLRest.copy(this.armL.position);
+  }
+  private readonly armLRest = new THREE.Vector3();
+
+  /** Posisikan lengan (tangan di `hand`, lengan menjauh ke arah `dir`). */
+  private place(g: THREE.Group, hand: readonly number[], dir: readonly number[]) {
+    g.position.set(hand[0], hand[1], hand[2]);
+    g.quaternion.setFromUnitVectors(_zAx, _d.set(dir[0], dir[1], dir[2]).normalize());
   }
 
   /** Senjata terhentak turun saat mendarat (h = tinggi jatuh). */
@@ -248,6 +292,7 @@ export class Viewmodel {
 
   fire() {
     this.kick = 1;
+    this.slideT = XCFG.weapons.slideTime;
     this.flashT = XCFG.vfx.muzzleTime;
     this.flash.visible = true;
     this.flash.rotation.z = Math.random() * Math.PI;
@@ -256,8 +301,9 @@ export class Viewmodel {
   update(dt: number, s: VmState) {
     // benda di tangan (slot 1/2/3) + sprint
     const held = s.held;
-    const nadeHeld = held === 'grenade' || held === 'flash';
-    this.rifle.visible = held === 'ar'; this.knifeRig.visible = held === 'knife'; this.nadeRig.visible = nadeHeld;
+    const nadeHeld = held === 'grenade' || held === 'flash', gunHeld = held === 'ar' || held === 'pistol';
+    const pistol = gunHeld && !!this.model?.pistol;
+    this.rifle.visible = gunHeld; this.knifeRig.visible = held === 'knife'; this.nadeRig.visible = nadeHeld;
     if (nadeHeld && this.nadeMesh) { const g = held === 'flash' ? flashbangModel() : grenadeModel(); if (this.nadeMesh.geometry !== g) this.nadeMesh.geometry = g; }
     this.sprintT = damp(this.sprintT, s.sprint ? 1 : 0, 14, dt);
     // bob mengikuti irama langkah (fase PlayerController bila ada → sinkron suara langkah & ayunan kamera); memudar halus
@@ -290,18 +336,26 @@ export class Viewmodel {
     // kick: akar z +0.04, pitch +2.5°, pulih 12/s
     this.kick = damp(this.kick, 0, V.kickReturn, dt);
 
-    const a = s.ads, sp = this.sprintT * (1 - a) * (held === 'ar' ? 1 : 0.4);
-    const hx = V.hip[0], hy = V.hip[1], hz = V.hip[2];
-    let x = THREE.MathUtils.lerp(hx, 0, a), y = THREE.MathUtils.lerp(hy, -this.sightH, a), z = THREE.MathUtils.lerp(hz, V.adsZ, a);
+    const a = s.ads, sp = this.sprintT * (1 - a) * (gunHeld ? 1 : 0.4);
+    const hip = pistol ? V.pistolHip : V.hip, hx = hip[0], hy = hip[1], hz = hip[2];
+    let x = THREE.MathUtils.lerp(hx, 0, a), y = THREE.MathUtils.lerp(hy, -this.sightH, a), z = THREE.MathUtils.lerp(hz, pistol ? V.pistolAdsZ : V.adsZ, a);
     x = THREE.MathUtils.lerp(x, V.sprintPos[0], sp); y = THREE.MathUtils.lerp(y, V.sprintPos[1], sp); z = THREE.MathUtils.lerp(z, V.sprintPos[2], sp);
     let rx = D2R(V.sprintPitchDeg) * sp + D2R(V.kickPitchDeg) * this.kick * (1 - 0.6 * a);
     const ry = D2R(V.sprintYawDeg) * sp;
     let rz = 0;
-    // reload: turun 0.15 dan roll 25° pada 70% tengah durasi
-    if (s.reload >= 0) {
+    // reload: turun 0.15 dan roll 25° pada 70% tengah durasi. Shotgun (per selongsong): miring tetap selama reload, tangan kiri
+    // naik-turun memasukkan selongsong tiap siklus
+    this.shellW = damp(this.shellW, s.shell && s.reload >= 0 ? 1 : 0, 12, dt);
+    if (s.reload >= 0 && !s.shell) {
       const p = s.reload, w = p < 0.15 ? p / 0.15 : p > 0.85 ? (1 - p) / 0.15 : 1;
       y -= V.reloadDrop * w; rz = D2R(V.reloadRollDeg) * w; rx += D2R(-8) * w;
     }
+    const SH = V.shellReload, sw = this.shellW;
+    y -= SH.drop * sw; rz += D2R(SH.rollDeg) * sw; rx += D2R(SH.pitchDeg) * sw;
+    // kokang pompa / bolt: senjata sedikit miring & turun; bagian bergerak + tangan kiri (pompa) ikut
+    const cyc = gunHeld && s.cycle !== undefined && s.cycle >= 0 ? Math.sin(Math.PI * s.cycle) : 0;
+    rz += D2R(V.cycleRollDeg) * cyc; y -= V.cycleDrop * cyc;
+    this.animPart(dt, gunHeld ? s.cycle ?? -1 : -1, sw > 0.01 && s.reload >= 0 ? s.reload : -1);
     // angkat senjata setelah ganti slot (naik dari bawah layar)
     const eq = s.equip ?? 0, eqE = eq * eq * (3 - 2 * eq);
     y -= 0.42 * eqE; rx -= D2R(32) * eqE;
@@ -314,7 +368,7 @@ export class Viewmodel {
     }
     // pukulan popor: senjata disodok maju-kiri sambil diputar
     let ry2 = ry;
-    if (s.melee >= 0 && held === 'ar') {
+    if (s.melee >= 0 && gunHeld) {
       const w = Math.sin(Math.PI * Math.min(1, s.melee));
       x -= 0.16 * w; y += 0.06 * w; z -= 0.26 * w;
       rx += D2R(12) * w; ry2 += D2R(38) * w; rz -= D2R(28) * w;
@@ -325,6 +379,33 @@ export class Viewmodel {
 
     if (this.flashT > 0) { this.flashT -= dt; if (this.flashT <= 0) this.flash.visible = false; }
     this.updateTrail(dt, held === 'knife' ? s.knife ?? -1 : -1, !!s.knifeStab);
+  }
+
+  /** Bagian bergerak: slide pistol menghentak saat menembak, pompa maju-mundur (tangan kiri ikut), bolt diangkat-ditarik-didorong-
+   *  dikunci; shellP ≥ 0 = reload selongsong (tangan kiri turun ke lubang pengisi tiap siklus). */
+  private animPart(dt: number, cycle: number, shellP: number) {
+    const m = this.model, pt = m?.part;
+    this.slideT = Math.max(0, this.slideT - dt);
+    this.armL.position.copy(this.armLRest);
+    if (shellP >= 0) {
+      const k = Math.sin(Math.PI * shellP);
+      this.armL.position.y -= V.shellReload.handDrop * k; this.armL.position.z += V.shellReload.handBack * k;
+    }
+    if (!m || !pt) return;
+    this.part.position.copy(pt.pivot); this.part.rotation.set(0, 0, 0);
+    if (pt.kind === 'slide') {
+      const k = this.slideT / XCFG.weapons.slideTime;
+      if (k > 0) this.part.position.z += pt.travel * Math.sin(Math.PI * (1 - k));
+    } else if (pt.kind === 'pump' && cycle >= 0) {
+      const off = pt.travel * Math.sin(Math.PI * cycle);
+      this.part.position.z += off;
+      this.armL.position.z += off * VM_SCALE;
+    } else if (pt.kind === 'bolt' && cycle >= 0) {
+      const lift = cycle < 0.2 ? cycle / 0.2 : cycle > 0.8 ? (1 - cycle) / 0.2 : 1;
+      const back = cycle < 0.2 || cycle > 0.8 ? 0 : cycle < 0.5 ? (cycle - 0.2) / 0.3 : (0.8 - cycle) / 0.3;
+      this.part.rotation.z = V.boltLift * lift;
+      this.part.position.z += pt.travel * back;
+    }
   }
 
   /** Pisau: keyframe (knifeAnim) posisi tangan + yaw/pitch bilah (ruang kamera) + puntir; lengan bawah direntang ke bahu. */
@@ -350,8 +431,9 @@ export class Viewmodel {
       this.root.updateMatrixWorld(true);
       const m = this.knifeMesh.matrixWorld;
       this.trHead = (this.trHead + 1) % TR_N;
-      this.root.worldToLocal(this.trTip[this.trHead].copy(KNIFE_TIP).applyMatrix4(m));
-      this.root.worldToLocal(this.trMid[this.trHead].copy(KNIFE_MID).applyMatrix4(m));
+      const sh = MELEE_SHAPE[this.meleeId];
+      this.root.worldToLocal(this.trTip[this.trHead].copy(sh.tip).applyMatrix4(m));
+      this.root.worldToLocal(this.trMid[this.trHead].copy(sh.mid).applyMatrix4(m));
       this.trAge[this.trHead] = 0;
     }
     let any = false;

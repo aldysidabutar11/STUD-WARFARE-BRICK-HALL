@@ -38,10 +38,12 @@
 - Resolusi dinamis §2.3 sadar refresh layar (disetujui pengguna): ambang GDD 17.5/13 ms mengasumsikan layar 60 Hz (di 90 Hz game diam
   di 60–80 FPS dengan judder). Target = vsync × batas FPS; min/max/langkah/jeda 2 s/waktu baik 4 s tetap nilai GDD (lihat "Kehalusan frame").
 - Preset ULTRA di luar §15 (CFG.render.presets tetap verbatim): `presetOf()` di src/config/presets.ts; tipe `Preset` dilebarkan jadi interface.
+- Lempar granat jauh `CFG.grenade.overSpeed` GDD 24 → 34 u/s (disetujui pengguna 2026-11-26; lihat "Lemparan & garis lintasan").
+  Batas masak bot §11.8 2.0 → `XCFG.bots.grenadeCookMax` 2.8 s ikut menyesuaikan (rumus & konstanta lain GDD tetap).
 - Tampilan karakter = desain pengguna (Karakter/*.png, HANYA acuan; tidak dimuat game): Biru = pasukan taktis, Merah = gerilyawan,
   masing-masing pria/wanita (balok R6, src/entities/CharacterArt.ts + perkakas charKit.ts), + karakter khusus Venny (dua kostum) =
   model realistis ber-skin (src/entities/venny/). Semua 100% prosedural (lihat "Fitur pasca-MVP").
-- Multi-map (Brick Hall + Steel Yard, lihat "Multi-map & Steel Yard"): modul game membaca data map HANYA lewat `currentMap()`
+- Multi-map (Brick Hall + Steel Yard + Boston, lihat "Multi-map & Steel Yard" & "Boston"): modul game membaca data map HANYA lewat `currentMap()`
   (src/world/maps/registry.ts; Physics lewat maps/current.ts agar tidak impor melingkar) — jangan impor data Brick Hall langsung.
   Steel Yard = layout ORISINAL (gaya "halaman kontainer gurun" hanya inspirasi, bukan replika map game lain); peti 2.8 u, bukan 3.0
   dari brief (3.0 jatuh di pita cover terlarang GDD §4.4 2.95–3.75; tumpukan 2 = 5.6).
@@ -162,8 +164,8 @@
       mati lunglai, online (teman pilih Venny → host melihat Venny), 0 error konsol.
 - Aturan Eliminasi: skor tim = ronde dimenangkan (kill tidak menambah skor tim); ronde 2:00, waktu habis → jumlah hidup, lalu total HP.
 - Slot senjata + pisau + buang/ambil senjata (permintaan pengguna, disetujui; angka di XCFG.knife / XCFG.drop):
-  - Tombol: 1 senjata utama · 2 pisau · 3 granat K-400 · Q senjata sebelumnya · scroll siklus · G buang senjata utama · E ambil/tukar.
-    Menyimpang dari GDD: granat G/4 (§8) → 3; tukar bahu Q (§9) → X. Waktu angkat GDD tetap (senapan 0.55 s, granat 0.35 s, setelah
+  - Tombol (kini, lihat "Ekspansi senjata"): 1 senjata utama · 2 pistol · 3 pisau · 4 granat K-400 · 5 flashbang · Q senjata sebelumnya
+    · scroll siklus · G buang senjata utama · E ambil/tukar. Menyimpang dari GDD: granat G/4 (§8) → 4 (dulu 3); tukar bahu Q (§9) → X. Waktu angkat GDD tetap (senapan 0.55 s, granat 0.35 s, setelah
     lempar 0.40 s); pisau 0.30 s. Ganti senjata membatalkan reload sebelum komit (§5.1); tetap terkunci selama memasak granat.
   - Logika murni src/combat/Slots.ts (quickSwitchTarget/cycleTarget/returnSlot/heldOf/canPickUp). WeaponSystem.slot 'ar'|'knife'|'grenade'
     + prevSlot + hasPrimary + equipTotal; granat kembali ke slot sebelumnya (GrenadeInput.toSlot). Setelan tombol bermigrasi
@@ -186,9 +188,10 @@
   - Buang/ambil: src/combat/WeaponDrops.ts — Rapier dynamic + CCD, grup DEBRIS (tidak menahan peluru/karakter), keadaan senjata ikut
     (jenis, optik, isi, cadangan, mode). Hanya tim sendiri (`canPickUp`); tukar = senjata sekarang ikut dibuang. Respawn kembali ke loadout
     pilihan (pendingLoadout diisi saat buang/ambil pertama). Maks 6, hilang 60 s, dibersihkan tiap ronde / keluar ke menu.
-- Flashbang (permintaan pengguna 2026-11-25; bukan GDD; angka di XCFG.flash): tombol 4 (gamepad: RB dua kali cepat ≤ 0.35 s; RB sekali
+- Flashbang (permintaan pengguna 2026-11-25; bukan GDD; angka di XCFG.flash): tombol 5 (dulu 4; gamepad: RB dua kali cepat ≤ 0.35 s; RB sekali
   = K-400), 1 per nyawa, lempar/masak/fisika sama dengan K-400 (CFG.grenade), sumbu 1.6 s, TANPA damage. Membutakan SEMUA yang melihat
-  titik ledak — termasuk rekan & pelempar (keputusan pengguna; padahal friendly fire K-400 OFF). Logika murni `combat/Flash.ts`:
+  titik ledak — termasuk rekan & pelempar (keputusan pengguna; padahal friendly fire K-400 OFF; sejak 2026-11-26 pelempar × 0.5 =
+  `XCFG.flash.ownerMult` lewat `ownerFlash()`, kecuali meledak di tangan — event 'flash:explode'.inHand / pesan 'flashbang'.h). Logika murni `combat/Flash.ts`:
   kekuatan s = arah (cos ≥ 0.75 penuh → membelakangi 0.15 pantulan) × jarak (penuh ≤ 8 u → 0 di 45 u), 0 bila LOS terhalang;
   s ≥ 0.5 → putih total 1.5–3 s + pulih (1 − u)^1.5 1.5–2 s = total 3–5 s (angka pengguna); 0.08–0.5 → silau sebagian; telinga
   berdenging 3 s × s. `GrenadeManager` menangani 2 jenis (Slot 'flash', `Entity.flashes/nadeKind/blindX/blindAt/flashedBy/flashS`,
@@ -199,12 +202,41 @@
   host `SaveEnt.flashes` (host lama → 1). Bot (`TacticalBot`): buta → perceive tidak melihat apa pun (≥ 0.9 putih; selama pulih jarak
   pandang × (1 − putih)) + kaget + EVADE menjauhi titik ledak selama putih total; sadar flash (lihat / dengar pantulan) & memalingkan
   muka (kekuatan × 0.25) dengan peluang Mudah/Normal/Sulit 0.1/0.35/0.65; pelempar selalu memalingkan muka; memakai flash sebelum
-  maju (wantGrenade: flash dulu dengan peluang 0.3/0.5/0.7, sasaran 6–26 u, tidak ada rekan ≤ 10 u dari titik ledak, dimasak agar
+  maju (wantGrenade: flash dulu dengan peluang 0.3/0.5/0.7, sasaran 6–34 u (dulu 26), tidak ada rekan ≤ 10 u dari titik ledak, dimasak agar
   meledak di udara dekat sasaran). Assist flash (+50, "Assist flash"): korban dibutakan (s ≥ 0.3) musuhnya ≤ 3 s sebelum mati / masih
   silau. VFX `Vfx.flashBurst`, suara `R.flashBang`, radar titik putih tanpa lingkaran ledak, tanpa ikon bahaya HUD. Terukur (browser):
   lempar ke depan → putih total 2.2 s, jernih 4.0 s; bot musuh & setim di depan flash: putih 3 s, EVADE, tidak melihat 1.5 s
   kemudian; 60 s TDM: bot melempar 1 flash + 3 K-400; online: flash di depan kamera teman → putih penuh di klien, lemparan teman
   (tombol 4 lewat jaringan) tersinkron (model, stok), putih 2.9 s / jernih 4.9 s; 0 error. Flash terhalang tembok tidak membutakan.
+- Lemparan & garis lintasan (laporan pengguna 2026-11-26: "lempar K-400/flashbang terlalu dekat, seperti kurang tenaga, kadang kita
+  masih kena efeknya"; disetujui 34 u/s + garis lintasan + pelempar flash × 0.5):
+  - Akar masalah (terukur, Rapier, lantai datar, mata 4.4): di 24 u/s granat jatuh ±½ jarak crosshair (bidik lantai 20 u → 12.6 u, 30 u →
+    14.3 u), maks ±26 u (≈ 9.5 m); flash meledak di 24–28 u = di dalam jarak buta total pelempar yang masih menatap (< 26.5 u); tempo
+    gerak ×1.35 (SY ×1.5) membuat lemparan relatif lemah (GDD: lempar 2.8× sprint, jadi 2.1×). Kini `overSpeed` 34: lurus ±28 u, bidik
+    lantai 20 u → ±16.5 u, maks ±47 u; flash meledak ±38–42 u → pelempar yang menatap hanya silau sebagian. Gelinding tetap 11 u/s.
+  - `combat/throwArc.ts`: `throwLaunch` (titik lepas & kecepatan awal — SATU rumus untuk `GrenadeManager.throw` lewat `launchOf` DAN
+    garis), `nadeStep` (identik body Rapier: gravitasi 4 sub-langkah (`numSolverIterations` bawaan) lalu redaman sekali di akhir langkah —
+    BUKAN Euler satu langkah; selisih ±0.2 u / 1.5 s), `traceThrow` (sapuan bola jari-jari granat per tali busur 4 langkah terhadap
+    STATIC + PROP + BARRIER, kapsul karakter diabaikan; TOI sapuan Rapier konservatif ±0.05 u pada lintasan miring → dimajukan ke bidang
+    sentuh; akhir 'hit' (titik & normal) / 'fuse' (meledak di udara di langkah ⌈sisa/dt⌉ − 1)).
+  - Tampilan `vfx/ThrowArcView.ts` (Game.updateThrowArc, hanya pemain lokal saat READY = lempar jauh / COOKING = jenis yang dimasak,
+    sisa sumbu ikut; titik lepas dari posisi render): titik InstancedMesh berukuran layar ±tetap (jari-jari dotAng × jarak) + cincin di
+    titik jatuh pertama searah normal / oktahedron bila meledak di udara; lapis "tembus" tanpa uji kedalaman opacity × 0.35 (tertutup
+    badan sendiri di TPS / peti saat lambung); warna K-400 0xffb35c / flash 0xd2ebff; varian shader dikompilasi di warmup
+    (`prepareWarm`). Setelan `nadeArc` (Pengaturan → HUD, bawaan ON). Angka di XCFG.throwArc.
+  - Bot: rumus balistik §11.8 membaca overSpeed (otomatis). Batas masak 2.0 → `grenadeCookMax` 2.8: di 34 u/s granat tiba cepat &
+    menggelinding melewati sasaran (terukur 3 map, 8–24 u, 220 pasang: kena 77–81% → 40–60%, damage rata 62–72 → 37–55); 2.8 = meledak
+    ±0.4 s setelah tiba (maksud GDD) → kena 91–98%, damage rata 71–82. Sasaran K-400 8–24 → 8–32 u, flash 6–26 → 6–34 u.
+    Termasuk kapsul pelempar (granat memantul balik): lemparan dekat 8–14 u self-damage ≥ 100 24–28% (lama) → 15–21% (baru), bunuh
+    musuh 21–29% → 58–67%. Bot bunuh diri granat = masalah LAMA (GDD: sasaran min 8 u < radius ledak 12 u) — tidak diubah.
+  - Terukur (browser, Latihan): lintasan body = garis (galat 0.000 u per langkah) di SY/BH/Boston, titik pantul sungguhan 0.05–0.43 u dari
+    prediksi (beda > 1 u hanya bila menabrak dummy — karakter sengaja diabaikan); flash pelempar 0.645 → 0.323 (silau sebagian), meledak di
+    tangan penuh; online: garis tampil di klien, granat yang diluncurkan host jatuh 0.01–0.03 u dari prediksi klien, flash klien ke diri
+    × 0.5; hitung garis median 0.1 ms / p95 0.2 ms per frame, frame MEDIUM Boston 11.1 ms (p95 11.3) sama dengan pegang senapan, draw +2;
+    TDM bot 60 s: BH 24 / SY 29 / Boston 25 kill, bot melempar 2–3 K-400 + 2–10 flash, 0 macet, 0 error.
+  - Catatan: dari setengah map sendiri granat kini bisa (lambung tepat + menggelinding) sampai ke slot spawn BAWAH Brick Hall lewat
+    pintu (8 slot, dulu 2; ±2% lemparan kipas) & sudut spawn Steel Yard dari dekat garis tengah (4 slot, dulu 0; 0.5%); Boston 0
+    (ruang spawn tertutup). Perlindungan spawn 2 s tetap. Belum dimitigasi (keputusan pengguna).
 - Grafik realistis (permintaan pengguna: "lebih realistis, detail, pencahayaan lebih real" — gaya blocky GDD tetap; nilai di XCFG.gfx):
   - Semua preset: tone mapping ACES + eksposur (Engine), kabut FogExp2 tipis, cahaya "dipanggang" saat loading (src/world/LightBake.ts:
     grid okupansi 0.5 u → AO per verteks; medan cahaya langit dari skylight & jendela + pantul hangat dari bercak matahari, jarak
@@ -558,6 +590,57 @@
     matahari. Game.captureEnvironment mengompilasi tiap program 2× (varian render target + layar) — ±ratusan ms saat muat, semua map.
     loadMap dua kali berturut-turut TANPA frame di antaranya → peringatan WebGL "Program object expected" (alur normal selalu ada frame).
 
+- Ekspansi senjata (permintaan pengguna 2026-11-25; dokumen "Weapon Expansion Spec" buatan pengguna — IDE TAMBAHAN SENJATA/, lokal saja,
+  jangan di-commit; disetujui "gas kerjakan semua": batch 1–3 + keputusan tombol/pisau/bot di bawah). Bukan GDD: angka di
+  `src/config/weaponsExtra.ts` (X_WEAPONS, MELEES); 10 AR GDD di weaponsData.ts tetap verbatim (WEAPONS = GDD_AR + X_WEAPONS).
+  - 30 senjata tambahan: SMG 6 (MP5, Vector, P90, UMP45, MP7, UZI), shotgun 5 (M870, SPAS-12, Benelli M4/m1014, Saiga-12/s12k, S686),
+    sniper 4 (AWM, M200, Kar98k, M82) + DMR 2 (SVD, Mini-14), LMG 3 (M249, DP-28, RPK), pistol 5 (Desert Eagle, Glock 18C, USP-S, M1911, M9),
+    AR 5 (FAMAS, AS VAL, Honey Badger/badger, FN FAL, Galil ACE) + jarak dekat 4 (pisau komando = pisau lama, karambit, kukri, tomahawk).
+  - WeaponDef diperluas (field opsional, tanpa nilai = AR GDD): cls, pellets, headMult (shotgun 1.5), spreadHip/Ads, falloff [mulai, rentang,
+    min], moveMult, equipTime (SMG 0.45, LMG 0.75, pistol 0.23–0.30), sprintToFire (SMG 0.08), adsTime (sniper), reload 'shell' + shellTime,
+    action 'pump'|'bolt'|'slide', crouchRecoil (LMG 0.60), suppressed/hearRadius, sound (profil sintesis), scopes/defScope, role.
+    Nilai efektif lewat `combat/weaponStats.ts`; `Damage.falloff(d, w)` / `damage()` (headMult), `Recoil.stanceMult(.., w)`.
+  - Perbaikan atas dokumen (disetujui): (1) tombol 1 utama · 2 pistol · 3 pisau · 4 K-400 · 5 flashbang (Bindings v3 + migrasi
+    v2 → v3: hanya tombol yang masih bawaan digeser); (2) pisau komando tetap angka lama XCFG.knife (dokumen 45/75, belakang 150 tidak
+    dipakai); (3) pola pellet shotgun = angka dokumen × 3 (hip) / × 3.5 (ADS) — angka mentah terlalu sempit (Remington one-shot ±17 u,
+    SPAS ±21 u, padahal maksud dokumen ±10 u / 13–14 u); simulasi (applySpread asli + siluet R6) dikunci di tests/weaponsX.test.ts;
+    (4) angka teks dokumen yang meleset hanya deskripsi (DP-28 one-tap ±66 u, Mini-14 ±84 u; kecepatan dokumen memakai 8.5 u/s).
+  - WeaponSystem: DUA senjata api (`Gun` primary/secondary: def, scope, mode, isi, cadangan, nextShot & lastShot per senjata → ganti ke pistol
+    tidak mempercepat kokang bolt); getter def/ammo/reserve/modeIdx = senjata aktif (slot 'pistol' → secondary); `holdingGun`; reload
+    selongsong (shellStart 0.35 s, tiap shellTime, menembak saat reload → berhenti, tembak setelah shellInterrupt 0.12 s; bus 'reload'
+    stage 0/1 per selongsong/2); kokang pump/bolt (`Gun.cycleProgress`, bus 'cycle'); `adsP` progres optik → sniper/DMR spread
+    hip→ADS smoothstep (quickscope butuh waktu buka scope); ADS di udara tidak pernah lebih rapat dari ADS diam (shotgun).
+    `refill()` → kedua senjata penuh, prevSlot 'pistol' (Q = utama ↔ pistol). Slot 'pistol' (Slots.ts: SLOT_ORDER 5, isGunSlot,
+    returnSlot → pistol bila utama dibuang; buang senjata → pegang pistol).
+  - Shotgun (Ballistics.fireOne): pusat pola = crosshair, tiap pellet raycast sendiri (seed sama → prediksi klien = host), damage per korban
+    dijumlah → SATU applyDamage/hitmarker (bagian = bagian dengan damage terbesar); tracer 1/3 pellet; ShotFx per pellet dengan bit
+    `SHOT_PELLET` (klien: tanpa kilat/suara/selongsong untuk pellet 2+). XCFG.net.maxShotFx 24 → 48.
+  - Loadout = {weapon, scope, pistol, pscope, melee} (`combat/Loadout.ts`: cleanLoadout memvalidasi kelas — pistol tidak bisa jadi senjata
+    utama — optik (scopes/defScope), melee; loadoutOf, sameLoadout). Ikut di settings, room (LobbyPlayer), hello/act, 'start', 'spawn'
+    (p/ps/m), cadangan pindah host (SaveEnt pistol/pscope/ammo2/reserve2/mode2/melee), Resume. Protokol: I.SLOT_PISTOL (bit terakhir
+    u16), slot snapshot 3 bit (SLOTS ar/knife/grenade/flash/pistol — dulu 'flash' tidak tercatat → boneka tampak memegang senapan),
+    OwnState ammo2/reserve2/mode2, MiscFx 8 = kokang.
+  - Jarak dekat (`MELEES`): ringan = 'slash', berat = 'stab' (Melee.kindSpec per entitas; jangkauan, lari, angkat per senjata; backstab
+    × dokumen); KillWeapon = id melee (killfeed nama, medali AHLI PISAU semua melee).
+  - Tampilan: 30 model prosedural (`combat/weaponModelsX.ts`, perkakas `combat/modelKit.ts`: Builder, irons(), rail(), finish() →
+    WeaponModel {geometry lengkap, vmGeometry tanpa bagian bergerak, part pump/bolt/slide + pivot, leftHand, pistol}); aturan sama
+    dengan AR: sumbu laras y 0.28, garis bidik besi y IRON_Y, rel optik y 0.38 (sightline diuji untuk semua senjata × iron/red dot/holo);
+    model jarak dekat diekstrusi (meleeModel, MELEE_SHAPE tip/mid/vmScale). Viewmodel: lengan kiri di titik model, pistol dua tangan
+    (XCFG.viewmodel.pistolHip/pistolAdsZ/pistolArms), animasi pompa (tangan kiri ikut), bolt (angkat-tarik-dorong-kunci), slide menghentak,
+    reload selongsong (miring + tangan kiri tiap selongsong). TPS: pistol dua tangan (XCFG.rig.pistolCrossDeg), Venny mode 'pistol'
+    (IK dua tangan, PISTOL_REACH) + tangan kiri senjata panjang dari leftHand model (userData.custom). Killcam: ghost pistol + melee.
+  - Suara: profil sintesis per kaliber (Recipes.gunshot: 556/762/9mm/45/57/12ga/magnum/sniper/heavy/suppressed), pumpAction, boltAction,
+    shellInsert. Peredam: radius dengar bot 12/15/16 u, tidak tampil di radar (Minimap), kilat moncong kecil tanpa cahaya.
+  - Loadout UI: tab kelas (AR/SMG/Shotgun/Sniper/DMR/LMG), kartu senjata (kaliber, mode, isi, peran, bar Damage/RPM/Kontrol/Gerak/Jarak),
+    optik (fitScope), baris pistol + optik, baris jarak dekat; HUD bar slot 5 (nama pistol & melee), prompt "[2] pistol" saat amunisi habis.
+  - Bot: XCFG.bots.weaponMix AR 0.6 / SMG 0.25 / LMG 0.15 (AR GDD + AR tambahan); shotgun & sniper/DMR tidak dipakai bot (butuh AI khusus).
+    Pendengaran bot `weaponStats.hearRadiusOf` (5.56 35, 7.62/12ga/.50AE 50, sniper 60, peredam 12–16).
+  - Terukur (browser, Latihan BH jembatan Barat): M416 41, MP5 34, Vector 26, P90 26, UMP45 37, MP7 29, UZI 25, FAMAS 35, AS VAL 42,
+    Badger 40, Galil 45, USP-S 36, Glock 22, M1911 42, M9 30, Deagle 56 per peluru; shotgun ≤ 8 u one-shot, M870 di 20 u 31; AWM one-shot;
+    reload selongsong & interupsi; pisau 70 / karambit 65 / kukri 90 / tomahawk mati (berat). Online 2 jendela: loadout (pistol, optik,
+    melee) sampai host, tombol 2/3 tersinkron dua arah (boneka memegang pistol), shotgun teman & reload selongsong dihitung host, isi =
+    host. TDM bot 45 s BH & SY (AR/SMG/LMG campur): 20–22 kill, 0 error konsol. Skrip lokal: scratchpad/pw/weap_*.js.
+
 - Bot manusiawi (permintaan pengguna 2026-11-25: "bot kurang realistis", ide dari obrolan Google AI mode; disetujui "gas kerjakan semua"
   untuk 3 paket bidikan / tempur / patroli & tim). Tabel kesulitan GDD §11.5 TIDAK diubah; semua angka baru di `XCFG.bots.human`
   (+ `human.diff` per kesulitan). FSM GDD §11.2 tetap, ditambah state `EVADE`.
@@ -601,9 +684,45 @@
   - Bila pengguna merasa bot terlalu tajam: turunkan `gateIntent` (≤ 0.4 = mendekati perilaku lama, akurasi naik lagi ±60%) atau
     naikkan `aimLag`; nilai GDD §11.5 tetap perlu persetujuan.
 
+- Map Boston (permintaan pengguna 2026-11-26; dokumen pengguna "IDE MAP BARU/Stud Warfare — Blueprint Map Boston.pdf" + 4 gambar Gemini,
+  lokal saja, jangan di-commit; adaptasi lantai 3 & 4 kantor pengguna sendiri — layout orisinal, bukan replika map game lain):
+  - `src/world/maps/boston/`: `layout.ts` (data ditulis dalam koordinat DOKUMEN — Utara = +Z, Biru L4 di Utara — lalu DIPUTAR 180°
+    `rot(x, z) = (−x, −z)` agar Biru di Z negatif; putaran, bukan cermin, menjaga arah tangga L), `nav.ts` (graf asimetris, 99 node /
+    134 edge / 1 drop, lane XCFG.bots.lanesBoston veranda .35 / lounge .30 / flank .20 / sofa .15 = angka dokumen, rute S/N terpisah),
+    `colliders.ts` (balok + ramp convexHull + pagar miring + pembatas BARRIER), `build.ts` (Geo Steel Yard per bucket → 16 bucket =
+    16 draw call statis; bake INDOOR: jendela L3 + sisi teras L4 + lampu plafon), `visual/` (textures: tegel putih, tegel motif vintage
+    bintang-bunga #C8BEB0/#5E574F, karpet, plester, marmer, loker motif wajik, krey bambu ber-alpha, kain, panorama kota; materials;
+    emit: semua rupa dari gaya balok 'o_*' + tangga, lampu, 4 cincin tanaman gantung, teralis & krey Veranda, papan "BOSTON", aksen tim,
+    fasad luar, silinder latar kota).
+  - Penyesuaian atas dokumen (dokumen sendiri meminta diperbaiki): Tangga Cokelat digeser 1 u ke Utara (koridor kaki tangga 2.2 → 3.2 u);
+    node dokumen L3_GL_N_W/N_E jatuh DI DALAM meja → graf dibuat ulang (semua edge lolos sapuan kapsul 0.85 u + raycast lutut/dada/kepala);
+    barikade spawn diatur ulang sampai 0 garis pandang dari node luar ke 20 slot (Biru: barikade sepanjang kaca Timur = "kantong" pintu
+    Veranda, barikade di depan pintu Selatan & Barat; Merah: garis barikade utuh z −24…−25.5 + lemari di pintu samping); 10 slot/tim
+    (dokumen 5); kolom putih L3, resepsionis, pot, meja kerja Ruang Kaca, pantry Barat, kios & pot Veranda, ruang utilitas tertutup di
+    ujung koridor Barat; cincin tanaman ke-2 digeser & diperkecil (menembus kolom); hemisfer tanah #B9AD9A (dokumen #5A4634 membuat
+    plafon cokelat gelap).
+  - Infrastruktur baru (umum): `Stair` arah X + tinggi kaki/puncak (`alongX`, `yFoot/yTop`, `stairFrame`, `stairHeightAt`) dipakai
+    LightBake/Minimap/MapThumb; grup tabrakan `BARRIER` (menahan karakter/granat/benda lepas, peluru & LOS tembus — pagar teras);
+    permukaan `'glass'` (SURFACES[5], langkah & tumbukan berdenting); NavGraph asimetris (`NavTemplate.asym.side`) + edge bergerbang
+    (`setGate`, dilewati `validate`); LightBake indoor `lamps` + `windowSun` + kekuatan jendela `v`; `MapDef.breakables` →
+    `world/Breakables.ts` (host/offline menghitung HP; `Ballistics` → `bulletHit`, K-400 → `explosion` (titik terdekat panel, LOS,
+    ≤ jari-jari ledak); pecah = collider.setEnabled(false), mesh hilang, gerbang nav, serpihan `vfx.chips`, `vfx.clearDecalsIn`, event
+    'glass:break' → suara `R.glassBreak` & host `{e:'glass', i}`; ronde/match baru → reset; `MatchSave.glass` (opsional, divalidasi)
+    + `applySaveEntities`); `MapDef.dropSpec` (TacticalBot: lompat drop per balok pendaratan, BH tetap rak A/B); `MapDef.radarFloors`
+    (Minimap satu gambar per lantai, dipilih dari tinggi fokus); `MapDef.props.items` → Props multi-jenis (`world/propKinds.ts`:
+    laptop/tumbler/kursi; satu InstancedMesh per jenis, buku Brick Hall identik); `mapFacts` tidak menghitung bordes (Y 5) sebagai lantai.
+  - Terukur (Playwright, Iris Xe): muat ±1.2 s (bake 80 ms); 52k segitiga statis, 130 collider; MEDIUM TDM 11.1 ms (p95 12.1), draw call
+    rata 106 / maks 130, segitiga maks 109k; HIGH 11.2 ms (resolusi dinamis 0.9, draw call ±208); bot TDM 60 s: 25 kill (12–13),
+    0 macet, 0 keluar map, pindah lantai lewat kedua tangga; drop bot: lompat pagar void (puncak y 11.4) → kabinet y 4 → lantai, HP 100;
+    kaca: 2 peluru M416 → pecah + gerbang g2, granat dekat → pecah, reset ronde → utuh; online 2 jendela: room map Boston → klien
+    preload, kaca pecah di host → pecah di klien (collider mati), cadangan `glass: [1]`; menu: kartu Boston + denah mini; 0 error konsol.
+    Skrip lokal (scratchpad, bisa hilang): pw/bos_look.js, bos_bots.js, bos_glass.js, bos_drop.js, bos_perf.js, bos_online.js, bos_menu.js.
+  - Belum: bot tidak menembak kaca dengan sengaja untuk membuka jalan (dokumen opsional); krey bambu hanya visual (tanpa collider
+    sama sekali — sesuai dokumen "peluru tembus").
+
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 315 test Vitest / 25 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 460 test Vitest / 28 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -613,8 +732,13 @@
   tests/botTactics.test.ts: cover, posisi tempur, kabur granat di collider Rapier SY & BH), kotak hitam & sebab sesi berakhir
   (tests/blackbox.test.ts), pintasan browser saat bermain (tests/input.test.ts), pindah host / cadangan / klaim / tiket
   (tests/migration.test.ts), chat teks / tombol chat / allTalk (tests/chat.test.ts), voice: aturan dengar, kurva jarak, paket, routing
-  host (tests/voice.test.ts), flashbang: kekuatan/durasi/slot 4/perintah/cadangan (tests/flash.test.ts), karakter Venny: varian di settings/room/'start'/
-  cadangan, bot tanpa Venny (tests/variants.test.ts)) hijau;
+  host (tests/voice.test.ts), Boston (tests/boston.test.ts: denah & pita tinggi cover, spawn 10/tim tanpa garis pandang dari luar,
+  nav asimetris + gerbang kaca + validate, tangga/ramp Rapier, keseimbangan jarak kontak, drop aman, permukaan, 64 benda kantor,
+  runtime Breakables, cadangan kaca), flashbang: kekuatan/durasi/slot 4/perintah/cadangan (tests/flash.test.ts), karakter Venny: varian di settings/room/'start'/
+  cadangan, bot tanpa Venny (tests/variants.test.ts), ekspansi senjata: angka dokumen batch 1–3, kalibrasi pola pellet, reload selongsong,
+  bolt, dua senjata api, migrasi tombol v3, loadout/protokol, garis bidik 30 model, jarak dekat (tests/weaponsX.test.ts), lemparan 34 u/s & garis
+  lintasan = body Rapier (lantai/dinding/grup tabrakan/sumbu habis/jarak lempar/rumus balistik bot), flash pelempar × 0.5, setelan nadeArc
+  (tests/throw.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

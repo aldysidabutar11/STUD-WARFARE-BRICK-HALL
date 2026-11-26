@@ -1,12 +1,13 @@
 // src/core/EventBus.ts — event bus bertipe (GDD §2.6)
 import type * as THREE from 'three';
 import type { WeaponId } from '../config/weaponsData';
+import type { MeleeId } from '../config/weaponsExtra';
 
 export type HitPart = 'head' | 'upper' | 'lower' | 'limb';
-/** Material permukaan (langkah kaki, tumbukan peluru, pantulan granat). sand/metal: map luar ruang (Steel Yard). */
-export type SurfaceMaterial = 'wood' | 'tile' | 'carpet' | 'sand' | 'metal';
+/** Material permukaan (langkah kaki, tumbukan peluru, pantulan granat). sand/metal: map luar ruang (Steel Yard); glass: Boston. */
+export type SurfaceMaterial = 'wood' | 'tile' | 'carpet' | 'sand' | 'metal' | 'glass';
 export type MatchStateName = 'MENU' | 'LOADOUT' | 'COUNTDOWN' | 'PLAYING' | 'ROUND_END' | 'ENDED' | 'RESULTS';
-export type KillWeapon = WeaponId | 'k400' | 'fall' | 'melee' | 'knife';
+export type KillWeapon = WeaponId | 'k400' | 'fall' | 'melee' | MeleeId;
 /** Jenis serangan jarak dekat: pukul popor (F) atau pisau (tebas/tusuk). */
 export type MeleeKind = 'butt' | 'slash' | 'stab';
 
@@ -25,12 +26,17 @@ export interface GameEvents {
   'weapon:drop': { entityId: number; position: THREE.Vector3 };
   'weapon:pickup': { entityId: number; weaponId: WeaponId };
   'grenade:explode': { position: THREE.Vector3; ownerId: number };
-  'flash:explode': { position: THREE.Vector3; ownerId: number };
+  'flash:explode': { position: THREE.Vector3; ownerId: number; inHand?: boolean };
+  /** Panel kaca destruktibel pecah (Boston). index = urutan MapDef.breakables. */
+  'glass:break': { index: number; position: THREE.Vector3 };
   'grenade:bounce': { position: THREE.Vector3; speed: number; material: SurfaceMaterial };
   footstep: { entityId: number; material: SurfaceMaterial; position: THREE.Vector3; loud: boolean; land?: boolean };
   'match:state': { state: MatchStateName; scores: [number, number]; timeLeft: number };
   impact: { position: THREE.Vector3; normal: THREE.Vector3; material: SurfaceMaterial | 'book' | 'body' };
+  /** Magazen: 3 tahap bunyi. Reload selongsong (shotgun): 0 mulai, 1 tiap selongsong masuk, 2 selesai. */
   reload: { entityId: number; stage: 0 | 1 | 2 };
+  /** Kokang pompa / bolt setelah tembakan (bunyi & animasi). */
+  cycle: { entityId: number; kind: 'pump' | 'bolt' };
   dryfire: { entityId: number };
   pin: { entityId: number };
 }

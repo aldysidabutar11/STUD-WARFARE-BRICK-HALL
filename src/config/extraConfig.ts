@@ -20,6 +20,8 @@ export const XCFG = {
     leg: { size: [1.0, 1.8, 1.0] },
     hipsY: 1.8, chestY: 0.8, upperY: 0.6, neckY: 1.2, headY: 0.6,
     shoulderX: 1.5, shoulderY: 1.2, armY: -1.0, hipX: 0.5, legY: -0.9, lowerY: 0.4,
+    /** Pose pistol dua tangan (TPS): lengan kanan / kiri berputar ke dalam (derajat) agar tangan bertemu di tengah. */
+    pistolCrossDeg: [12, 30],
     weaponMount: [0, -0.9, -0.1],
     // Tampilan karakter = desain pengguna (Karakter/*.png, hanya acuan; dibangun prosedural di CharacterArt.ts).
     // Biru = pasukan taktis, Merah = gerilyawan; masing-masing varian pria/wanita. (Dulu: skema warna klasik §3.1.)
@@ -54,6 +56,11 @@ export const XCFG = {
   // §9.1 viewmodel
   viewmodel: {
     hip: [0.32, -0.30, -0.62], adsZ: -0.45,
+    // ekspansi senjata: pistol (posisi pinggul + lengan dua tangan), reload selongsong, kokang pompa/bolt
+    pistolHip: [0.2, -0.24, -0.6], pistolAdsZ: -0.58,
+    pistolArms: { right: [0.0, -0.065, 0.02], rightDir: [0.1, -0.85, 0.5], leftDir: [-0.38, -0.8, 0.42] },
+    shellReload: { drop: 0.05, rollDeg: 18, pitchDeg: 6, handDrop: 0.05, handBack: 0.03 },
+    cycleRollDeg: 7, cycleDrop: 0.012, boltLift: 1.15,
     sprintYawDeg: 35, sprintPitchDeg: -20, sprintPos: [0.2, -0.4, -0.5],
     reloadDrop: 0.15, reloadRollDeg: 25,
     bobX: 0.015, bobY: 0.010, bobSprintMult: 1.6,
@@ -81,6 +88,16 @@ export const XCFG = {
   // §8 code — titik lepas granat
   grenadeThrow: { fpsFwd: 0.6, fpsRight: 0.25, fpsDown: 0.15, underUp: 1.5, underFwd: 0.6, underPitchAdd: 2,
     bounceDot: 0.7, bounceMinSpeed: 1.5 },
+  // garis lintasan benda lempar (permintaan pengguna 2026-11-26; Pengaturan → HUD `nadeArc`; vfx/ThrowArcView): titik mulai `skip` u dari
+  // titik lepas, jarak antar titik spacing + spacingGrow × jarak kamera, jari-jari dotAng × jarak kamera (ukuran di layar tetap ±3 px,
+  // dijepit dotMin…dotMax u); cincin di titik jatuh pertama (jari-jari × (1 + ringGrow × jarak))
+  throwArc: {
+    maxDots: 110, skip: 1.8, spacing: 0.45, spacingGrow: 0.035, dotAng: 0.0078, dotMin: 0.012, dotMax: 0.35, dotOpacity: 0.9,
+    ghost: 0.35,          // lapis "tembus" (tanpa uji kedalaman): opacity × ghost — bagian tertutup badan sendiri / peti tetap samar
+    ringInner: 0.42, ringOuter: 0.6, ringOpacity: 0.9, discOpacity: 0.22, burstSize: 0.3, ringGrow: 0.02, lift: 0.04,
+    pulse: 0.06, pulseHz: 1.2,
+    colorFrag: 0xffb35c, colorFlash: 0xd2ebff,
+  },
   // ── flashbang (permintaan pengguna 2026-11-25; bukan GDD): tombol 4, 1 per nyawa, tanpa damage, membutakan SEMUA yang melihat
   //    (termasuk rekan & pelempar). Lempar/masak sama dengan K-400 (fisika CFG.grenade). Durasi dari pengguna: putih total 1.5–3 s,
   //    total sampai jernih 3–5 s.
@@ -101,10 +118,13 @@ export const XCFG = {
     assistWindow: 3,      // detik: musuh yang dibutakan (s ≥ assistMin) terbunuh rekan pelempar → assist flash
     assistMin: 0.3,
     lookAway: 0.25,       // bot yang sempat memalingkan muka: kekuatan × 0.25
+    // pelempar sendiri: × 0.5 (tahu kapan meledak — permintaan pengguna 2026-11-26, adil dengan bot yang selalu memalingkan muka);
+    // meledak di tangan (dimasak kelamaan) tetap penuh
+    ownerMult: 0.5,
     // bot: peluang sadar & memalingkan muka / peluang memakai flash saat situasinya cocok (Mudah / Normal / Sulit)
     botNotice: { easy: 0.1, normal: 0.35, hard: 0.65 },
     botUse: { easy: 0.3, normal: 0.5, hard: 0.7 },
-    botMin: 6, botMax: 26, botAllyClear: 10,   // jarak sasaran & rekan tidak boleh terlalu dekat titik ledak
+    botMin: 6, botMax: 34, botAllyClear: 10,   // jarak sasaran (maks 26 → 34 u sejak lempar 34 u/s) & rekan tidak boleh dekat titik ledak
     burst: 0.18,          // detik kilatan VFX
     padDoubleTap: 0.35,   // detik: gamepad RB dua kali cepat = flashbang (RB sekali = K-400)
   },
@@ -125,7 +145,11 @@ export const XCFG = {
       normal: { reaction: 0.45, fov: 110, sight: 65, e0: 3.2, eMin: 0.8,  tau: 0.9, turnRate: 400, comp: 0.60, headBias: 0.12, burst: [4, 7],  grenade: 0.5, dropDown: 0 },
       hard:   { reaction: 0.28, fov: 120, sight: 85, e0: 2.0, eMin: 0.35, tau: 0.6, turnRate: 600, comp: 0.85, headBias: 0.25, burst: [5, 10], grenade: 0.8, dropDown: 0.2 },
     },
-    hearing: { shot556: 35, shot762: 50, explosion: 60, sprintStep: 12, walkStep: 6 },
+    hearing: { shot556: 35, shot762: 50, explosion: 60, sprintStep: 12, walkStep: 6,
+      // ekspansi senjata: peredam (dokumen: USP-S 35 → 12 u), sniper / kaliber berat
+      suppressed: 12, shotHeavy: 60 },
+    // ekspansi senjata: peluang kelas senjata bot (shotgun & sniper/DMR tidak dipakai bot — butuh AI khusus)
+    weaponMix: { AR: 0.6, SMG: 0.25, LMG: 0.15 },
     memory: 6, loseTarget: 1.5, investigateMax: 6, investigateNoise: 3,
     spawnIdle: [0.3, 0.8], patrolExplore: [10, 20],
     strafeInterval: [0.6, 1.2], crouchChance: 0.3, crouchDist: 25, adsDist: 20,
@@ -137,7 +161,13 @@ export const XCFG = {
     // Steel Yard (map kedua): sayap (Lorong Kontainer → Pos Jaga), dalam (Bangkai Mobil → Tengah → Pos Jaga), tengah (Lorong
     // Tengah → Gudang Spool → Menara), apit (celah Apit → Gudang Spool → Menara) — sisi W/E = sisi bot (maps/steelyard/nav.ts)
     lanesSteelYard: { sayap: 0.30, dalam: 0.25, tengah: 0.25, apit: 0.20 },
-    grenadeMin: 8, grenadeMax: 24, grenadeAllyClear: 8, grenadeCooldown: 6,
+    // Boston (map ketiga, asimetris 2 lantai; dokumen pengguna §7): Veranda L4, Garden Lounge tengah L3, flank Tangga Cokelat /
+    // Servis, Jalur Sofa Timur — rute Biru (L4) & Merah (L3) berbeda per jalur (maps/boston/nav.ts)
+    lanesBoston: { veranda: 0.35, lounge: 0.30, flank: 0.20, sofa: 0.15 },
+    // granat bot (§11.8). Lempar 34 u/s (2026-11-26, GDD 24): jarak maks 24 → 32 u; batas masak rumus §11.8 2.0 → 2.8 s — di 34 u/s
+    // granat tiba lebih cepat & menggelinding jauh melewati sasaran sebelum meledak (terukur 3 map, 8–24 u: kena 77–81% → 40–60%,
+    // damage rata 62–72 → 37–55); 2.8 = "meledak sesaat (0.4 s) setelah tiba" seperti maksud GDD → kena 91–98%, damage rata 71–82
+    grenadeMin: 8, grenadeMax: 32, grenadeAllyClear: 8, grenadeCooldown: 6, grenadeCookMax: 2.8,
     arriveRadius: 1.2, separation: 2.0, stuckDist: 0.5, stuckJump: 1.5, stuckRepath: 3.0, stairCost: 1.2,
     thinkEveryFixedSteps: 6,
     // ── Bot manusiawi (permintaan pengguna 2026-11-25: "bot kurang realistis"; disetujui 3 paket bidikan/tempur/patroli & tim).
@@ -221,7 +251,11 @@ export const XCFG = {
     trail: { life: 0.11, alpha: 0.6, samples: 14 },
     punch: { omega: 16, zeta: 0.42, slashYaw: 1.8, slashRoll: 3.0, slashPitch: -0.8, stabPitch: -1.6, stabFov: -4, hitPitch: -1.2, hitShake: 0.6 },
   },
-  // G = buang senjata utama; hanya tim sendiri yang bisa mengambil/menukar (E). Benda fisik grup DEBRIS (tidak menahan peluru/karakter).
+  // ekspansi senjata (dokumen pengguna, bukan GDD): reload per selongsong (shotgun) & kokang pompa/bolt setelah tiap tembakan.
+  // shellStart = jeda sebelum selongsong pertama; menembak saat reload selongsong → reload berhenti, tembakan setelah shellInterrupt.
+  // Kokang: animasi mulai cycleDelay s setelah tembakan, selesai cycleTail s sebelum tembakan berikutnya boleh (60/rpm).
+  weapons: { shellStart: 0.35, shellInterrupt: 0.12, cycleDelay: 0.12, cycleTail: 0.16, slideTime: 0.09 },
+    // G = buang senjata utama; hanya tim sendiri yang bisa mengambil/menukar (E). Benda fisik grup DEBRIS (tidak menahan peluru/karakter).
   drop: { throwSpeed: 5.0, throwUp: 2.5, inheritVel: 0.5, pickupRange: 2.8, pickupDyMin: -1.5, pickupDyMax: 4.5,
     lifetime: 60, max: 6, density: 1.2, friction: 0.8, restitution: 0.15, linDamp: 0.3, angDamp: 0.8, toastTime: 1.6 },
   elim: { roundTime: 120, roundEnd: 3.5, roundsToWin: 5 },
@@ -357,7 +391,7 @@ export const XCFG = {
     correctEps: 0.04,     // pemain lokal dikoreksi bila beda posisi > 0.04 u dari host
     smoothT: 0.12,        // koreksi posisi pemain lokal dihaluskan ±120 ms (visual)
     statsEvery: 1.0,      // sinkron statistik papan skor (detik)
-    maxShotFx: 24,        // efek tembakan per snapshot
+    maxShotFx: 48,        // efek tembakan per snapshot (shotgun: 8 pellet per tembakan)
     pingEvery: 2,         // detik: host mengukur ping tiap teman (ping/pong kanal reliable), disiarkan ke semua
     pingWarn: 150,        // ms: ping ≥ 150 → merah + peringatan (room, papan skor, HUD)
     pingGood: 80,         // ms: < 80 hijau, 80–150 kuning

@@ -33,15 +33,15 @@ export class WeaponDrops {
 
   constructor(private readonly scene: THREE.Scene, private readonly castShadow: boolean) {}
 
-  /** Buang senjata utama entitas; pegangan pindah ke pisau. false bila slot 1 sudah kosong. */
+  /** Buang senjata utama entitas; pegangan pindah ke pistol. false bila slot 1 sudah kosong. */
   drop(e: Entity): boolean {
-    const w = e.weapon;
+    const w = e.weapon, g = w.primary;
     if (!w.hasPrimary) return false;
-    w.cancelReload();                                            // sebelum komit: batal tanpa transfer (GDD §5.1)
+    if (w.slot === 'ar') w.cancelReload();                       // sebelum komit: batal tanpa transfer (GDD §5.1)
     if (!e.pendingLoadout) e.pendingLoadout = { ...e.loadout };  // respawn berikutnya kembali ke loadout pilihan
-    this.spawn(e, e.loadout.weapon, e.loadout.scope, w.ammo, w.reserve, w.modeIdx);
+    this.spawn(e, e.loadout.weapon, e.loadout.scope, g.ammo, g.reserve, g.modeIdx);
     w.hasPrimary = false;
-    if (w.slot === 'ar') { cancelMelee(e); w.switchTo('knife', equipTimeFor('knife')); }
+    if (w.slot === 'ar') { cancelMelee(e); w.switchTo('pistol', equipTimeFor('pistol', w)); }
     return true;
   }
 
@@ -65,11 +65,12 @@ export class WeaponDrops {
     if (w.hasPrimary) this.drop(e);
     this.remove(this.list.indexOf(d));
     if (!e.pendingLoadout) e.pendingLoadout = { ...e.loadout };
-    e.applyLoadout({ weapon: d.weapon, scope: d.scope });
-    w.ammo = d.ammo; w.reserve = d.reserve; w.modeIdx = Math.min(d.modeIdx, w.def.modes.length - 1);
+    e.applyLoadout({ ...e.loadout, weapon: d.weapon, scope: d.scope });
+    const g = w.primary;
+    g.ammo = d.ammo; g.reserve = d.reserve; g.modeIdx = Math.min(d.modeIdx, g.def.modes.length - 1);
     w.hasPrimary = true;
     cancelMelee(e);
-    if (w.slot === 'ar') { w.equipT = w.equipTotal = equipTimeFor('ar'); } else w.switchTo('ar', equipTimeFor('ar'));
+    if (w.slot === 'ar') { w.equipT = w.equipTotal = equipTimeFor('ar', w); } else w.switchTo('ar', equipTimeFor('ar', w));
     bus.emit('weapon:pickup', { entityId: e.id, weaponId: d.weapon });
     return true;
   }

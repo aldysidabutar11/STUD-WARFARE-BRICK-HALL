@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { XCFG } from '../config/extraConfig';
 import { bus, type KillWeapon, type MeleeKind } from '../core/EventBus';
+import { MELEES, MELEE_ORDER, type MeleeId } from '../config/weaponsExtra';
 import { ctx } from '../game/ctx';
 import { castShot } from './Ballistics';
 import type { Entity } from '../entities/Entity';
@@ -24,9 +25,17 @@ export const MELEE_KINDS: Readonly<Record<MeleeKind, KindSpec>> = {
   stab: { damage: K.stab.damage, backDamage: K.stab.backDamage, hitDelay: K.stab.hitDelay, duration: K.stab.duration, cooldown: 0, weapon: 'knife' },
 };
 
-/** Damage serangan jarak dekat (murni, untuk test). */
-export const meleeDamage = (kind: MeleeKind, fromBehind: boolean) =>
-  fromBehind ? MELEE_KINDS[kind].backDamage : MELEE_KINDS[kind].damage;
+/** Tabel serangan per senjata jarak dekat: ringan (klik kiri) = 'slash', berat (klik kanan) = 'stab'; popor tetap XCFG.melee. */
+const BY_MELEE = new Map<MeleeId, Readonly<Record<MeleeKind, KindSpec>>>(MELEE_ORDER.map(id => {
+  const d = MELEES[id], w: KillWeapon = id;
+  return [id, { butt: MELEE_KINDS.butt, slash: { ...d.light, cooldown: 0, weapon: w }, stab: { ...d.heavy, cooldown: 0, weapon: w } }];
+}));
+/** Spesifikasi serangan entitas (senjata jarak dekat loadout-nya). */
+export const kindSpec = (e: Entity, k: MeleeKind): KindSpec => BY_MELEE.get(e.weapon.melee)![k];
+
+/** Damage serangan jarak dekat (murni, untuk test). melee = senjata jarak dekat (default pisau komando). */
+export const meleeDamage = (kind: MeleeKind, fromBehind: boolean, melee: MeleeId = 'knife') =>
+  fromBehind ? BY_MELEE.get(melee)![kind].backDamage : BY_MELEE.get(melee)![kind].damage;
 
 /** "Dari belakang": arah hadap korban searah arah hadap penyerang (dot yaw > backDot). */
 export const isFromBehind = (victimYaw: number, attackerYaw: number) =>
@@ -34,12 +43,12 @@ export const isFromBehind = (victimYaw: number, attackerYaw: number) =>
 
 const idle = (e: Entity) => e.alive && e.meleeT < 0 && e.meleeCd <= 0 && e.grenadeState === 'NONE' && e.weapon.equipT <= 0;
 
-/** Pukulan popor: hanya saat memegang senjata utama. */
+/** Pukulan popor / gagang pistol: saat memegang senjata api. */
 export function canMelee(e: Entity) {
-  return idle(e) && e.weapon.slot === 'ar' && e.weapon.hasPrimary;
+  return idle(e) && e.weapon.holdingGun;
 }
 
-/** Pisau: hanya saat slot 2 aktif dan selesai diangkat. */
+/** Pisau: hanya saat slot pisau aktif dan selesai diangkat. */
 export function canKnife(e: Entity) {
   return idle(e) && e.weapon.slot === 'knife';
 }
@@ -76,14 +85,14 @@ export function cancelMelee(e: Entity) { e.meleeT = -1; e.meleeCd = 0; }
 export function updateMelee(e: Entity, dt: number) {
   if (e.meleeCd > 0) e.meleeCd = Math.max(0, e.meleeCd - dt);
   if (e.meleeT < 0) return;
-  const k = MELEE_KINDS[e.meleeKind];
+  const k = kindSpec(e, e.meleeKind);
   e.meleeT += dt;
   if (!e.meleeHit && e.meleeT >= k.hitDelay) { e.meleeHit = true; resolve(e, k); }
   if (e.meleeT >= k.duration) { e.meleeT = -1; e.meleeCd = k.cooldown; }
 }
 
 /** Progres animasi 0..1 (−1 bila tidak menyerang). */
-export const meleeProgress = (e: Entity) => (e.meleeT < 0 ? -1 : Math.min(1, e.meleeT / MELEE_KINDS[e.meleeKind].duration));
+export const meleeProgress = (e: Entity) => (e.meleeT < 0 ? -1 : Math.min(1, e.meleeT / kindSpec(e, e.meleeKind).duration));
 /** Progres pukulan popor saja (pose senapan); −1 bila bukan popor. */
 export const buttProgress = (e: Entity) => (e.meleeKind === 'butt' ? meleeProgress(e) : -1);
 /** Progres serangan pisau saja; −1 bila bukan pisau. */
@@ -91,12 +100,13 @@ export const knifeProgress = (e: Entity) => (e.meleeKind !== 'butt' ? meleeProgr
 
 function resolve(e: Entity, k: KindSpec) {
   e.eye(_eye);
+  const reach = e.meleeKind === 'butt' ? M.range : MELEES[e.weapon.melee].reach;   // jangkauan per senjata jarak dekat
   let victim: Entity | null = null, partKey: PartKey | null = null, best = Infinity, wall = false;
   for (const [yo, po] of OFFSETS) {
     const yaw = e.yaw + D2R(M.coneDeg) * yo, pitch = e.pitch + D2R(M.coneDeg) * po, cp = Math.cos(pitch);
     _dir.set(-Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp);
     const h = castShot(_eye, _dir, 0, e, true);
-    if (!h || h.t > M.range) continue;
+    if (!h || h.t > reach) continue;
     if (h.kind === 'body' && h.victim && h.t < best) { best = h.t; victim = h.victim; partKey = (h.partKey as PartKey) ?? 'upper'; _pt.copy(h.point); }
     else if (h.kind === 'world' && !victim && !wall && yo === 0 && po === 0) { wall = true; _pt.copy(h.point); _n.copy(h.normal); }
   }

@@ -6,6 +6,7 @@ import { physics } from '../physics/Physics';
 import { bus } from '../core/EventBus';
 import { ctx } from '../game/ctx';
 import { WEAPONS, type WeaponId } from '../config/weaponsData';
+import { soundOf } from '../combat/weaponStats';
 import * as R from './Recipes';
 
 const XA = XCFG.audio;
@@ -172,9 +173,9 @@ export class SpatialSynthAudio {
     const isPlayer = (id: number) => ctx.player?.id === id;
     bus.on('shot', (e) => {
       const w = WEAPONS[e.weaponId];
-      const rec = R.gunshot(w.caliber, w.audioPitch * (0.97 + Math.random() * 0.06));
+      const rec = R.gunshot(soundOf(w), w.audioPitch * (0.97 + Math.random() * 0.06));
       if (isPlayer(e.shooterId)) this.play(rec, 'own', null, P.own, 0.55);
-      else this.play(rec, 'shot', e.origin, P.enemyShot, 1.0);
+      else this.play(rec, 'shot', e.origin, P.enemyShot, w.suppressed ? 0.6 : 1.0);
     });
     bus.on('hit', (e) => {
       if (!isPlayer(e.attackerId) || e.victimId === e.attackerId) return;
@@ -193,10 +194,18 @@ export class SpatialSynthAudio {
     });
     bus.on('grenade:explode', (e) => this.play(R.explosion, 'explosion', e.position, P.explosion, 1.0));
     bus.on('flash:explode', (e) => this.play(R.flashBang, 'explosion', e.position, P.explosion, 1.0));
+    bus.on('glass:break', (e) => this.play(R.glassBreak, 'impact', e.position, P.impact, 1.0));
     bus.on('grenade:bounce', (e) => this.play(R.bounce(e.material, e.speed), 'impact', e.position, P.impact));
     bus.on('reload', (e) => {
       const ent = ctx.byId.get(e.entityId);
-      if (ent) this.play(R.reloadStage(e.stage), isPlayer(e.entityId) ? 'own' : 'impact', isPlayer(e.entityId) ? null : ent.pos, P.impact, 0.7);
+      if (!ent) return;
+      const rec = ent.weapon.def.reload === 'shell' && e.stage === 1 ? R.shellInsert : R.reloadStage(e.stage);   // shotgun: selongsong per selongsong
+      this.play(rec, isPlayer(e.entityId) ? 'own' : 'impact', isPlayer(e.entityId) ? null : ent.pos, P.impact, 0.7);
+    });
+    bus.on('cycle', (e) => {
+      const ent = ctx.byId.get(e.entityId);
+      if (ent) this.play(e.kind === 'bolt' ? R.boltAction : R.pumpAction, isPlayer(e.entityId) ? 'own' : 'impact',
+        isPlayer(e.entityId) ? null : ent.pos, P.impact, 0.8);
     });
     bus.on('dryfire', (e) => { if (isPlayer(e.entityId)) this.play(R.dryFire, 'own', null, P.own); });
     bus.on('pin', (e) => {
@@ -221,7 +230,7 @@ export class SpatialSynthAudio {
   /** Tembakan tanpa event bus (replay killcam): pos null = suara "milik sendiri". */
   playGunshot(weaponId: WeaponId, pos: THREE.Vector3 | null) {
     const w = WEAPONS[weaponId];
-    const rec = R.gunshot(w.caliber, w.audioPitch * (0.97 + Math.random() * 0.06));
+    const rec = R.gunshot(soundOf(w), w.audioPitch * (0.97 + Math.random() * 0.06));
     if (pos) this.play(rec, 'shot', pos, XA.priority.enemyShot, 1.0); else this.play(rec, 'own', null, XA.priority.own, 0.55);
   }
 

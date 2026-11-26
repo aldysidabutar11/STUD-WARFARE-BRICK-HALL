@@ -23,6 +23,11 @@ export function flashStrength(eye: V3, fwd: V3, at: V3, blocked: boolean): numbe
   return face * dist;
 }
 
+/** Pelempar sendiri kena × ownerMult (tahu kapan meledak); meledak di tangan (dimasak kelamaan) tetap penuh. */
+export function ownerFlash(s: number, isOwner: boolean, inHand: boolean): number {
+  return isOwner && !inHand ? s * XCFG.flash.ownerMult : s;
+}
+
 /** Kekuatan → paparan (null = tidak berefek). */
 export function flashExposure(s: number): FlashExposure | null {
   const F = XCFG.flash;

@@ -10,7 +10,12 @@ export type Style = 'hidden' | 'plaster' | 'ceiling' | 'balc' | 'base' | 'deck' 
   | 'stack' | 'arcwall' | 'teampanel'
   // multi-map (map luar ruang, mis. Steel Yard): label permukaan generik — dipakai builder map itu sendiri (Brick Hall tidak)
   | OutdoorStyle;
-export type OutdoorStyle = 'steel' | 'fence' | 'concrete' | 'timber' | 'rubber' | 'vehicle' | 'fabric';
+export type OutdoorStyle = 'steel' | 'fence' | 'concrete' | 'timber' | 'rubber' | 'vehicle' | 'fabric'
+  // kantor 2 lantai (Boston): label permukaan untuk builder map itu sendiri
+  | OfficeStyle;
+export type OfficeStyle = 'o_ground' | 'o_slab' | 'o_roof' | 'o_ext' | 'o_beam' | 'o_window' | 'o_wall' | 'o_conc' | 'o_glass' | 'o_frame'
+  | 'o_rail' | 'o_col' | 'o_hbeam' | 'o_wood' | 'o_marble' | 'o_locker' | 'o_counter' | 'o_part' | 'o_desk' | 'o_tv' | 'o_cab'
+  | 'o_crateB' | 'o_crateR' | 'o_sofaO' | 'o_sofaY' | 'o_sofaG' | 'o_planter' | 'o_store' | 'o_kiosk';
 
 /** rotY (opsional, radian): putaran balok di PUSATNYA terhadap sumbu Y (konvensi three.js). x/z = rentang LOKAL sebelum diputar. */
 export interface Row { id: string; cat: Cat; x: [number, number]; y: [number, number]; z: [number, number]; m: Mirror; style: Style; rotY?: number }
@@ -169,7 +174,29 @@ export function distToBoxXZ(b: Box, x: number, z: number): number {
 export const BOXES: Box[] = expandRows(ROWS);
 
 // ── tangga samping (GDD §4.3): ramp convexHull, kaki di Z ±18.5 (Y 0) → puncak di Z ±32.8 (Y 10)
-export interface Stair { id: string; x: [number, number]; zFoot: number; zTop: number; openX: number }
+export interface Stair {
+  id: string; x: [number, number]; zFoot: number; zTop: number; openX: number;
+  /** Opsional (map lain): tinggi kaki & puncak (bawaan 0 → 10). */
+  yFoot?: number; yTop?: number;
+  /** Opsional: tangga naik sepanjang X (kaki di xFoot, puncak di xTop, lebar z). Bila ada, x/zFoot/zTop = tapak AABB saja. */
+  alongX?: { z: [number, number]; xFoot: number; xTop: number };
+}
+
+/** Bentuk tangga ternormalisasi: tapak (x, z), sumbu naik, koordinat kaki & puncak pada sumbu itu, tinggi kaki & puncak. */
+export interface StairFrame { x: [number, number]; z: [number, number]; axis: 'x' | 'z'; foot: number; top: number; y0: number; y1: number }
+export function stairFrame(s: Stair): StairFrame {
+  const y0 = s.yFoot ?? 0, y1 = s.yTop ?? 10;
+  if (s.alongX) {
+    const a = s.alongX;
+    return { x: [Math.min(a.xFoot, a.xTop), Math.max(a.xFoot, a.xTop)], z: a.z, axis: 'x', foot: a.xFoot, top: a.xTop, y0, y1 };
+  }
+  return { x: s.x, z: [Math.min(s.zFoot, s.zTop), Math.max(s.zFoot, s.zTop)], axis: 'z', foot: s.zFoot, top: s.zTop, y0, y1 };
+}
+/** Tinggi permukaan ramp di titik (x, z) (dijepit ke kaki/puncak). */
+export function stairHeightAt(f: StairFrame, x: number, z: number): number {
+  const c = f.axis === 'x' ? x : z, t = Math.min(1, Math.max(0, (c - f.foot) / (f.top - f.foot)));
+  return f.y0 + (f.y1 - f.y0) * t;
+}
 export const STAIRS: Stair[] = [
   { id: 'STAIR_SW', x: [-22, -17], zFoot: -18.5, zTop: -32.8, openX: -17.15 },
   { id: 'STAIR_SE', x: [17, 22], zFoot: -18.5, zTop: -32.8, openX: 17.15 },

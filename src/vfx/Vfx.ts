@@ -160,13 +160,15 @@ export class Vfx {
     }
   }
 
-  muzzleFlash(pos: THREE.Vector3, dir: THREE.Vector3) {
+  /** Kilat moncong; peredam (suppressed) = kilat kecil tanpa cahaya ke sekitar. */
+  muzzleFlash(pos: THREE.Vector3, dir: THREE.Vector3, suppressed = false) {
     const f = this.flashes.find(x => x.life <= 0) ?? this.flashes[0];
     f.obj.position.copy(pos);
     f.obj.quaternion.setFromUnitVectors(Z_AXIS, _a.copy(dir).negate());
     f.obj.rotateZ(Math.random() * Math.PI);
+    f.obj.scale.setScalar(suppressed ? 0.35 : 1);
     f.obj.visible = true; f.life = Math.max(X.muzzleTime, 1 / 60);
-    this.flashLight(pos);
+    if (!suppressed) this.flashLight(pos);
   }
 
   /** Kilat cahaya moncong ke sekitar (HIGH+) — juga untuk tembakan FPS pemain (viewmodel tidak punya lampu dunia). */
@@ -201,8 +203,9 @@ export class Vfx {
   shell(e: Entity, fpsView: boolean) {
     const p = this.shells.spawn();
     if (fpsView) return; // viewmodel FPS: selongsong dunia tidak perlu terlihat dari mata
-    const m = weaponModel(e.loadout.weapon, e.loadout.scope === 'iron');
-    e.worldGun.localToWorld(p.pos.copy(m.ejectPort));
+    const pistol = e.weapon.slot === 'pistol', lo = e.loadout;
+    const m = pistol ? weaponModel(lo.pistol, lo.pscope === 'iron') : weaponModel(lo.weapon, lo.scope === 'iron');
+    (pistol ? e.worldPistol : e.worldGun).localToWorld(p.pos.copy(m.ejectPort));
     const ry = e.yaw;
     p.vel.set(Math.cos(ry) * X.shellRight + (Math.random() - 0.5), X.shellUp + Math.random(), -Math.sin(ry) * X.shellRight + (Math.random() - 0.5));
     p.spin.set(Math.random() * 20, Math.random() * 20, 0); p.size = 1; p.life = X.shellLife; p.max = X.shellLife;
@@ -217,6 +220,19 @@ export class Vfx {
     _q.multiply(new THREE.Quaternion().setFromAxisAngle(Z_AXIS, Math.random() * Math.PI));
     this.decals.setMatrixAt(i, _m.compose(_p, _q, _s.setScalar(0.8 + Math.random() * 0.4)));
     this.decals.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Hapus bekas peluru di dalam kotak (mis. panel kaca yang pecah — bekasnya tidak boleh melayang di udara). */
+  clearDecalsIn(min: ArrayLike<number>, max: ArrayLike<number>, pad = 0.25) {
+    let any = false;
+    for (let i = 0; i < this.decals.count; i++) {
+      this.decals.getMatrixAt(i, _m);
+      const e = _m.elements, x = e[12], y = e[13], z = e[14];
+      if (x < min[0] - pad || x > max[0] + pad || y < min[1] - pad || y > max[1] + pad || z < min[2] - pad || z > max[2] + pad) continue;
+      if (e[0] === 0 && e[5] === 0 && e[10] === 0) continue;
+      this.decals.setMatrixAt(i, ZERO); any = true;
+    }
+    if (any) this.decals.instanceMatrix.needsUpdate = true;
   }
 
   chips(point: THREE.Vector3, normal: THREE.Vector3, color: number, n: number) {

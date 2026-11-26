@@ -113,7 +113,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #120b06; col
 .gren i { width: 10px; height: 13px; background: #6b7b3a; border-radius: 3px; display: inline-block; border: 1px solid #222; }
 .gren.empty { opacity: 0.35; }
 /* bar slot senjata 1/2/3 (di atas panel amunisi) */
-.slots { position: absolute; right: 24px; bottom: 116px; display: flex; gap: 6px; font-size: 12px; text-shadow: 0 1px 3px #000; }
+.slots { position: absolute; right: 24px; bottom: 128px; display: flex; gap: 6px; font-size: 12px; text-shadow: 0 1px 3px #000; }
 .slots .s { display: flex; align-items: center; gap: 5px; padding: 3px 8px 3px 4px; border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(0, 0, 0, 0.38); border-radius: 3px; opacity: 0.7; transition: opacity 0.12s, border-color 0.12s; }
 .slots .s b { min-width: 16px; padding: 0 3px; text-align: center; background: rgba(255, 255, 255, 0.16); border-radius: 2px; font-weight: 800; }
@@ -179,6 +179,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #120b06; col
 .scopes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .scopes button { padding: 6px 10px; font-size: 13px; }
 .scopes button.sel { border-color: var(--gold); background: #5a3a1f; }
+.lo-sec { margin: 2px 0 6px; font-size: 12px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold); }
+.lo-sec i { font-style: normal; font-weight: 400; letter-spacing: 0; text-transform: none; opacity: 0.65; margin-left: 6px; }
+.lo-weap .lo-sec:not(:first-child) { margin-top: 16px; }
+.lo-cls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.menu .lo-cls button { padding: 5px 12px; font-size: 12px; }
+.lo-cls button.sel { border-color: var(--gold); background: #5a3a1f; }
+.wcard .wmeta { display: block; opacity: 0.7; }
+.wcard .wrole { display: block; margin: 2px 0 3px; font-size: 11px; color: #e8c98a; }
+.lo-keys { margin-top: 12px; font-size: 11px; opacity: 0.6; }
 .charsel { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; flex-wrap: wrap; }
 .charsel > span { font-weight: 700; margin-right: 4px; }
 .charsel button { padding: 6px 14px; font-size: 13px; }

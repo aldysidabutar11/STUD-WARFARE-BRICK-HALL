@@ -33,7 +33,10 @@ export const CFG = {
     friendlyFire: false, tracerEvery: { player: 3, bot: 2 },
   },
   grenade: {
-    fuse: 3.5, overSpeed: 24.0, overLiftDeg: 8, underSpeed: 11.0, underPitchMin: -20, underPitchMax: 10, inheritVel: 0.5,
+    // overSpeed: GDD 24.0 → 34 (disetujui pengguna 2026-11-26: "lempar terlalu dekat, kurang tenaga, masih kena efek sendiri").
+    // Di 24 u/s granat jatuh ±½ jarak crosshair (bidik lantai 20 u → 12.6 u), jangkauan maks ±26 u; tempo gerak ×1.35 (lari 11.5 u/s)
+    // membuat lemparan relatif makin lemah. 34: lurus ±28 u, maks ±47 u. Gelinding (underSpeed) tetap GDD.
+    fuse: 3.5, overSpeed: 34.0, overLiftDeg: 8, underSpeed: 11.0, underPitchMin: -20, underPitchMax: 10, inheritVel: 0.5,
     radius: 0.25, restitution: 0.45, friction: 0.6, density: 6.0, linDamp: 0.15, angDamp: 0.6,
     maxDamage: 135, blastRadius: 12.0, selfDamage: true, perLife: 1, equipTime: 0.35,
     propImpulse: 14, corpseImpulseMult: 1.2, paperRadius: 10, shakeRadius: 20, shakeMaxDeg: 1.5, tinnitusRadius: 6,

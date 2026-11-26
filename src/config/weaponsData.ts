@@ -1,11 +1,20 @@
-// src/config/weaponsData.ts — SUMBER KEBENARAN senjata & optik (GDD v2 §5–6)
-export type WeaponId =
-  'm416' | 'akm' | 'scarl' | 'beryl' | 'aug' | 'qbz' | 'm16a4' | 'g36c' | 'mk47' | 'groza';
+// src/config/weaponsData.ts — SUMBER KEBENARAN senjata & optik (GDD v2 §5–6). 10 AR di bawah = salinan GDD (tidak diubah);
+// senjata tambahan (SMG, shotgun, sniper/DMR, LMG, pistol — dokumen ekspansi senjata pengguna, bukan GDD) ada di weaponsExtra.ts
+// dan digabung ke WEAPONS. Field ekstensi WeaponDef opsional: tanpa nilai = perilaku AR GDD.
+import { X_WEAPONS, type XWeaponId } from './weaponsExtra';
+
+/** 10 assault rifle GDD (dipakai bot & sebagai bawaan). */
+export type ArId = 'm416' | 'akm' | 'scarl' | 'beryl' | 'aug' | 'qbz' | 'm16a4' | 'g36c' | 'mk47' | 'groza';
+export type WeaponId = ArId | XWeaponId;
 export type FireMode = 'AUTO' | 'BURST2' | 'BURST3' | 'SINGLE';
 export type ScopeId = 'iron' | 'reddot' | 'holo' | 'x2' | 'x3' | 'x4' | 'x6';
+/** Kelas senjata: AR (GDD), SMG, SG (shotgun), SR (sniper), DMR, LMG, PISTOL (slot 2). */
+export type WeaponClass = 'AR' | 'SMG' | 'SG' | 'SR' | 'DMR' | 'LMG' | 'PISTOL';
+/** Profil suara tembakan sintesis (audio/Recipes.gunshot); tanpa nilai = dari kaliber AR (5.56 / 7.62). */
+export type GunSound = '556' | '762' | '9mm' | '45' | '57' | '12ga' | 'magnum' | 'sniper' | 'heavy' | 'suppressed';
 
 export interface WeaponDef {
-  id: WeaponId; name: string; caliber: '5.56' | '7.62';
+  id: WeaponId; name: string; caliber: string;
   modes: FireMode[];       // urutan siklus tombol B; [0] = default
   baseDamage: number;      // per peluru, sebelum multiplier hitbox & falloff
   rpm: number;             // interval = 60 / rpm (interval dalam burst untuk BURST*)
@@ -16,11 +25,39 @@ export interface WeaponDef {
   maxScope: ScopeId;       // optik tertinggi yang diizinkan
   audioPitch: number;      // pengali nada sintesis
   magSize: number; reserveAmmo: number;
+  // ── ekstensi (opsional; tanpa nilai = AR GDD)
+  cls?: WeaponClass;
+  /** Pellet per tembakan (shotgun). spreadHip/Ads lalu = setengah sudut POLA pellet (pusat pola = crosshair). */
+  pellets?: number;
+  /** Pengali kepala khusus (shotgun 1.5: pellet nyasar tidak one-shot); bagian lain tetap CFG.combat.hitMult. */
+  headMult?: number;
+  /** Setengah kerucut spread dasar hipfire / ADS (derajat); tambahan gerak/lompat/jongkok tetap CFG.combat.spread. */
+  spreadHip?: number; spreadAds?: number;
+  /** Falloff [mulai, rentang, minimum] — rumus sama dengan GDD §5.3. */
+  falloff?: readonly [number, number, number];
+  /** Pengali kecepatan gerak saat dipegang. */
+  moveMult?: number;
+  equipTime?: number; sprintToFire?: number;
+  /** Waktu masuk ADS (s) senjata berat (sniper); tanpa nilai = waktu optik (SCOPES.adsTime). */
+  adsTime?: number;
+  /** 'shell' = isi per selongsong (shellTime), bisa dibatalkan dengan menembak. */
+  reload?: 'mag' | 'shell'; shellTime?: number;
+  /** Mekanisme terlihat: kokang pompa / bolt setelah tiap tembakan, slide pistol menghentak. */
+  action?: 'pump' | 'bolt' | 'slide';
+  /** Pengali recoil jongkok (LMG 0.60; GDD 0.75). */
+  crouchRecoil?: number;
+  /** Peredam: radius dengar bot kecil (hearRadius), tidak muncul di radar saat menembak, kilat moncong kecil. */
+  suppressed?: boolean; hearRadius?: number;
+  sound?: GunSound;
+  /** Optik yang boleh dipasang (bila ada, menggantikan aturan maxScope) & optik bawaan saat dipilih di Loadout. */
+  scopes?: readonly ScopeId[]; defScope?: ScopeId;
+  /** Peran singkat (kartu Loadout). */
+  role?: string;
 }
 
 const D = { magSize: 30, reserveAmmo: 120, recoveryMult: 1.0, maxScope: 'x6' as ScopeId };
 
-export const WEAPONS: Record<WeaponId, WeaponDef> = {
+const GDD_AR: Record<ArId, WeaponDef> = {
   m416:  { ...D, id: 'm416',  name: 'M416',        caliber: '5.56', modes: ['AUTO', 'SINGLE'],           baseDamage: 41, rpm: 700, reloadTime: 2.1, recoilVert: 1.20, recoilHorz: 0.35, audioPitch: 1.00 },
   akm:   { ...D, id: 'akm',   name: 'AKM',         caliber: '7.62', modes: ['AUTO', 'SINGLE'],           baseDamage: 48, rpm: 600, reloadTime: 2.9, recoilVert: 1.85, recoilHorz: 0.55, audioPitch: 0.95 },
   scarl: { ...D, id: 'scarl', name: 'SCAR-L',      caliber: '5.56', modes: ['AUTO', 'SINGLE'],           baseDamage: 41, rpm: 625, reloadTime: 2.2, recoilVert: 1.00, recoilHorz: 0.30, audioPitch: 1.03 },
@@ -33,9 +70,18 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   groza: { ...D, id: 'groza', name: 'Groza',       caliber: '7.62', modes: ['AUTO', 'SINGLE'],           baseDamage: 48, rpm: 750, reloadTime: 3.0, recoilVert: 1.70, recoilHorz: 0.50, audioPitch: 0.90, maxScope: 'x3' },
 };
 
-export const WEAPON_ORDER: WeaponId[] = [
+export const WEAPONS: Record<WeaponId, WeaponDef> = { ...GDD_AR, ...X_WEAPONS };
+
+/** 10 AR GDD (urutan Loadout kelas AR; bot memakai daftar ini). */
+export const WEAPON_ORDER: ArId[] = [
   'm416', 'akm', 'scarl', 'beryl', 'aug', 'qbz', 'm16a4', 'g36c', 'mk47', 'groza'
 ];
+
+export const classOf = (w: WeaponDef): WeaponClass => w.cls ?? 'AR';
+export const isWeaponId = (v: unknown): v is WeaponId => typeof v === 'string' && Object.prototype.hasOwnProperty.call(WEAPONS, v);
+/** Senjata utama (slot 1) / pistol (slot 2). */
+export const isPrimaryId = (v: unknown): v is WeaponId => isWeaponId(v) && classOf(WEAPONS[v]) !== 'PISTOL';
+export const isPistolId = (v: unknown): v is WeaponId => isWeaponId(v) && classOf(WEAPONS[v]) === 'PISTOL';
 
 export interface ScopeDef {
   id: ScopeId; name: string; zoomLabel: number; fov: number; adsTime: number;
@@ -54,4 +100,14 @@ export const SCOPES: Record<ScopeId, ScopeDef> = {
 
 export const SCOPE_ORDER: ScopeId[] = ['iron', 'reddot', 'holo', 'x2', 'x3', 'x4', 'x6'];
 export const scopeAllowed = (w: WeaponDef, s: ScopeId) =>
-  SCOPE_ORDER.indexOf(s) <= SCOPE_ORDER.indexOf(w.maxScope);
+  w.scopes ? w.scopes.includes(s) : SCOPE_ORDER.indexOf(s) <= SCOPE_ORDER.indexOf(w.maxScope);
+
+/** Optik saat senjata dipilih: pilihan sekarang bila boleh, lalu bawaan senjata, lalu optik boleh yang terdekat. */
+export function fitScope(w: WeaponDef, want: ScopeId): ScopeId {
+  if (scopeAllowed(w, want)) return want;
+  if (w.defScope && scopeAllowed(w, w.defScope)) return w.defScope;
+  const ok = SCOPE_ORDER.filter(s => scopeAllowed(w, s)), wi = SCOPE_ORDER.indexOf(want);
+  let best: ScopeId = ok[0] ?? 'iron';
+  for (const s of ok) if (Math.abs(SCOPE_ORDER.indexOf(s) - wi) < Math.abs(SCOPE_ORDER.indexOf(best) - wi)) best = s;
+  return best;
+}

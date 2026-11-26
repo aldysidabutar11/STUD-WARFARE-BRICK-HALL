@@ -24,12 +24,14 @@ tepat waktu; bila preset berat tidak stabil di refresh penuh, pilih **Batas FPS 
 ## Mode
 
 - **Team Deathmatch** — 5v5 vs bot, respawn 4 s; target kill 25/50/75/100 & batas waktu 5–20 menit (default GDD: 50 kill / 10:00).
-  Dua map: **Brick Hall** (perpustakaan dalam ruang) & **Steel Yard** (halaman kontainer di gurun) — lihat **Memilih map** di bawah.
+  Tiga map: **Brick Hall** (perpustakaan dalam ruang), **Steel Yard** (halaman kontainer di gurun) & **Boston** (kantor 2 lantai)
+  — lihat **Memilih map** di bawah.
 - **Eliminasi** — tanpa respawn dalam ronde 2:00; yang mati menonton rekan (klik kiri/Spasi ganti rekan); menang 3/4/5/7 ronde.
 - **Main Bareng (Room)** — main online dengan teman: buat room (kode + link), 2 tim × 5 slot, slot kosong diisi bot, pindah tim,
   siap, setelan host (map, TDM / Eliminasi). Lihat **Main Bareng online** di bawah.
 - **Latihan Menembak** — di map pilihanmu: 12 dummy termasuk 2 target bergerak (Brick Hall: jembatan 10/40/70 u, lantai dasar,
-  mezanin; Steel Yard: tersebar 15–70 u dari gerbang Biru), amunisi & granat tak terbatas, angka damage.
+  mezanin; Steel Yard: tersebar 15–70 u dari gerbang Biru; Boston: kedua lantai — Veranda, Ruang Kaca, Pantry, Garden Lounge,
+  Jalur Sofa), amunisi & granat tak terbatas, angka damage.
 
 ## Bot
 
@@ -47,13 +49,13 @@ Bot memakai aturan yang sama dengan pemain (gerak, spread, recoil) dan hanya tah
 
 ## Memilih map
 
-- **Main sendiri / Latihan** — **Main → Atur Match → bagian MAP**: kartu **Brick Hall**, **Steel Yard**, atau **Acak** (diundi tiap
+- **Main sendiri / Latihan** — **Main → Atur Match → bagian MAP**: kartu **Brick Hall**, **Steel Yard**, **Boston**, atau **Acak** (diundi tiap
   match dimulai). Setiap kartu menampilkan denah mini (Biru kiri, Merah kanan), jenis & ukuran map. Klik kartu = langsung tersimpan dan
   map dimuat di belakang menu (layar "Memuat map…" sebentar), jadi latar menu sekaligus pratinjau map. Tombol **Latihan Menembak** di
   menu utama memakai map yang sama (namanya tertulis di tombol). **Main Lagi** / **Ulangi** = map yang sama dengan match tadi.
 - **Main Bareng** — hanya **host** yang memilih map (kartu kecil di *Setelan host*); teman melihat pilihan host dan map ikut dimuat di
   perangkat mereka. "Acak" diundi oleh host saat **Mulai** — semua pemain selalu main di map yang sama.
-- Ganti map tidak perlu memuat ulang halaman (penting untuk room online). Uji cepat: `?map=steelyard` (atau `brickhall`) di URL.
+- Ganti map tidak perlu memuat ulang halaman (penting untuk room online). Uji cepat: `?map=steelyard` (atau `brickhall`, `boston`) di URL.
 
 ## Map: Brick Hall (v2)
 
@@ -87,6 +89,29 @@ Halaman kontainer terbengkalai di gurun, satu lantai, luar ruang, 84 × 112 u (�
   & pantulan granat mengikuti permukaannya. Nama area di bawah radar, mis. *Lorong Kontainer Barat · Biru*, *Bangkai Mobil Timur · Merah*,
   *Menara Kontainer*, *Pos Jaga Barat*.
 
+## Map: Boston
+
+Kantor dua lantai 52 × 76 u (±19 × 27 m), dalam ruang, **asimetris vertikal**: Biru spawn di **Lantai 4** (atas), Merah di
+**Lantai 3** (bawah). Adaptasi dokumen desain "Blueprint Map Boston" (layout orisinal dari kantor sendiri, bukan replika map game lain).
+
+- **Lantai 4** — *Spawn Biru* (ruang kerja ber-AC di balik kaca lipat frosted tahan peluru, 4 pintu), *The Veranda* (teras
+  semi-terbuka 76 u: tegel motif vintage, plafon kayu, pilar H-beam, krey bambu yang bisa ditembus peluru, kota sore di luar pagar),
+  *Ruang Kaca* (kantor terbuka: meja kerja, kubikel), *Lorong Barat* (puncak Tangga Cokelat), *Pantry* (konter, kulkas, meja makan,
+  dinding tanaman).
+- **Lantai 3** — *Garden Lounge* (aula tempur: pilar putih, 4 cincin tanaman rambat gantung, Standing TV, meja marmer, dinding loker
+  motif wajik, konter kafe, resepsionis "BOSTON"), *Jalur Sofa* (jendela tinggi berkrey, 3 sofa booth oranye/kuning/hijau),
+  *Spawn Merah* (ruang rapat di balik kaca geser frosted, 3 pintu), *Koridor Barat* (pintu samping Merah → kaki Tangga Cokelat).
+- **Tiga konektor** — *Tangga Cokelat* berbentuk L (bordes di tengah, Barat), *Tangga Servis* lurus berdinding beton (dari pintu
+  "STAIRS" Spawn Biru turun ke Lounge Utara), dan *Void* satu arah: lompati pagar Veranda → mendarat di kabinet setinggi 4 →
+  lantai Lounge, **tanpa fall damage** (lompat langsung ke lantai = kena damage jatuh). Bot Sulit juga memakai jalur ini.
+- **Kaca yang bisa dipecahkan** — 3 panel kaca bening di antara Ruang Kaca & Veranda (60 HP: ±2 peluru senapan, atau 1 granat
+  K-400 di dekatnya) → serpihan + bunyi pecah, membuka jalan & garis tembak baru (bot ikut memakainya setelah pecah). Kaca frosted
+  spawn & jendela luar **tahan peluru**. Panel kembali utuh tiap ronde Eliminasi / match baru; online: host yang menentukan.
+- **Seimbang** — jarak jalur ke titik kontak utama hampir sama untuk kedua tim (puncak Tangga Cokelat & Lounge Utara ±1–3%),
+  tidak ada garis pandang dari luar ke slot spawn mana pun, radar menampilkan **lantai tempatmu berdiri** saja.
+- **Benda kantor** — 64 benda fisika (16 laptop, 24 tumbler, 24 kursi) yang terpental kena peluru/ledakan (tidak menghalangi gerak).
+  Langkah & pantulan mengikuti permukaan: tegel, karpet (Ruang Kaca), kayu (Tangga Cokelat), beton, kaca, logam, kain sofa.
+
 ## Grafik
 
 Gaya blocky tetap, tapi pencahayaan & material dibuat realistis (semua prosedural, tanpa file gambar):
@@ -95,33 +120,61 @@ kabut tipis, material PBR dengan stud/nat/serat timbul (normal map prosedural), 
 kepulan debu saat peluru kena permukaan. Preset: **LOW** · **MEDIUM** (laptop Iris Xe, 60 fps) · **HIGH** (+ bloom, grading, kilat
 moncong) · **ULTRA** (+ SSAO, MSAA, bayangan 4096 — untuk GPU kuat). Tiap efek bisa dimatikan di Pengaturan → Grafik.
 Steel Yard di laptop Iris Xe (MEDIUM, 10 karakter): ±90 FPS (terkunci ke layar 90 Hz), GPU ±6.4 ms, maks ±116 draw call / 135 ribu segitiga.
+Boston (MEDIUM, TDM): ±90 FPS (11.1 ms, p95 12.1), maks ±130 draw call / 109 ribu segitiga; HIGH ±90 FPS dengan resolusi dinamis 0.9.
 
 ## Kontrol utama (bisa diubah di menu Kontrol)
 
 WASD gerak · Shift sprint · C jongkok · Space lompat · Klik kiri tembak / tebas pisau / masak granat → lempar jauh ·
-Klik kanan ADS / tusuk pisau / masak granat → gelinding · **1 senjata utama · 2 pisau · 3 granat K-400 · 4 flashbang · Q senjata sebelumnya** · scroll ganti senjata ·
+Klik kanan ADS / serangan berat jarak dekat / masak granat → gelinding · **1 senjata utama · 2 pistol · 3 pisau · 4 granat K-400 · 5 flashbang ·
+Q senjata sebelumnya** · scroll ganti senjata ·
 G buang senjata utama · E ambil/tukar senjata tim · R reload · F pukul (melee) · B mode tembak · V FPS/TPS · X tukar bahu · Tab skor · L loadout ·
 **Y chat semua · U chat tim · H pesan cepat (lalu 1–6) · tahan T voice tim · tahan Z voice semua** · Esc pause · F3 statistik · ` debug.
 
 **Gamepad** (layout standar): stik kiri/kanan gerak/bidik · RT/LT tembak/ADS (pisau: tebas/tusuk) · A lompat · B jongkok · X reload (dekat senjata tim:
-ambil/tukar) · Y senjata sebelumnya · RB granat · LB mode tembak · L3 sprint · R3 pukul · D-pad ↑ FPS/TPS · → tukar bahu · ↓ pisau · ← loadout ·
+ambil/tukar) · Y senjata sebelumnya (utama ↔ pistol) · RB granat · LB mode tembak · L3 sprint · R3 pukul · D-pad ↑ FPS/TPS · → tukar bahu · ↓ pisau ·
+← loadout ·
 View skor · Menu pause. RB dua kali cepat = flashbang. Menu bisa dinavigasi dengan D-pad + A/B.
 
-Setelan tombol lama (sebelum ada slot pisau) dimigrasi otomatis: Q pindah ke "senjata sebelumnya", tukar bahu ke X, granat ke 3, G jadi buang senjata.
+Setelan tombol lama dimigrasi otomatis (hanya tombol yang masih bawaan): Q "senjata sebelumnya", tukar bahu ke X, G buang senjata; sejak ada
+pistol, angka bergeser satu: pisau 2 → 3, granat 3 → 4, flashbang 4 → 5, dan 2 jadi pistol.
+
+## Granat & garis lintasan
+
+- **Lempar jauh (klik kiri) 34 u/s**: bidik lurus → jatuh ±28 u, bidik ke lantai 20 u di depan → ±16.5 u, lambungan terjauh ±47 u.
+  **Gelinding (klik kanan)** tetap pendek untuk menyelipkan granat ke balik sudut / menuruni tangga. Tahan tombol = memasak (sumbu jalan).
+- **Garis lintasan**: selama memegang granat / flashbang tampil titik-titik lintasan + **cincin di titik jatuh pertama** (oranye = K-400,
+  putih kebiruan = flashbang); saat dimasak terlalu lama untuk sampai, ujungnya berubah jadi penanda **meledak di udara**. Garis dihitung
+  dengan fisika yang sama persis dengan granat sungguhan (pantulan sesudahnya tidak ditampilkan; badan karakter yang lewat diabaikan).
+  Bagian yang tertutup peti/badan sendiri tetap terlihat samar. Bisa dimatikan: Pengaturan → HUD → *Garis lintasan & titik jatuh*.
+- Granat bisa memantul balik dari tembok/meja yang dekat — untuk jarak dekat pakai gelinding, atau lempar lewat atas penghalang.
 
 ## Flashbang
 
-Tekan **4** (gamepad: RB dua kali cepat), lempar seperti granat (klik kiri jauh, klik kanan menggelinding, bisa dimasak agar meledak
-di udara). Tidak memberi damage, tapi **membutakan semua yang melihatnya — termasuk teman setim dan dirimu sendiri**. Menatap dari
+Tekan **5** (gamepad: RB dua kali cepat), lempar seperti granat (klik kiri jauh, klik kanan menggelinding, bisa dimasak agar meledak
+di udara). Tidak memberi damage, tapi **membutakan semua yang melihatnya — termasuk teman setim dan dirimu sendiri** (pelempar kena
+setengahnya karena tahu kapan meledak; meledak di tangan karena dimasak kelamaan tetap penuh). Menatap dari
 dekat = layar putih ±3 detik lalu pulih bertahap (total ±5 detik); melirik / agak jauh = silau sebentar; terhalang dinding = tidak
 kena. Telinga ikut berdenging. Bot juga bisa kena, sebagian sempat memalingkan muka (makin sulit makin sering), dan bot juga
 melempar flashbang sebelum maju. Musuh yang kamu butakan lalu dibunuh timmu = **Assist flash** (+50). 1 flashbang per nyawa.
 
 ## Senjata
 
-- **Slot 1 — senjata utama** (pilihan di Loadout), **slot 2 — pisau**, **slot 3 — granat K-400** (1 per nyawa). **Q** kembali ke senjata sebelumnya.
-- **Pisau**: klik kiri tebas (45, dari belakang 90, tiap 0.45 s), klik kanan tusuk (70, dari belakang 100 = langsung mati, tiap 1.0 s);
-  lari 10% lebih cepat selama memegang pisau, tapi kembali ke senapan butuh 0.55 s.
+- **Slot 1 — senjata utama**, **slot 2 — pistol**, **slot 3 — senjata jarak dekat**, **slot 4 — granat K-400**, **slot 5 — flashbang**
+  (granat & flashbang 1 per nyawa). **Q** kembali ke senjata sebelumnya (setelah spawn: utama ↔ pistol). Semua dipilih di **Loadout**.
+- **35 senjata api** dalam 6 kelas + pistol (tab per kelas di Loadout, kartu berisi damage/RPM/kontrol/gerak/jarak):
+  - **Assault Rifle** (15): 10 AR GDD + FAMAS, AS VAL, Honey Badger (keduanya berperedam), FN FAL (battle rifle), Galil ACE.
+  - **SMG** (6): MP5, Kriss Vector, P90, UMP45, MP7, Micro UZI — unggul ≤ 20 u, lari lebih cepat, sprint-ke-tembak 0.08 s.
+  - **Shotgun** (5): Remington 870 & SPAS-12 (pompa), Benelli M4 (semi), Saiga-12 (magazen kotak), Double Barrel — 8–9 pellet,
+    reload per selongsong yang bisa dibatalkan dengan menembak.
+  - **Sniper** (4): AWM, CheyTac M200, Kar98k (bolt — dikokang tiap tembakan), Barrett M82 (semi .50); **DMR** (2): Dragunov SVD, Mini-14.
+    Akurasi penuh hanya setelah scope terbuka penuh (tanpa scope sangat meleset).
+  - **LMG** (3): M249, DP-28, RPK — magazen besar, recoil jongkok ×0.6, gerak lebih lambat.
+  - **Pistol** (5): Desert Eagle, Glock 18C (otomatis), USP-S (peredam), M1911, Beretta M9 — cabut 0.23–0.30 s, iron / red dot.
+- **Peredam** (USP-S, AS VAL, Honey Badger): tembakan lebih pelan & tidak memunculkanmu di radar musuh; bot hanya mendengar dari dekat.
+- **Jarak dekat** (klik kiri ringan, klik kanan berat; dari belakang lebih mematikan): **Pisau Komando** (tebas 45/90, tusuk 70/100,
+  lari +10%), **Karambit** (38/65, belakang 130, lari +12%, cabut 0.20 s), **Kukri** (55/90, jangkauan terpanjang), **Tomahawk**
+  (60/105 — ayunan berat langsung mematikan dari depan, tapi lambat).
+- Bot memakai AR, SMG & LMG; shotgun dan sniper hanya untuk pemain.
 - **Buang & ambil**: **G** membuang senjata utama ke lantai (isi magazine & optik ikut). Hanya **tim sendiri** yang bisa mengambil atau
   menukarnya (**E**); musuh tidak bisa. Senjata yang dibuang hilang setelah 60 s; respawn selalu kembali ke senjata pilihan Loadout.
 

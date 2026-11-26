@@ -37,7 +37,7 @@ export interface LobbyPlayer {
   /** Teman simulasi (pratinjau tanpa server) — di match dimainkan bot dengan namanya. */
   sim: boolean;
   /** Tampilan & senjata pilihan pemain (dikirim saat masuk room online; dipakai saat match dimulai). */
-  variant?: Variant; weapon?: string; scope?: string;
+  variant?: Variant; weapon?: string; scope?: string; pistol?: string; pscope?: string; melee?: string;
 }
 
 export interface RoomSettings {
@@ -85,7 +85,7 @@ export interface RosterEntry {
   pid?: string;
   /** Teman simulasi (tanpa server): dimainkan bot. */
   sim?: boolean;
-  variant?: Variant; weapon?: string; scope?: string;
+  variant?: Variant; weapon?: string; scope?: string; pistol?: string; pscope?: string; melee?: string;
 }
 /** Susunan match dari room: tim pemain lokal + isi tiap tim berurutan slot. */
 export interface MatchRoster { playerTeam: Team; blue: RosterEntry[]; red: RosterEntry[] }
@@ -210,7 +210,8 @@ export class Lobby {
     const me = this.find(meId);
     const team = (t: Team): RosterEntry[] => this.slots(t).filter(s => s.player || s.bot).map(s => {
       const p = s.player;
-      return p ? { name: p.name, kind: p.id === meId ? 'you' : 'friend', pid: p.id, sim: p.sim, variant: p.variant, weapon: p.weapon, scope: p.scope }
+      return p ? { name: p.name, kind: p.id === meId ? 'you' : 'friend', pid: p.id, sim: p.sim, variant: p.variant, weapon: p.weapon, scope: p.scope,
+        pistol: p.pistol, pscope: p.pscope, melee: p.melee }
         : { name: s.bot!, kind: 'bot' };
     });
     return { playerTeam: me?.team ?? 'blue', blue: team('blue'), red: team('red') };
@@ -225,6 +226,7 @@ export class Lobby {
   /** Cermin room di klien dari data host; local = pemain dengan id meId. Data jaringan divalidasi: kode room, setelan
    *  (map tak dikenal → Brick Hall, lihat cleanRoomSettings), pemain (id "p<n>" unik, nama dibersihkan, tim biru/merah). */
   static fromState(s: LobbyState, meId: string): Lobby {
+    const str = (v: unknown) => (typeof v === 'string' ? v.slice(0, 24) : undefined);
     const st = (s && typeof s === 'object' ? s : {}) as Partial<LobbyState>;
     const L = new Lobby(parseRoomCode(String(st.code ?? '')) ?? '', cleanRoomSettings(st.settings));
     L.nextId = isInt(st.nextId, 1, 1e6) ? st.nextId! : 1;
@@ -232,7 +234,7 @@ export class Lobby {
       if (!p || typeof p !== 'object' || typeof p.id !== 'string' || !/^p\d{1,6}$/.test(p.id) || L.find(p.id)) continue;
       L.players.push({ id: p.id, name: cleanName(String(p.name ?? '')) || 'Pemain', team: p.team === 'red' ? 'red' : 'blue',
         ready: !!p.ready, host: !!p.host, local: p.id === meId, sim: !!p.sim, variant: cleanVariant(p.variant),
-        weapon: typeof p.weapon === 'string' ? p.weapon : undefined, scope: typeof p.scope === 'string' ? p.scope : undefined });
+        weapon: str(p.weapon), scope: str(p.scope), pistol: str(p.pistol), pscope: str(p.pscope), melee: str(p.melee) });
     }
     return L;
   }

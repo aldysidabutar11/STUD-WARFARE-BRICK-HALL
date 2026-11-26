@@ -20,6 +20,7 @@ import type { BotDirector } from './BotDirector';
 import type { Settings } from '../ui/Settings';
 import type { ScopeSystem } from '../combat/ScopeSystem';
 import type { Killcam } from './Killcam';
+import type { Breakables } from '../world/Breakables';
 
 export interface DebugFlags {
   god: boolean; noclip: boolean; showNav: boolean; botLabels: boolean; dmgNumbers: boolean; colliders: boolean; slowmo: boolean;
@@ -48,6 +49,8 @@ export interface Ctx {
   vfx: Vfx; hud: Hud; audio: SpatialSynthAudio; grenades: GrenadeManager; deathFx: DeathFx; killcam: Killcam;
   /** Senjata utama yang dibuang (G) — hanya tim sendiri yang bisa mengambil. */
   drops: WeaponDrops;
+  /** Panel kaca destruktibel map aktif (Boston). */
+  breakables: Breakables;
   settings: Settings;
   time: number;          // waktu game (detik, ikut timeScale)
   fixedIndex: number;    // indeks fixed step

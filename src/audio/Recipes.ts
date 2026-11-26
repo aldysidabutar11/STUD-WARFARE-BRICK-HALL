@@ -1,5 +1,6 @@
 // src/audio/Recipes.ts — resep sintesis prosedural (GDD §10.4). Setiap resep menulis ke `out` mulai t0, mengembalikan durasi (s).
 import type { SurfaceMaterial } from '../core/EventBus';
+import type { GunSound } from '../config/weaponsData';
 
 export interface SynthCtx { ac: AudioContext; noise: AudioBuffer }
 export type Recipe = (s: SynthCtx, out: AudioNode, t0: number) => number;
@@ -31,28 +32,77 @@ function filt(s: SynthCtx, type: BiquadFilterType, f: number, q = 0.7) {
   const b = s.ac.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b;
 }
 
-/** Tembakan: 5.56 = noise bandpass 1200–2400 + klik square 3200 4 ms + ekor lowpass 700; 7.62 menambah punch sawtooth 180→90 Hz. */
-export function gunshot(caliber: '5.56' | '7.62', pitch: number): Recipe {
+/** Profil tembakan: badan noise bandpass [min, max] Hz, klik square, ekor lowpass, punch sawtooth (f0→f1, puncak, durasi),
+ *  retak supersonik (sniper). 556 & 762 = resep GDD §10.4 (5.56: bandpass 1200–2400 + klik 3200 4 ms + ekor lowpass 700;
+ *  7.62 menambah punch sawtooth 180→90 Hz). */
+interface ShotProfile {
+  bp: readonly [number, number]; q: number; peak: number; body: number;
+  click: number; clickPeak: number;
+  tail: number; tailLp: number; tailPeak: number;
+  punch?: readonly [number, number, number, number];
+  crack?: readonly [number, number];
+}
+const SHOT: Record<GunSound, ShotProfile> = {
+  '556': { bp: [1200, 2400], q: 0.9, peak: 1.0, body: 0.12, click: 3200, clickPeak: 0.35, tail: 0.35, tailLp: 700, tailPeak: 0.22 },
+  '762': { bp: [900, 1800], q: 0.9, peak: 1.0, body: 0.12, click: 3200, clickPeak: 0.35, tail: 0.5, tailLp: 500, tailPeak: 0.3,
+    punch: [180, 90, 0.8, 0.16] },
+  '9mm': { bp: [1600, 2800], q: 1.0, peak: 0.85, body: 0.08, click: 3700, clickPeak: 0.3, tail: 0.24, tailLp: 950, tailPeak: 0.16 },
+  '45': { bp: [1100, 1900], q: 0.9, peak: 0.9, body: 0.1, click: 3000, clickPeak: 0.3, tail: 0.3, tailLp: 650, tailPeak: 0.2,
+    punch: [230, 120, 0.4, 0.09] },
+  '57': { bp: [2000, 3300], q: 1.1, peak: 0.85, body: 0.07, click: 4000, clickPeak: 0.3, tail: 0.24, tailLp: 1100, tailPeak: 0.15 },
+  '12ga': { bp: [450, 950], q: 0.7, peak: 1.0, body: 0.18, click: 2400, clickPeak: 0.3, tail: 0.65, tailLp: 420, tailPeak: 0.38,
+    punch: [125, 52, 1.0, 0.22] },
+  magnum: { bp: [700, 1300], q: 0.8, peak: 1.0, body: 0.14, click: 3000, clickPeak: 0.35, tail: 0.48, tailLp: 560, tailPeak: 0.3,
+    punch: [165, 70, 0.85, 0.17] },
+  sniper: { bp: [600, 1100], q: 0.8, peak: 1.0, body: 0.16, click: 3400, clickPeak: 0.4, tail: 0.95, tailLp: 360, tailPeak: 0.4,
+    punch: [115, 45, 1.0, 0.24], crack: [2600, 0.7] },
+  heavy: { bp: [420, 800], q: 0.7, peak: 1.0, body: 0.2, click: 2800, clickPeak: 0.4, tail: 1.1, tailLp: 300, tailPeak: 0.45,
+    punch: [95, 38, 1.0, 0.3], crack: [2200, 0.6] },
+  suppressed: { bp: [500, 900], q: 1.2, peak: 0.45, body: 0.07, click: 2500, clickPeak: 0.35, tail: 0.12, tailLp: 1200, tailPeak: 0.08 },
+};
+
+/** Tembakan sintesis sesuai profil senjata (weaponStats.soundOf). */
+export function gunshot(sound: GunSound, pitch: number): Recipe {
+  const P = SHOT[sound];
   return (s, out, t0) => {
-    const big = caliber === '7.62';
-    const bpF = (big ? 900 + Math.random() * 900 : 1200 + Math.random() * 1200) * pitch;
-    const n = noiseSrc(s, t0, 0.14);
-    const bp = filt(s, 'bandpass', bpF, 0.9);
-    n.connect(bp).connect(env(s, out, t0, 1.0, 0.001, 0.12));
-    const click = osc(s, 'square', 3200 * pitch, 3200 * pitch, t0, 0.004);
-    click.connect(env(s, out, t0, 0.35, 0.0005, 0.004));
-    const tailDur = big ? 0.5 : 0.35;
-    const tn = noiseSrc(s, t0, tailDur);
-    const lp = filt(s, 'lowpass', (big ? 500 : 700) * pitch);
-    tn.connect(lp).connect(env(s, out, t0, big ? 0.3 : 0.22, 0.004, tailDur));
-    if (big) {
-      const p = osc(s, 'sawtooth', 180 * pitch, 90 * pitch, t0, 0.09);
-      const plp = filt(s, 'lowpass', 400);
-      p.connect(plp).connect(env(s, out, t0, 0.8, 0.002, 0.16));
+    const bpF = (P.bp[0] + Math.random() * (P.bp[1] - P.bp[0])) * pitch;
+    noiseSrc(s, t0, P.body + 0.02).connect(filt(s, 'bandpass', bpF, P.q)).connect(env(s, out, t0, P.peak, 0.001, P.body));
+    osc(s, 'square', P.click * pitch, P.click * pitch, t0, 0.004).connect(env(s, out, t0, P.clickPeak, 0.0005, 0.004));
+    noiseSrc(s, t0, P.tail).connect(filt(s, 'lowpass', P.tailLp * pitch)).connect(env(s, out, t0, P.tailPeak, 0.004, P.tail));
+    if (P.punch) {
+      const [f0, f1, pk, d] = P.punch;
+      osc(s, 'sawtooth', f0 * pitch, f1 * pitch, t0, d * 0.6).connect(filt(s, 'lowpass', 400)).connect(env(s, out, t0, pk, 0.002, d));
     }
-    return tailDur + 0.05;
+    if (P.crack) noiseSrc(s, t0, 0.03).connect(filt(s, 'highpass', P.crack[0], 0.8)).connect(env(s, out, t0, P.crack[1], 0.0005, 0.025));
+    return P.tail + 0.05;
   };
 }
+
+/** Kokang pompa: tarik (gesek + klak) lalu dorong (klak lebih keras). */
+export const pumpAction: Recipe = (s, out, t0) => {
+  noiseSrc(s, t0, 0.06).connect(filt(s, 'bandpass', 1400, 1.4)).connect(env(s, out, t0, 0.45, 0.002, 0.05));
+  osc(s, 'square', 900, 700, t0 + 0.04, 0.012).connect(env(s, out, t0 + 0.04, 0.3, 0.001, 0.012));
+  noiseSrc(s, t0 + 0.17, 0.05).connect(filt(s, 'bandpass', 1900, 1.6)).connect(env(s, out, t0 + 0.17, 0.6, 0.001, 0.045));
+  osc(s, 'square', 1300, 1000, t0 + 0.18, 0.01).connect(env(s, out, t0 + 0.18, 0.35, 0.001, 0.01));
+  return 0.28;
+};
+
+/** Kokang bolt: angkat (klik), tarik (gesek logam), dorong, kunci (klik). */
+export const boltAction: Recipe = (s, out, t0) => {
+  const clk = (t: number, f: number, g: number) => osc(s, 'square', f, f * 0.8, t, 0.008).connect(env(s, out, t, g, 0.001, 0.008));
+  clk(t0, 2200, 0.3);
+  noiseSrc(s, t0 + 0.12, 0.12).connect(filt(s, 'bandpass', 3000, 2)).connect(env(s, out, t0 + 0.12, 0.25, 0.01, 0.1));
+  noiseSrc(s, t0 + 0.42, 0.1).connect(filt(s, 'bandpass', 2600, 2)).connect(env(s, out, t0 + 0.42, 0.28, 0.01, 0.08));
+  clk(t0 + 0.58, 1800, 0.4);
+  return 0.65;
+};
+
+/** Selongsong shotgun masuk ke tabung: gesek pendek + klik. */
+export const shellInsert: Recipe = (s, out, t0) => {
+  noiseSrc(s, t0, 0.04).connect(filt(s, 'bandpass', 2200, 1.8)).connect(env(s, out, t0, 0.35, 0.002, 0.035));
+  osc(s, 'square', 1500, 1200, t0 + 0.03, 0.008).connect(env(s, out, t0 + 0.03, 0.25, 0.001, 0.008));
+  return 0.08;
+};
 
 /** Langkah kaki sadar-material; land = mendarat (gain ×1.8, nada ×0.8). */
 export function footstep(mat: SurfaceMaterial, land = false): Recipe {
@@ -130,6 +180,10 @@ export const bounce = (mat: SurfaceMaterial, speed: number): Recipe => (s, out, 
     noiseSrc(s, t0, 0.05).connect(filt(s, 'lowpass', 900)).connect(env(s, out, t0, a * 0.4, 0.002, 0.05));
     return 0.07;
   }
+  if (mat === 'glass') {        // di kaca: denting tinggi bening
+    for (const [f, k] of [[3900, 1], [5200, 0.5]] as const) osc(s, 'sine', f, f * 0.99, t0, 0.08).connect(env(s, out, t0, a * 0.45 * k, 0.0008, 0.08));
+    return 0.1;
+  }
   const f = mat === 'tile' ? 1400 : 600;
   osc(s, 'triangle', f, f * 0.9, t0, 0.03).connect(env(s, out, t0, a, 0.001, 0.03));
   return 0.05;
@@ -193,9 +247,28 @@ export const impactTick = (mat: SurfaceMaterial | 'book' | 'body'): Recipe => (s
     noiseSrc(s, t0, 0.025).connect(filt(s, 'bandpass', 4200, 2)).connect(env(s, out, t0, 0.3, 0.001, 0.025));
     return 0.09;
   }
+  if (mat === 'glass') {        // peluru kena kaca anti-peluru: "tik" keras + gemerincing halus
+    noiseSrc(s, t0, 0.02).connect(filt(s, 'highpass', 4500, 1)).connect(env(s, out, t0, 0.35, 0.0006, 0.02));
+    osc(s, 'sine', 4700, 4500, t0 + 0.01, 0.06).connect(env(s, out, t0 + 0.01, 0.12, 0.001, 0.06));
+    return 0.08;
+  }
   const f = mat === 'tile' ? 2600 : mat === 'book' ? 900 : mat === 'sand' ? 700 : 1500;
   noiseSrc(s, t0, 0.03).connect(filt(s, 'bandpass', f, 2)).connect(env(s, out, t0, 0.35, 0.001, 0.03));
   return 0.04;
+};
+
+/** Kaca pecah (panel destruktibel Boston): noise bandpass 3200 Hz + 5 klik tinggi acak 4–6 kHz + gemerincing yang jatuh. */
+export const glassBreak: Recipe = (s, out, t0) => {
+  noiseSrc(s, t0, 0.35).connect(filt(s, 'bandpass', 3200, 0.9)).connect(env(s, out, t0, 0.9, 0.002, 0.32));
+  for (let i = 0; i < 5; i++) {
+    const t = t0 + Math.random() * 0.12, f = 4000 + Math.random() * 2000;
+    osc(s, 'square', f, f * 0.95, t, 0.012).connect(env(s, out, t, 0.25, 0.0006, 0.012));
+  }
+  for (let i = 0; i < 7; i++) {
+    const t = t0 + 0.15 + Math.random() * 0.45, f = 3500 + Math.random() * 3000;
+    osc(s, 'sine', f, f, t, 0.05).connect(env(s, out, t, 0.08, 0.001, 0.05));
+  }
+  return 0.7;
 };
 
 // ── tambahan pasca-MVP (umpan balik ala FPS lain) — tetap 100% sintesis

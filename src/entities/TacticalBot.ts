@@ -20,6 +20,7 @@ import type { GrenadeInput } from '../combat/GrenadeK400';
 import type { NavEdge } from '../world/NavGraph';
 import { currentMap } from '../world/maps/registry';
 import { WEAPONS } from '../config/weaponsData';
+import { hearRadiusOf } from '../combat/weaponStats';
 import { canMelee } from '../combat/Melee';
 import { moveFeel } from './moveFeel';
 import { estimateSource, newAimState, reactionTime, resetAim, segPointDist2, stepAim, type AimParams } from './botAim';
@@ -160,7 +161,7 @@ export class TacticalBot {
     this.unsubs.push(bus.on('shot', (ev) => {
       const s = ctx.byId.get(ev.shooterId);
       if (!s || s.team === this.e.team || !this.e.alive) return;
-      this.hear(ev.origin, WEAPONS[ev.weaponId].caliber === '7.62' ? B.hearing.shot762 : B.hearing.shot556);
+      this.hear(ev.origin, hearRadiusOf(WEAPONS[ev.weaponId]));   // 5.56 35 u / 7.62 50 u (GDD), peredam 12 u, sniper 60 u
       this.nearMiss(s, ev.origin, ev.end);
     }));
     this.unsubs.push(bus.on('grenade:explode', (ev) => { if (this.e.alive) this.hear(ev.position, B.hearing.explosion); }));
@@ -721,7 +722,9 @@ export class TacticalBot {
         const shelf = new THREE.Vector3((box.min[0] + box.max[0]) / 2, 4, (box.min[2] + box.max[2]) / 2);
         const dir = new THREE.Vector3(shelf.x - A.x, 0, shelf.z - A.z).normalize();
         const isA = shelfId!.startsWith('SHELF_A');
-        this.drop = { shelf, takeoff: new THREE.Vector3(A.x, A.y, A.z), dir, phase: 'runup', sprint: !isA, jumpDist: isA ? 5.0 : 10.3, brake: isA };
+        // map lain (Boston: kabinet di bawah void Veranda) memberi spesifikasi lompatnya sendiri; bawaan = rak Brick Hall
+        const spec = currentMap().dropSpec?.(shelfId!) ?? { jumpDist: isA ? 5.0 : 10.3, sprint: !isA, brake: isA };
+        this.drop = { shelf, takeoff: new THREE.Vector3(A.x, A.y, A.z), dir, phase: 'runup', sprint: spec.sprint, jumpDist: spec.jumpDist, brake: spec.brake };
         return this.followDrop(out);
       }
     }
@@ -835,7 +838,7 @@ export class TacticalBot {
     if (e.flashes >= 1 && d >= F.botMin && d <= F.botMax && !allyNear(F.botAllyClear) && Math.random() < F.botUse[this.difficulty]) kind = 'flash';
     else if (e.grenades >= 1 && d >= B.grenadeMin && d <= B.grenadeMax && !allyNear(B.grenadeAllyClear) && Math.random() < this.diff.grenade) kind = 'frag';
     if (!kind) { this.grenadeCd = B.grenadeCooldown; return false; }
-    // sudut rendah untuk mengenai titik dx, dy (v = 24, g = 22)
+    // sudut rendah untuk mengenai titik dx, dy (v = CFG.grenade.overSpeed, g = 22)
     const v = CFG.grenade.overSpeed, g = -CFG.world.gravity, v2 = v * v;
     e.eye(_eye);
     const dx = d, dy = p.y + 1.0 - (_eye.y - XCFG.grenadeThrow.fpsDown);
@@ -844,9 +847,9 @@ export class TacticalBot {
     const theta = Math.atan((v2 - Math.sqrt(disc)) / (g * dx));
     const tFlight = dx / (v * Math.cos(theta));
     this.gPlan.pitch = theta - D2R(CFG.grenade.overLiftDeg); // lemparan menambah +8°
-    // flash: dimasak agar meledak di udara dekat sasaran (sulit dihindari); K-400 seperti GDD
+    // flash: dimasak agar meledak di udara dekat sasaran (sulit dihindari); K-400: rumus GDD (meledak ±0.4 s setelah tiba)
     this.gPlan.cook = kind === 'flash' ? THREE.MathUtils.clamp(F.fuse - tFlight - 0.25, 0, F.fuse - 0.4)
-      : THREE.MathUtils.clamp(CFG.grenade.fuse - tFlight - 0.4, 0, 2.0);
+      : THREE.MathUtils.clamp(CFG.grenade.fuse - tFlight - 0.4, 0, B.grenadeCookMax);   // GDD 2.0 (lempar 24 u/s), lihat XCFG
     this.gPlan.kind = kind;
     this.gPlan.yaw = yawTo(p.x - e.pos.x, p.z - e.pos.z);
     return true;

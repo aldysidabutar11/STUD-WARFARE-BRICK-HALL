@@ -6,7 +6,8 @@ import { XCFG } from '../config/extraConfig';
 import type { HitPart } from '../core/EventBus';
 import { Spring, damp } from './moveFeel';
 import { characterArt, type Variant } from './CharacterArt';
-import { WEAPON_MATERIAL, grenadeModel, knifeModel, flashbangModel } from '../combat/WeaponModels';
+import { WEAPON_MATERIAL, grenadeModel, knifeModel, flashbangModel, meleeModel } from '../combat/WeaponModels';
+import type { MeleeId } from '../config/weaponsExtra';
 import type { Held } from '../combat/Slots';
 import { RIG_SLASH_A, RIG_SLASH_B, RIG_STAB, sampleKeys } from './knifeAnim';
 import { BAKE_UNIFORMS } from '../world/LightBake';
@@ -93,6 +94,8 @@ export class BlockyCharacter {
   protectT = 0;
   // benda di tangan: senapan (dipasang pemilik lewat setGun), pisau & granat (dibuat di sini → ikut setLayer)
   private gun: THREE.Object3D | null = null;
+  /** Pistol (slot 2), dipasang pemilik lewat setPistol. */
+  private pistol: THREE.Object3D | null = null;
   private readonly knifeMesh: THREE.Mesh;
   private readonly nadeMesh: THREE.Mesh;
   private heldKind: Held = 'ar';
@@ -164,6 +167,7 @@ uniform vec3 uBounce;`)
     this.root.add(v.root);
     for (const k of PART_KEYS) this.visuals[k].visible = false;
     if (this.gun) this.gun.scale.setScalar(VENNY_GUN_SCALE);
+    if (this.pistol) this.pistol.scale.setScalar(VENNY_GUN_SCALE);
     this.knifeMesh.scale.setScalar(1);
     const C = XCFG.rig.colors.venny;
     this.colors.head = C.skin; this.colors.upper = C.vest; this.colors.lower = C.skirt;
@@ -180,6 +184,7 @@ uniform vec3 uBounce;`)
     this.weaponMount.position.set(RIG.weaponMount[0], RIG.weaponMount[1], RIG.weaponMount[2]);
     this.weaponMount.rotation.set(0, 0, 0);
     if (this.gun) this.gun.scale.setScalar(1);
+    if (this.pistol) this.pistol.scale.setScalar(1);
     this.knifeMesh.scale.setScalar(XCFG.knife.tpsScale);
   }
 
@@ -197,11 +202,23 @@ uniform vec3 uBounce;`)
     if (this.venny) mesh.scale.setScalar(VENNY_GUN_SCALE);
   }
 
-  /** Tampilkan benda yang dipegang (senapan / pisau / granat / kosong). */
+  /** Model senjata jarak dekat di tangan (pisau / karambit / kukri / tomahawk). */
+  setMelee(id: MeleeId) { const g = meleeModel(id); if (this.knifeMesh.geometry !== g) this.knifeMesh.geometry = g; }
+
+  /** Pasang mesh pistol dunia di tangan kanan (Entity / ghost killcam). */
+  setPistol(mesh: THREE.Object3D) {
+    this.weaponMount.add(mesh);
+    this.pistol = mesh;
+    mesh.visible = this.heldKind === 'pistol';
+    if (this.venny) mesh.scale.setScalar(VENNY_GUN_SCALE);
+  }
+
+  /** Tampilkan benda yang dipegang (senapan / pistol / pisau / granat / kosong). */
   private setHeld(h: Held) {
     if (h === this.heldKind) return;
     this.heldKind = h;
     if (this.gun) this.gun.visible = h === 'ar';
+    if (this.pistol) this.pistol.visible = h === 'pistol';
     this.knifeMesh.visible = h === 'knife';
     this.nadeMesh.visible = h === 'grenade' || h === 'flash';
     if (h === 'grenade' || h === 'flash') this.nadeMesh.geometry = h === 'flash' ? flashbangModel() : grenadeModel();
@@ -334,6 +351,12 @@ uniform vec3 uBounce;`)
       this.shoulderR.rotation.set(arm, 0, 0);
       this.shoulderL.rotation.set(arm, D2R(A.holdCrossDeg), 0);
       if (s.reload >= 0) this.shoulderL.rotation.x = D2R(90) - D2R(A.reloadSwingDeg) * Math.sin(Math.PI * s.reload);
+    } else if (held === 'pistol') {
+      // pistol dua tangan: kedua lengan lurus ke depan & bertemu di tengah (tangan kiri menopang tangan kanan)
+      const arm = THREE.MathUtils.lerp(aim, low, this.lowW);
+      this.shoulderR.rotation.set(arm, -D2R(XCFG.rig.pistolCrossDeg[0]), 0);
+      this.shoulderL.rotation.set(arm, D2R(XCFG.rig.pistolCrossDeg[1]), 0);
+      if (s.reload >= 0) this.shoulderL.rotation.x = arm - D2R(A.reloadSwingDeg) * Math.sin(Math.PI * s.reload);
     } else {
       // satu tangan (pisau / granat): lengan kanan sedikit di bawah garis bidik, lengan kiri santai mengayun mengikuti langkah
       const hold = D2R(72) + 0.8 * s.pitch;
@@ -369,7 +392,8 @@ uniform vec3 uBounce;`)
       vp.hipsY = this.hips.position.y; vp.hipsYaw = this.hips.rotation.y; vp.chestX = this.chest.rotation.x; vp.chestY = chestYaw;
       vp.chestDy = this.chest.position.y - RIG.chestY; vp.neckX = this.neck.rotation.x;
       vp.legL = legL; vp.legR = legR; vp.crouch = c; vp.air = this.airW; vp.low = this.lowW; vp.walk = this.walkW;
-      vp.held = held; vp.reload = s.reload; vp.gun = this.gun instanceof THREE.Mesh ? this.gun : null;
+      const g = held === 'pistol' ? this.pistol : this.gun;
+      vp.held = held; vp.reload = s.reload; vp.gun = g instanceof THREE.Mesh ? g : null;
       this.venny.pose(vp, this.weaponMount, this.root);
     }
   }

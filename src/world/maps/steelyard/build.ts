@@ -188,7 +188,7 @@ export function syColliders(boxes: readonly Box[], backFeet: readonly Foot[]): R
 }
 
 /** Bingkai ortografis bayangan pas menutup area main (+ pagar & tumpukan) dilihat dari arah matahari → texel lebih rapat. */
-function fitShadow(sun: THREE.DirectionalLight, bx: [number, number], bz: [number, number], top: number) {
+export function fitShadow(sun: THREE.DirectionalLight, bx: [number, number], bz: [number, number], top: number) {
   const m = new THREE.Matrix4().lookAt(sun.position, sun.target.position, new THREE.Vector3(0, 1, 0));
   const xa = new THREE.Vector3(), ya = new THREE.Vector3(), za = new THREE.Vector3();
   m.extractBasis(xa, ya, za);

@@ -54,7 +54,7 @@ export class MatchManager {
     this.countdown = CFG.match.countdown;
     ctx.teams.reset();
     for (const e of ctx.entities) { e.stats = newStats(); e.streak = 0; e.respawnT = 0; e.dmgBy.clear(); }
-    ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear();
+    ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear(); ctx.breakables.reset();
     this.set('COUNTDOWN');
   }
 
@@ -67,7 +67,7 @@ export class MatchManager {
     this.winner = s.winner; this.roundWinner = s.roundWinner; this.roundEndT = 0; this.endT = 0;
     ctx.teams.reset(); ctx.teams.scores.blue = s.sb; ctx.teams.scores.red = s.sr;
     for (const e of ctx.entities) { e.stats = newStats(); e.streak = 0; e.respawnT = 0; e.dmgBy.clear(); }
-    ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear();
+    ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear(); ctx.breakables.reset();
     this.set(s.state);
     if (s.state === 'RESULTS') this.onResults?.();
   }
@@ -78,7 +78,7 @@ export class MatchManager {
     this.timeLeft = timeLeft; this.countdown = countdown;
     if (round > this.round) {   // ronde baru (Eliminasi): bersihkan sisa visual ronde lalu
       this.round = round; this.roundWinner = null;
-      ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear();
+      ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.breakables.reset();
       this.onRoundStart?.(round);
     }
     if (state !== this.state) {
@@ -110,7 +110,7 @@ export class MatchManager {
     this.timeLeft = this.opts.mode === 'elim' ? XCFG.elim.roundTime : this.opts.timeLimit;
     this.countdown = CFG.match.countdown;
     this.roundWinner = null;
-    ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear();
+    ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear(); ctx.breakables.reset();
     for (const e of ctx.entities) ctx.spawns.spawn(e);
     this.onRoundStart?.(this.round);
     this.set(this.opts.mode === 'practice' ? 'PLAYING' : 'COUNTDOWN');

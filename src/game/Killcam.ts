@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
-import type { WeaponId } from '../config/weaponsData';
+import type { ScopeId, WeaponId } from '../config/weaponsData';
 import { bus, type KillWeapon } from '../core/EventBus';
 import { BlockyCharacter, type AnimState, type Team } from '../entities/BlockyCharacter';
 import { WEAPON_MATERIAL, createOpticMesh, weaponModel } from '../combat/WeaponModels';
@@ -21,11 +21,22 @@ const STEP_EVERY = Math.max(1, Math.round(1 / (CFG.world.fixedStep * K.hz)));
 const FX = 0, FY = 1, FZ = 2, FYAW = 3, FPITCH = 4, FCROUCH = 5, FSPEED = 6, FSPRINT = 7, FAIR = 8, FALIVE = 9, FRELOAD = 10,
   FADS = 11, FMELEE = 12, FHELD = 13, FKNIFE = 14, F = 15;
 /** Benda di tangan ↔ angka rekaman. Serangan pisau: −1, tebas 0..1, tusuk 2..3. */
-const HELD: readonly Held[] = ['ar', 'knife', 'grenade', 'none', 'flash'];
+const HELD: readonly Held[] = ['ar', 'knife', 'grenade', 'none', 'flash', 'pistol'];
 
 interface Shot { t: number; id: number; w: WeaponId; o: THREE.Vector3; e: THREE.Vector3 }
 interface Hit { t: number; a: number; v: number; head: boolean }
-interface Ghost { char: BlockyCharacter; gun: THREE.Mesh; optic: THREE.Mesh | null; key: string; team: Team }
+interface Ghost { char: BlockyCharacter; gun: THREE.Mesh; optic: THREE.Mesh | null; pistol: THREE.Mesh; poptic: THREE.Mesh | null; key: string;
+  team: Team }
+
+/** Pasang geometri senjata + optik pada mesh ghost; mengembalikan mesh optik baru (lama dilepas). */
+function dressGun(gun: THREE.Mesh, old: THREE.Mesh | null, id: WeaponId, scope: ScopeId): THREE.Mesh | null {
+  const m = weaponModel(id, scope === 'iron');
+  gun.geometry = m.geometry;
+  if (old) gun.remove(old);
+  const optic = createOpticMesh(scope);
+  if (optic) { optic.position.set(0, m.opticMount.y - 0.38, m.opticMount.z); gun.add(optic); }
+  return optic;
+}
 export interface KillInfo { name: string; team: Team; weapon: KillWeapon; headshot: boolean; hp: number; distM: number }
 
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -205,19 +216,20 @@ export class Killcam {
       const gun = new THREE.Mesh(new THREE.BufferGeometry(), WEAPON_MATERIAL);
       gun.rotation.x = -Math.PI / 2;
       char.setGun(gun);
-      g = { char, gun, optic: null, key: '', team: e.team };
+      const pistol = new THREE.Mesh(new THREE.BufferGeometry(), WEAPON_MATERIAL);
+      pistol.rotation.x = -Math.PI / 2;
+      char.setPistol(pistol);
+      g = { char, gun, optic: null, pistol, poptic: null, key: '', team: e.team };
       this.root.add(char.root);
       this.ghosts.set(e.id, g);
     }
     g.char.setVariant(e.char.variant); // varian bisa berganti (pemain mengubah karakter)
-    const key = e.loadout.weapon + '|' + e.loadout.scope;
+    const lo = e.loadout, key = `${lo.weapon}|${lo.scope}|${lo.pistol}|${lo.pscope}|${lo.melee}`;
     if (g.key !== key) {
       g.key = key;
-      const m = weaponModel(e.loadout.weapon, e.loadout.scope === 'iron');
-      g.gun.geometry = m.geometry;
-      if (g.optic) { g.gun.remove(g.optic); g.optic = null; }
-      g.optic = createOpticMesh(e.loadout.scope);
-      if (g.optic) { g.optic.position.z = m.opticMount.z; g.gun.add(g.optic); }
+      g.optic = dressGun(g.gun, g.optic, lo.weapon, lo.scope);
+      g.poptic = dressGun(g.pistol, g.poptic, lo.pistol, lo.pscope);
+      g.char.setMelee(lo.melee);
     }
     return g;
   }
@@ -274,6 +286,10 @@ export class Killcam {
       const fi = CFG.player.footstepInterval;
       ctx.viewmodel.setVisible(true);
       ctx.engine.showViewmodel = true;
+      // senjata api yang dipegang pembunuh saat itu (utama / pistol)
+      if (HELD[Math.round(S[FHELD])] === 'pistol') ctx.viewmodel.setWeapon(k.loadout.pistol, k.loadout.pscope);
+      else ctx.viewmodel.setWeapon(k.loadout.weapon, k.loadout.scope);
+      ctx.viewmodel.setMelee(k.loadout.melee);
       ctx.viewmodel.update(dt, { ads: S[FADS] > 0.5 ? 1 : 0, sprint: S[FSPRINT] > 0.5, reload: S[FRELOAD], speed: S[FSPEED],
         stepInterval: S[FCROUCH] > 0.5 ? fi.crouch : S[FSPRINT] > 0.5 ? fi.sprint : fi.normal, grounded: S[FAIR] < 0.5,
         mouseDx: 0, mouseDy: 0, held: HELD[Math.round(S[FHELD])] ?? 'ar', melee: S[FMELEE],
@@ -293,8 +309,8 @@ export class Killcam {
       } else {
         const g = this.ghosts.get(s.id);
         if (!g || !g.char.root.visible) continue;
-        const m = weaponModel(s.w, true);
-        g.gun.localToWorld(_v.copy(m.muzzle));
+        const m = weaponModel(s.w, true), e = ctx.byId.get(s.id);
+        (e && s.w === e.loadout.pistol ? g.pistol : g.gun).localToWorld(_v.copy(m.muzzle));
         _w.copy(s.e).sub(_v).normalize();
         ctx.vfx.muzzleFlash(_v, _w);
         ctx.vfx.tracer(_v, s.e);

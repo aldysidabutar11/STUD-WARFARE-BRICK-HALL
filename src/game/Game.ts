@@ -5,7 +5,8 @@
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
-import { SCOPE_ORDER, WEAPONS, WEAPON_ORDER, scopeAllowed, type ScopeId, type WeaponId } from '../config/weaponsData';
+import { SCOPE_ORDER, WEAPONS, WEAPON_ORDER, classOf, scopeAllowed, type ScopeId, type WeaponId } from '../config/weaponsData';
+import { X_ORDER } from '../config/weaponsExtra';
 import { physics } from '../physics/Physics';
 import { Engine } from '../core/Engine';
 import { blackbox } from '../core/BlackBox';
@@ -15,6 +16,7 @@ import { PAD, keyLabel } from '../core/Bindings';
 import { bus, type GameEvents } from '../core/EventBus';
 import { isHigh } from '../config/presets';
 import { MAPS, currentMap, isMapId, setCurrentMap, type MapDef, type MapId } from '../world/maps/registry';
+import { Breakables } from '../world/Breakables';
 import type { LightSample } from '../world/LightBake';
 import { Props } from '../world/Props';
 import { NavGraph } from '../world/NavGraph';
@@ -29,7 +31,9 @@ import { vennyTemplate } from '../entities/venny/rig';
 import type { Team } from '../entities/BlockyCharacter';
 import { ScopeSystem } from '../combat/ScopeSystem';
 import { fireOne, spreadDeg } from '../combat/Ballistics';
-import { GrenadeManager, type GrenadeInput } from '../combat/GrenadeK400';
+import { GrenadeManager, fuseOf, type GrenadeInput } from '../combat/GrenadeK400';
+import { ArcTrace, throwLaunch, traceThrow } from '../combat/throwArc';
+import { ThrowArcView } from '../vfx/ThrowArcView';
 import { buttProgress, knifeProgress, startMelee, updateMelee } from '../combat/Melee';
 import { WeaponDrops } from '../combat/WeaponDrops';
 import { heldOf } from '../combat/Slots';
@@ -59,7 +63,15 @@ import { BotDirector } from './BotDirector';
 import { Killcam } from './Killcam';
 import { driveWeapons, emptyFrame } from './PlayerActions';
 import { ctx } from './ctx';
-import { NetClient, NetHost, cleanLoadout, type JoinFail } from '../net/Session';
+import { NetClient, NetHost, type JoinFail } from '../net/Session';
+import { DEFAULT_LOADOUT, cleanLoadout, loadoutOf, type Loadout } from '../combat/Loadout';
+
+/** Senjata bot per kelas (AR GDD + tambahan, SMG, LMG). */
+const BOT_POOLS = { AR: [...WEAPON_ORDER, ...X_ORDER.filter(id => classOf(WEAPONS[id]) === 'AR')] as WeaponId[],
+  SMG: X_ORDER.filter(id => classOf(WEAPONS[id]) === 'SMG') as WeaponId[], LMG: X_ORDER.filter(id => classOf(WEAPONS[id]) === 'LMG') as WeaponId[] };
+
+/** Dummy latihan / stress test: M416 bidikan besi. */
+const DUMMY_LOADOUT: Loadout = { ...DEFAULT_LOADOUT, weapon: 'm416', scope: 'iron' };
 import { createSignaling, iceServers } from '../net/Signaling';
 import { ClientRep, HostRep, RemoteHuman } from '../net/NetMatch';
 import { parseStart, type NetEnt, type NetStart } from '../net/start';
@@ -70,7 +82,7 @@ import { HoldQueue } from '../net/HoldQueue';
 import { H, I, type Command } from '../net/protocol';
 
 const D2R = THREE.MathUtils.degToRad, R2D = THREE.MathUtils.radToDeg;
-const _v = new THREE.Vector3(), _w = new THREE.Vector3();
+const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _arcPos = new THREE.Vector3(), _arcVel = new THREE.Vector3();
 const DOWN = new THREE.Vector3(0, -1, 0);
 const wrapA = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -174,6 +186,9 @@ export class Game {
   /** Jadwal hentakan kamera serangan pisau (waktu game; 0 = tidak ada). */
   private punchAt = 0; private punchKind: 'slash' | 'stab' = 'slash'; private punchAlt = false;
   private readonly gIn: GrenadeInput = { equip: null, toSlot: null, lPress: false, lHeld: false, lRelease: false, rPress: false, rHeld: false, rRelease: false };
+  /** Garis lintasan benda lempar pemain (Pengaturan → HUD). */
+  private readonly arc = new ThrowArcView();
+  private readonly arcTrace = new ArcTrace();
   /** Gamepad: waktu RB terakhir (RB dua kali cepat = flashbang). */
   private rbAt = -1e9;
   private menuT = 0;
@@ -226,6 +241,7 @@ export class Game {
     const startMap = this.defaultMapId();
     const sub = document.querySelector('#loading .ld-sub');
     if (sub) sub.textContent = MAPS[startMap].name.toUpperCase();
+    ctx.breakables = new Breakables();
     this.loadMap(startMap, true);
     ctx.camRig = new CameraRig();
     ctx.viewmodel = new Viewmodel(engine.vmScene, 'blue');
@@ -236,6 +252,7 @@ export class Game {
     // flashbang: layar ini silau (putih → pulih) + telinga berdenging; bot yang sempat memalingkan muka kena lebih ringan
     ctx.grenades.onLocalFlash = (x, s) => { ctx.hud.flash(x); if (s >= 0.2) ctx.audio.tinnitus(XCFG.flash.deafMax * s); };
     ctx.grenades.noticed = (bot, id) => bot.bot?.flashNoticed(id) ?? false;
+    engine.scene.add(this.arc.group);
     ctx.drops = new WeaponDrops(engine.scene, engine.preset.shadowMap > 0);
     ctx.teams = new TeamManager();
     ctx.match = new MatchManager();
@@ -305,7 +322,7 @@ export class Game {
       play: (practice) => this.play(practice ? 'practice' : this.settings.mode), resume: () => this.resume(),
       quitToMenu: () => this.quitToMenu(), replay: () => this.replay(),
       fullscreen: () => void this.input.goFullscreen(), settings: () => this.settings,
-      applySettings: (s) => this.applySettings(s), setLoadout: (w, s, v) => this.setLoadout(w, s, v),
+      applySettings: (s) => this.applySettings(s), setLoadout: (lo, v) => this.setLoadout(lo, v),
       click: () => { ctx.audio.unlock(); ctx.audio.click(); }, inMatch: () => this.inMatch,
       refreshHz: () => 1000 / engine.pacing.refreshMs,
       room: () => (this.room ? { lobby: this.room, me: this.roomMe } : null),
@@ -429,10 +446,14 @@ export class Game {
     };
   }
 
-  private randomLoadout(): { weapon: WeaponId; scope: ScopeId } {
-    const weapon = WEAPON_ORDER[Math.floor(Math.random() * WEAPON_ORDER.length)];
+  /** Loadout bot: AR (10 GDD + AR tambahan), SMG atau LMG (perilaku tembak sama dengan AR; XCFG.bots.weaponMix) + optik acak
+   *  (≤ 4×). Shotgun & sniper/DMR tidak dipakai bot (butuh AI khusus: mendekat / menjaga sudut). */
+  private randomLoadout(): Loadout {
+    const mix = XCFG.bots.weaponMix, r = Math.random() * (mix.AR + mix.SMG + mix.LMG);
+    const guns = BOT_POOLS[r < mix.AR ? 'AR' : r < mix.AR + mix.SMG ? 'SMG' : 'LMG'];
+    const weapon = guns[Math.floor(Math.random() * guns.length)];
     const pool = SCOPE_ORDER.filter(s => scopeAllowed(WEAPONS[weapon], s) && s !== 'x6');
-    return { weapon, scope: pool[Math.floor(Math.random() * pool.length)] };
+    return { ...DEFAULT_LOADOUT, weapon, scope: pool[Math.floor(Math.random() * pool.length)] };
   }
 
   /** roster = susunan dari room (tim pemain, teman, bot per slot); null = main solo (bot sekutu/musuh dari setelan). */
@@ -446,7 +467,7 @@ export class Game {
       for (const d of net.ents) {
         const me = !!d.pid && d.pid === this.roomMe;
         const e = new Entity(d.id, d.name, d.team, me, shadows, d.variant);
-        e.applyLoadout({ weapon: d.weapon, scope: d.scope });
+        e.applyLoadout(loadoutOf(d));
         if (me) { e.char.setLayer(1); ctx.player = e; }
         else if (ctx.net.role === 'client') e.puppet = true;
         else if (d.pid && !d.bot) e.remote = new RemoteHuman(d.pid);
@@ -461,13 +482,13 @@ export class Game {
     const pName = (mode !== 'practice' && roster?.[pTeam].find(r => r.kind === 'you')?.name) || 'Kamu';
     const player = new Entity(1, pName, pTeam, true, shadows, s.charVariant);
     player.char.setLayer(1); // tubuh lokal tidak dirender kamera FPS, tetap kena raycaster
-    player.applyLoadout({ weapon: s.weapon, scope: s.scope });
+    player.applyLoadout(loadoutOf(s));
     this.addEntity(player); ctx.player = player;
     if (mode === 'practice') {
       let mover = 0;
       currentMap().practice.forEach(([x, y, z, moving], i) => {
         const e = new Entity(100 + i, moving ? `Target Gerak ${++mover}` : `Dummy ${i + 1}`, 'red', false, shadows, botVariant(i));
-        e.applyLoadout({ weapon: 'm416', scope: 'iron' });
+        e.applyLoadout(DUMMY_LOADOUT);
         e.dummyAt = new THREE.Vector3(x, y, z);
         this.addEntity(e); this.dummies.push(e);
         if (moving) this.movers.set(e, i % 2 ? 1 : -1);
@@ -538,6 +559,7 @@ export class Game {
       // efek & benda fisika yang bersandar di geometri lama, lalu map + props
       ctx.grenades?.clear(); ctx.drops?.clear(); ctx.vfx?.clear(); ctx.deathFx?.clear();
       ctx.props.dispose();
+      ctx.breakables.unload();
       ctx.map.dispose();
       if (ctx.directors) for (const d of Object.values(ctx.directors)) d.reset();
     }
@@ -549,6 +571,7 @@ export class Game {
     this.fog.color.setHex(A.fogColor); this.fog.density = A.fogDensity;
     ctx.map = def.build(sc, engine.preset, this.settings.preset, engine.maxAnisotropy);
     ctx.props = new Props(sc, ctx.map.shelves, engine.preset.shadowMap > 0, def.props);
+    ctx.breakables.load(def.breakables ?? [], ctx.map.group, engine.gfx.pbr);
     physics.world.step(); // query pipeline Rapier baru valid setelah step pertama
     if (engine.gfx.env) this.captureEnvironment(def);
     ctx.nav = new NavGraph(def.nav);
@@ -744,7 +767,7 @@ export class Game {
     this.room = new Lobby(makeRoomCode(Math.random),
       { mode: s.mode, scoreLimit: s.scoreLimit, timeLimit: s.timeLimit, roundsToWin: s.roundsToWin, difficulty: s.difficulty, fillBots: true, map: s.map, allTalk: true });
     const me = this.room.join(name, { local: true })!;
-    me.variant = s.charVariant; me.weapon = s.weapon; me.scope = s.scope;
+    me.variant = s.charVariant; Object.assign(me, loadoutOf(s));
     this.roomMe = me.id;
     this.nextCode = makeRoomCode(Math.random);
     this.dropTicket();
@@ -827,7 +850,7 @@ export class Game {
     }, iceServers(XCFG.net.ice));
     this.client = client; this.netState = 'connecting';
     const total = trySec > 0 ? trySec + XCFG.net.joinConnect : XCFG.net.connectTimeout, hello = trySec > 0 ? trySec : XCFG.net.helloTimeout;
-    const r = await client.join(code, { name, variant: s.charVariant, weapon: s.weapon, scope: s.scope }, total, hello, rejoin);
+    const r = await client.join(code, { name, variant: s.charVariant, ...loadoutOf(s) }, total, hello, rejoin);
     if (this.client !== client) return { ok: false, reason: 'failed' };   // dibatalkan (keluar / gabung lagi)
     if (!r.ok) { this.client = null; return r; }
     this.netState = 'online';
@@ -906,7 +929,7 @@ export class Game {
       difficulty: L.difficulty, map: L.map });
     saveSettings(this.settings);
     const me = r.find(this.roomMe);
-    if (me) { me.variant = this.settings.charVariant; me.weapon = this.settings.weapon; me.scope = this.settings.scope; }
+    if (me) { me.variant = this.settings.charVariant; Object.assign(me, loadoutOf(this.settings)); }
     const tok = ++this.roomStartTok;
     if (!this.host || this.host.connected === 0) { this.startRoomLocal(r, map); return; }
     if (map !== this.mapId) {
@@ -941,9 +964,9 @@ export class Game {
     const s = this.settings, live = new Set(this.host?.pids() ?? []), out: NetEnt[] = [];
     for (const team of ['blue', 'red'] as const) roster[team].forEach((r, i) => {
       const id = (team === 'blue' ? 1 : 1 + XCFG.lobby.teamSize) + i;
-      if (r.kind === 'you') out.push({ id, team, name: r.name, pid: r.pid ?? null, bot: false, variant: s.charVariant, weapon: s.weapon, scope: s.scope });
+      if (r.kind === 'you') out.push({ id, team, name: r.name, pid: r.pid ?? null, bot: false, variant: s.charVariant, ...loadoutOf(s) });
       else if (r.kind === 'friend' && !r.sim && r.pid && live.has(r.pid))
-        out.push({ id, team, name: r.name, pid: r.pid, bot: false, variant: r.variant ?? 'm', ...cleanLoadout(r.weapon, r.scope) });
+        out.push({ id, team, name: r.name, pid: r.pid, bot: false, variant: r.variant ?? 'm', ...cleanLoadout(r.weapon, r.scope, r.pistol, r.pscope, r.melee) });
       else out.push({ id, team, name: r.name, pid: null, bot: true, variant: botVariant(team === 'blue' ? i + 1 : i), ...this.randomLoadout() });
     });
     return out;
@@ -1755,17 +1778,20 @@ export class Game {
     this.minimap.setVisible(s.minimap);
     ctx.debug.dmgNumbers = s.dmgNumbers || (this.inMatch && this.mode === 'practice');
     // kompilasi shader sekarang (kabut/pantulan sudah final), bukan saat efek pertama kali muncul di tengah match
+    // (garis lintasan granat: tampil sementara agar varian instancing-nya ikut terkompilasi)
+    this.arc.prepareWarm(true);
     this.engine.warmup(ctx.entities.map(e => e.char.debrisMaterial));
+    this.arc.prepareWarm(false);
   }
 
-  private setLoadout(w: WeaponId, s: ScopeId, v: Variant) {
-    this.settings.weapon = w; this.settings.scope = s; this.settings.charVariant = v; saveSettings(this.settings);
+  private setLoadout(lo: Loadout, v: Variant) {
+    Object.assign(this.settings, loadoutOf(lo)); this.settings.charVariant = v; saveSettings(this.settings);
     // room: host mencatat & menyiarkan; klien mengirim ke host (di tengah match: berlaku pada spawn berikutnya)
     const me = this.room?.find(this.roomMe);
-    if (this.client) this.client.act({ a: 'loadout', weapon: w, scope: s, variant: v });
-    else if (me) { me.weapon = w; me.scope = s; me.variant = v; this.host?.broadcastLobby(); }
+    if (this.client) this.client.act({ a: 'loadout', ...loadoutOf(lo), variant: v });
+    else if (me) { Object.assign(me, loadoutOf(lo)); me.variant = v; this.host?.broadcastLobby(); }
     if (ctx.player) {
-      ctx.player.pendingLoadout = { weapon: w, scope: s }; // senjata berlaku pada spawn berikutnya
+      ctx.player.pendingLoadout = loadoutOf(lo); // senjata berlaku pada spawn berikutnya
       ctx.player.char.setVariant(v);                       // tampilan karakter langsung (kosmetik)
       ctx.viewmodel.setOutfit(ctx.player.team, v);
     }
@@ -1807,9 +1833,9 @@ export class Game {
         const ctrlHold = inp.ctrlAllowed && inp.isDown('ControlLeft');
         it.crouch = (this.settings.crouchToggle ? this.crouchToggled : inp.actDown('crouch')) || ctrlHold;
         it.cooking = p.grenadeState === 'COOKING';
-        it.wantFire = p.weapon.slot === 'ar' && inp.mouseDown[0] && p.meleeT < 0;
+        it.wantFire = p.weapon.holdingGun && inp.mouseDown[0] && p.meleeT < 0;
       } else { it.ix = 0; it.iz = 0; it.jump = false; it.sprint = false; it.wantFire = false; }
-      it.speedMult = p.weapon.slot === 'knife' ? XCFG.knife.speedMult : 1; // pisau: lari lebih cepat
+      it.speedMult = p.moveMult; // pisau / SMG lebih cepat, sniper / LMG lebih lambat
       this.jumpLatch = false;
       it.yaw = p.yaw;
       if (this.clientRep) this.cmd = this.clientRep.command(it, p);   // klien: niat dikuantisasi persis seperti yang diterima host
@@ -1966,7 +1992,8 @@ export class Game {
           grounded: p.ctrl.grounded, mouseDx: looking ? inp.dx : 0, mouseDy: looking ? inp.dy : 0,
           held: heldOf(p.weapon.slot, p.weapon.hasPrimary, p.grenadeState), melee: buttProgress(p), knife: knifeProgress(p),
           knifeStab: p.meleeKind === 'stab', knifeAlt: p.slashAlt, equip: p.weapon.equipFrac, cooking: p.grenadeState === 'COOKING', overhand: p.throwOver,
-          vx: cm.localVx, vz: this.localVz, vy: p.ctrl.velY, stepPhase: cm.stepPhase });
+          vx: cm.localVx, vz: this.localVz, vy: p.ctrl.velY, stepPhase: cm.stepPhase,
+          cycle: p.weapon.gun.cycleProgress(ctx.time), shell: p.weapon.def.reload === 'shell' });
       }
     } else if (!replay) this.engine.showViewmodel = false;
     if (p && this.inMatch && !p.alive && this.killcam.active) {
@@ -1983,6 +2010,7 @@ export class Game {
     }
     // benda fisika (60 Hz) diinterpolasi ke frame render - tanpa ini terlihat patah-patah di layar 90/120/144 Hz
     ctx.grenades.update(alpha);
+    this.updateThrowArc(p, replay);
     ctx.drops.update(dt, alpha);
     ctx.props.update(alpha);
     ctx.deathFx.update(alpha);
@@ -2077,9 +2105,9 @@ export class Game {
     f.rP = inp.mousePressed[2]; f.rH = inp.mouseDown[2]; f.rR = inp.mouseReleased[2];
     f.aimHold = active && f.rH;
     f.reload = inp.actPressed('reload') && !padPick; f.fireMode = inp.actPressed('fireMode'); f.melee = inp.actPressed('melee');
-    // slot: 1 senjata utama · 2 pisau · 3 granat · Q / gamepad Y senjata sebelumnya · scroll siklus · D-pad ↓ pisau
-    f.slot = inp.actPressed('primary') ? 'ar' : inp.actPressed('knife') ? 'knife' : inp.actPressed('grenade') ? 'grenade'
-      : inp.actPressed('flash') ? 'flash' : null;
+    // slot: 1 senjata utama · 2 pistol · 3 pisau · 4 granat · 5 flashbang · Q / gamepad Y senjata sebelumnya · scroll siklus · D-pad ↓ pisau
+    f.slot = inp.actPressed('primary') ? 'ar' : inp.actPressed('pistol') ? 'pistol' : inp.actPressed('knife') ? 'knife'
+      : inp.actPressed('grenade') ? 'grenade' : inp.actPressed('flash') ? 'flash' : null;
     // gamepad: RB sekali = K-400, RB dua kali cepat = flashbang
     if (inp.padActive && inp.pad.pressed(PAD.RB)) {
       const now = performance.now();
@@ -2096,7 +2124,8 @@ export class Game {
       let imp = (f.lR ? I.FIRE_R : 0) | (f.rR ? I.ALT_R : 0);
       if (active) {
         imp |= (f.lP ? I.FIRE_P : 0) | (f.rP ? I.ALT_P : 0) | (f.reload ? I.RELOAD : 0) | (f.fireMode ? I.FIREMODE : 0) | (f.melee ? I.MELEE : 0)
-          | (f.slot === 'ar' ? I.SLOT_AR : f.slot === 'knife' ? I.SLOT_KNIFE : f.slot === 'grenade' ? I.SLOT_NADE : f.slot === 'flash' ? I.SLOT_FLASH : 0)
+          | (f.slot === 'ar' ? I.SLOT_AR : f.slot === 'pistol' ? I.SLOT_PISTOL : f.slot === 'knife' ? I.SLOT_KNIFE : f.slot === 'grenade' ? I.SLOT_NADE
+            : f.slot === 'flash' ? I.SLOT_FLASH : 0)
           | (f.last ? I.LAST : 0) | (f.wheel > 0 ? I.WHEEL_UP : f.wheel < 0 ? I.WHEEL_DN : 0);
       }
       cr.imp |= imp;
@@ -2109,7 +2138,26 @@ export class Game {
       else if (w.slot !== 'ar') ctx.hud.toast('Hanya senjata utama yang bisa dibuang');
     }
     if (near && !res.meleeing && (padPick || (active && inp.actPressed('pickup')))) { ctx.drops.pickup(p, near); p.adsWanted = false; }
-    ctx.viewmodel.setWeapon(p.loadout.weapon, p.loadout.scope); // no-op bila loadout tidak berubah
+    // senjata api yang dipegang (utama / pistol); no-op bila tidak berubah
+    if (w.slot === 'pistol') ctx.viewmodel.setWeapon(p.loadout.pistol, p.loadout.pscope);
+    else ctx.viewmodel.setWeapon(p.loadout.weapon, p.loadout.scope);
+    ctx.viewmodel.setMelee(p.loadout.melee);
+  }
+
+  /**
+   * Garis lintasan benda lempar (Pengaturan → HUD `nadeArc`): selama pemain memegang granat / flashbang — READY = lemparan jauh
+   * (klik kiri), COOKING = jenis yang sedang dimasak — dari titik lepas & kecepatan yang SAMA dengan lemparan sungguhan
+   * (GrenadeManager.launchOf → throwLaunch) sampai benturan pertama / sumbu habis di udara (sisa sumbu saat dimasak). Titik lepas
+   * dari posisi RENDER agar garis tidak bergetar terhadap kamera (beda ≤ 1 tick gerak dari posisi fisika).
+   */
+  private updateThrowArc(p: Entity | null, replay: boolean) {
+    const st = p?.grenadeState;
+    if (!p || !this.settings.nadeArc || !this.inMatch || !p.alive || p.bot || replay || ctx.debug.noclip
+      || ctx.match.state === 'RESULTS' || (st !== 'READY' && st !== 'COOKING')) { this.arc.hide(); return; }
+    const cooking = st === 'COOKING';
+    throwLaunch(ctx.grenades.launchOf(p, cooking ? p.throwOver : true, p.renderPos), _arcPos, _arcVel);
+    traceThrow(_arcPos, _arcVel, fuseOf(p.nadeKind) - (cooking ? p.cookT : 0), this.arcTrace);
+    this.arc.show(this.arcTrace, p.nadeKind, this.engine.camera.position, ctx.time);
   }
 
   private throwPose(e: Entity): number {
@@ -2164,7 +2212,7 @@ export class Game {
     let id = 200 + this.dummies.length * 3;
     for (const d of [10, 40, 70]) {
       const e = new Entity(id, `Dummy ${d}u`, 'red', false, false, botVariant(id++));
-      e.applyLoadout({ weapon: 'm416', scope: 'iron' });
+      e.applyLoadout(DUMMY_LOADOUT);
       e.dummyAt = new THREE.Vector3(-8, 10, -35.5 + d);
       this.addEntity(e); this.dummies.push(e);
       ctx.spawns.spawn(e);
@@ -2187,7 +2235,7 @@ export class Game {
   private startStress() {
     if (!this.inMatch || this.stress || !this.debugMapOk()) return;
     const target = new Entity(150, 'Target', 'blue', false, false);
-    target.applyLoadout({ weapon: 'm416', scope: 'iron' });
+    target.applyLoadout(DUMMY_LOADOUT);
     target.dummyAt = new THREE.Vector3(0, 0, -20);
     this.addEntity(target); ctx.spawns.spawn(target); target.protectT = 1e9;
     const shooters: Entity[] = [];

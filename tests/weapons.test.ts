@@ -1,4 +1,5 @@
-// tests/weapons.test.ts — slot senjata 1/2/3 + Q, pisau, buang/ambil senjata (permintaan pengguna; angka di XCFG.knife/drop).
+// tests/weapons.test.ts — slot senjata 1–5 + Q, pisau, buang/ambil senjata (permintaan pengguna; angka di XCFG.knife/drop).
+// Ekspansi senjata (2026-11-25): 1 utama · 2 pistol · 3 pisau · 4 K-400 · 5 flashbang.
 import { describe, expect, it } from 'vitest';
 import { cycleTarget, canPickUp, heldOf, quickSwitchTarget, returnSlot, slotAvail } from '../src/combat/Slots';
 import { BINDS_VERSION, DEFAULT_BINDS, migrateBinds } from '../src/core/Bindings';
@@ -11,47 +12,67 @@ import { CFG } from '../src/config/gameConfig';
 const ALL = slotAvail(true, 1);
 
 describe('Slot senjata', () => {
-  it('tombol default: 1 utama, 2 pisau, 3 granat, Q sebelumnya, G buang, E ambil, X tukar bahu', () => {
-    expect(DEFAULT_BINDS).toMatchObject({ primary: 'Digit1', knife: 'Digit2', grenade: 'Digit3', lastWeapon: 'KeyQ', drop: 'KeyG',
-      pickup: 'KeyE', shoulder: 'KeyX' });
+  it('tombol default: 1 utama, 2 pistol, 3 pisau, 4 granat, 5 flashbang, Q sebelumnya, G buang, E ambil, X tukar bahu', () => {
+    expect(DEFAULT_BINDS).toMatchObject({ primary: 'Digit1', pistol: 'Digit2', knife: 'Digit3', grenade: 'Digit4', flash: 'Digit5',
+      lastWeapon: 'KeyQ', drop: 'KeyG', pickup: 'KeyE', shoulder: 'KeyX' });
   });
-  it('Q: kembali ke slot sebelumnya; tanpa slot sebelumnya yang valid → tukar senapan ↔ pisau', () => {
+  it('Q: kembali ke slot sebelumnya; tanpa slot sebelumnya yang valid → senjata api lain (utama ↔ pistol), lalu pisau', () => {
     expect(quickSwitchTarget('ar', 'knife', ALL)).toBe('knife');
     expect(quickSwitchTarget('knife', 'ar', ALL)).toBe('ar');
+    expect(quickSwitchTarget('ar', 'pistol', ALL)).toBe('pistol');
+    expect(quickSwitchTarget('pistol', 'ar', ALL)).toBe('ar');
     expect(quickSwitchTarget('ar', 'grenade', ALL)).toBe('grenade');
-    expect(quickSwitchTarget('ar', 'grenade', slotAvail(true, 0))).toBe('knife');    // granat habis
-    expect(quickSwitchTarget('knife', 'ar', slotAvail(false, 1))).toBe('grenade');   // senjata utama dibuang
-    expect(quickSwitchTarget('knife', 'ar', slotAvail(false, 0))).toBeNull();
+    expect(quickSwitchTarget('ar', 'grenade', slotAvail(true, 0))).toBe('pistol');   // granat habis → pistol
+    expect(quickSwitchTarget('knife', 'ar', slotAvail(false, 1))).toBe('pistol');    // senjata utama dibuang → pistol
+    expect(quickSwitchTarget('pistol', 'ar', slotAvail(false, 0))).toBe('knife');
     expect(quickSwitchTarget('grenade', 'grenade', ALL)).toBe('ar');
+    expect(quickSwitchTarget('grenade', 'grenade', slotAvail(false, 1))).toBe('pistol');
   });
-  it('scroll melingkar & melewati slot kosong', () => {
-    expect(cycleTarget('ar', 1, ALL)).toBe('knife');
+  it('scroll melingkar 1 → 2 → 3 → 4 & melewati slot kosong', () => {
+    expect(cycleTarget('ar', 1, ALL)).toBe('pistol');
+    expect(cycleTarget('pistol', 1, ALL)).toBe('knife');
+    expect(cycleTarget('knife', 1, ALL)).toBe('grenade');
     expect(cycleTarget('grenade', 1, ALL)).toBe('ar');
     expect(cycleTarget('ar', -1, ALL)).toBe('grenade');
-    expect(cycleTarget('knife', 1, slotAvail(false, 0))).toBeNull();
+    expect(cycleTarget('knife', 1, slotAvail(false, 0))).toBe('pistol');
     expect(cycleTarget('knife', 1, slotAvail(false, 1))).toBe('grenade');
-    expect(cycleTarget('grenade', 1, slotAvail(false, 1))).toBe('knife');
+    expect(cycleTarget('grenade', 1, slotAvail(false, 1))).toBe('pistol');
   });
-  it('setelah melempar granat kembali ke slot sebelumnya (pisau bila senjata utama dibuang)', () => {
+  it('setelah melempar granat kembali ke slot sebelumnya (pistol bila senjata utama dibuang)', () => {
     expect(returnSlot('ar', true)).toBe('ar');
     expect(returnSlot('knife', true)).toBe('knife');
-    expect(returnSlot('ar', false)).toBe('knife');
+    expect(returnSlot('pistol', true)).toBe('pistol');
+    expect(returnSlot('ar', false)).toBe('pistol');
   });
   it('benda di tangan', () => {
     expect(heldOf('ar', true, 'NONE')).toBe('ar');
+    expect(heldOf('pistol', false, 'NONE')).toBe('pistol');
     expect(heldOf('knife', true, 'NONE')).toBe('knife');
     expect(heldOf('grenade', true, 'READY')).toBe('grenade');
     expect(heldOf('grenade', true, 'THROWN')).toBe('none');
   });
 });
 
-describe('Migrasi tombol tersimpan (v1 → v2)', () => {
-  const OLD = { ...DEFAULT_BINDS, primary: 'Digit1', grenade: 'KeyG', shoulder: 'KeyQ' } as Record<string, string>;
-  delete OLD.knife; delete OLD.lastWeapon; delete OLD.drop; delete OLD.pickup;
-  it('default lama: Q & G pindah fungsi, aksi baru dapat tombol default', () => {
+describe('Migrasi tombol tersimpan (v1 → v2 → v3)', () => {
+  const OLD = { ...DEFAULT_BINDS, primary: 'Digit1', grenade: 'KeyG', shoulder: 'KeyQ', flash: 'Digit4' } as Record<string, string>;
+  delete OLD.knife; delete OLD.lastWeapon; delete OLD.drop; delete OLD.pickup; delete OLD.pistol;
+  it('default v1: Q & G pindah fungsi, angka bergeser (pistol 2), aksi baru dapat tombol default', () => {
     const s = validate({ binds: OLD as never });
     expect(s.bindsVer).toBe(BINDS_VERSION);
-    expect(s.binds).toMatchObject({ shoulder: 'KeyX', lastWeapon: 'KeyQ', grenade: 'Digit3', drop: 'KeyG', knife: 'Digit2', pickup: 'KeyE' });
+    expect(s.binds).toMatchObject({ shoulder: 'KeyX', lastWeapon: 'KeyQ', grenade: 'Digit4', drop: 'KeyG', knife: 'Digit3', pickup: 'KeyE',
+      flash: 'Digit5', pistol: 'Digit2' });
+  });
+  it('default v2 (1 utama · 2 pisau · 3 granat · 4 flash) → v3 (2 pistol · 3 pisau · 4 granat · 5 flash)', () => {
+    const v2 = { ...DEFAULT_BINDS, knife: 'Digit2', grenade: 'Digit3', flash: 'Digit4' } as Record<string, string>;
+    delete v2.pistol;
+    const s = validate({ binds: v2 as never, bindsVer: 2 } as never);
+    expect(s.binds).toMatchObject({ primary: 'Digit1', pistol: 'Digit2', knife: 'Digit3', grenade: 'Digit4', flash: 'Digit5' });
+  });
+  it('v2 dengan tombol diubah pengguna: yang diubah tetap, pistol dapat 2 hanya bila bebas', () => {
+    const v2 = { ...DEFAULT_BINDS, knife: 'KeyV', grenade: 'Digit3', flash: 'Digit4', view: 'Digit2' } as Record<string, string>;
+    delete v2.pistol;
+    const s = validate({ binds: v2 as never, bindsVer: 2 } as never);
+    expect(s.binds).toMatchObject({ knife: 'KeyV', grenade: 'Digit4', flash: 'Digit5', view: 'Digit2', pistol: '' });
   });
   it('tombol yang sudah diubah pengguna tidak disentuh', () => {
     const s = validate({ binds: { ...OLD, shoulder: 'KeyZ', grenade: 'KeyT' } as never });
@@ -64,8 +85,8 @@ describe('Migrasi tombol tersimpan (v1 → v2)', () => {
     expect(s.binds.shoulder).toBe('KeyQ');
     expect(s.binds.lastWeapon).toBe('');
   });
-  it('setelan v2 tidak dimigrasi ulang', () => {
-    expect(migrateBinds({ shoulder: 'KeyQ' }, 2)).toEqual({ shoulder: 'KeyQ' });
+  it('setelan v3 tidak dimigrasi ulang', () => {
+    expect(migrateBinds({ shoulder: 'KeyQ', knife: 'Digit2' }, 3)).toEqual({ shoulder: 'KeyQ', knife: 'Digit2' });
   });
 });
 

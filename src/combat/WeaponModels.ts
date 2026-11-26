@@ -1,16 +1,16 @@
 // src/combat/WeaponModels.ts — template model senjata blocky + optik (GDD §5.4, §6)
 // Balok disusun sepanjang −Z, titik akar di grip. Satu geometri ber-vertex color per senjata (1 draw call).
+// Senjata tambahan (SMG/shotgun/sniper/pistol) dibangun di weaponModelsX.ts dengan perkakas & aturan yang sama (modelKit.ts).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { ScopeId, WeaponId } from '../config/weaponsData';
+import type { ArId, ScopeId, WeaponId } from '../config/weaponsData';
+import type { MeleeId } from '../config/weaponsExtra';
 import { SCOPES } from '../config/weaponsData';
 import { XCFG } from '../config/extraConfig';
+import { BORE_Y, Builder, IRON_Y, VM_SCALE, finish, type WeaponModel } from './modelKit';
+import { X_MODELS } from './weaponModelsX';
 
-/** Skala model senjata di scene viewmodel (unit model → unit kamera). sightHeight §9.1 / VM_SCALE = tinggi bidik model. */
-export const VM_SCALE = 0.25;
-const BORE_Y = 0.28;
-/** Tinggi garis bidik besi (unit model) = sightHeight iron §9.1 / VM_SCALE. Tidak ada balok senjata lain yang boleh menutupinya. */
-const IRON_Y = SCOPES.iron.sightHeight / VM_SCALE;
+export { VM_SCALE, type MovingPart, type WeaponModel } from './modelKit';
 
 interface Spec {
   total: number; barrel: number; color: number; accent: number; magColor: number;
@@ -19,7 +19,7 @@ interface Spec {
   | 'carry' | 'longbarrel' | 'carrysight' | 'longhg' | 'compact';
 }
 
-const SPECS: Record<WeaponId, Spec> = {
+const SPECS: Record<ArId, Spec> = {
   m416:  { total: 2.8, barrel: 0.90, color: 0x2b2b2b, accent: 0x2b2b2b, magColor: 0x2b2b2b, mag: 'straight', magAngle: 8, bullpup: false, stock: 'tele', feature: 'rail' },
   akm:   { total: 2.9, barrel: 0.95, color: 0x3a3a3a, accent: 0x8b5a2b, magColor: 0x3a3a3a, mag: 'curved', magAngle: 12, bullpup: false, stock: 'wood', feature: 'gastube' },
   scarl: { total: 2.8, barrel: 0.85, color: 0x2b2b2b, accent: 0xc2a878, magColor: 0x2b2b2b, mag: 'straight', magAngle: 4, bullpup: false, stock: 'fold', feature: 'tallupper' },
@@ -32,38 +32,22 @@ const SPECS: Record<WeaponId, Spec> = {
   groza: { total: 2.2, barrel: 0.55, color: 0x2f2f2f, accent: 0x2f2f2f, magColor: 0x2f2f2f, mag: 'curved', magAngle: 10, bullpup: true, stock: 'none', feature: 'compact' },
 };
 
-export interface WeaponModel {
-  geometry: THREE.BufferGeometry;
-  muzzle: THREE.Vector3; ejectPort: THREE.Vector3; opticMount: THREE.Vector3;
-  length: number;
-}
-
-class Builder {
-  geos: THREE.BufferGeometry[] = [];
-  private c = new THREE.Color();
-  box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, color: number, rotX = 0, pivot?: THREE.Vector3) {
-    const g = new THREE.BoxGeometry(Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(z1 - z0));
-    g.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-    if (rotX && pivot) {
-      g.translate(-pivot.x, -pivot.y, -pivot.z); g.rotateX(rotX); g.translate(pivot.x, pivot.y, pivot.z);
-    }
-    this.c.setHex(color, THREE.SRGBColorSpace);
-    const n = g.attributes.position.count, col = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { col[i * 3] = this.c.r; col[i * 3 + 1] = this.c.g; col[i * 3 + 2] = this.c.b; }
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    g.deleteAttribute('uv');
-    this.geos.push(g);
-  }
-  build() { const g = mergeGeometries(this.geos)!; g.computeBoundingSphere(); return g; }
-}
-
 const D2R = THREE.MathUtils.degToRad;
 const cache = new Map<string, WeaponModel>();
+const isAr = (id: WeaponId): id is ArId => Object.prototype.hasOwnProperty.call(SPECS, id);
 
+/** Model senjata (di-cache per jenis + bidikan besi). withIron = optik 'iron' (tiang/aperture besi dipasang). */
 export function weaponModel(id: WeaponId, withIron = true): WeaponModel {
   const key = id + (withIron ? ':i' : '');
   const hit = cache.get(key);
   if (hit) return hit;
+  const model = isAr(id) ? arModel(id, withIron) : X_MODELS[id](withIron);
+  if (!isAr(id)) model.geometry.userData.custom = true;   // IK Venny: tangan kiri di titik model (bukan perkiraan dari panjang)
+  cache.set(key, model);
+  return model;
+}
+
+function arModel(id: ArId, withIron: boolean): WeaponModel {
   const s = SPECS[id];
   const b = new Builder();
   const back = s.bullpup ? 0.55 : 0.95;           // ujung popor di +Z
@@ -122,15 +106,13 @@ export function weaponModel(id: WeaponId, withIron = true): WeaponModel {
     b.box(-0.07, 0.36, 0.25, -0.03, IRON_Y + 0.02, 0.2, dark);
     b.box(0.03, 0.36, 0.25, 0.07, IRON_Y + 0.02, 0.2, dark);
   }
-  const model: WeaponModel = {
-    geometry: b.build(),
+  return finish(b, null, {
     muzzle: new THREE.Vector3(0, BORE_Y, front - 0.02),
     ejectPort: new THREE.Vector3(0.12, 0.3, s.bullpup ? 0.15 : -0.15),
     opticMount: new THREE.Vector3(0, 0.38, s.bullpup ? -0.1 : -0.3),
+    leftHand: new THREE.Vector3(-0.08, -0.12, -1.2),
     length: s.total,
-  };
-  cache.set(key, model);
-  return model;
+  });
 }
 
 /** Optik: badan opaque (1 geometri ber-vertex color) + kaca terpisah (red dot/holo) agar bisa dirender bening. */
@@ -278,6 +260,98 @@ export function knifeModel(): THREE.BufferGeometry {
 /** Titik ujung bilah & titik tengah bilah (unit model) — jejak kilatan tebasan. */
 export const KNIFE_TIP = new THREE.Vector3(0, 0.02, -0.98);
 export const KNIFE_MID = new THREE.Vector3(0, 0.0, -0.55);
+
+// ── senjata jarak dekat tambahan (ekspansi senjata): profil diekstrusi seperti pisau, akar = genggaman, bilah/kepala ke −Z,
+// sisi tajam ke −Y. Ujung & tengah bilah per senjata untuk jejak kilatan; skala viewmodel per senjata (panjang berbeda).
+const meleeGeo = new Map<MeleeId, THREE.BufferGeometry>();
+
+/** Model senjata jarak dekat (di-cache). */
+export function meleeModel(id: MeleeId): THREE.BufferGeometry {
+  if (id === 'knife') return knifeModel();
+  const hit = meleeGeo.get(id);
+  if (hit) return hit;
+  const g = id === 'karambit' ? karambitGeo() : id === 'kukri' ? kukriGeo() : tomahawkGeo();
+  g.computeBoundingSphere();
+  meleeGeo.set(id, g);
+  return g;
+}
+
+/** Ujung & tengah bilah (unit model) — jejak kilatan; vmScale = skala di viewmodel (pisau XCFG.knife.vmScale). */
+export const MELEE_SHAPE: Record<MeleeId, { tip: THREE.Vector3; mid: THREE.Vector3; vmScale: number }> = {
+  knife: { tip: KNIFE_TIP, mid: KNIFE_MID, vmScale: XCFG.knife.vmScale },
+  karambit: { tip: new THREE.Vector3(0, -0.2, -0.7), mid: new THREE.Vector3(0, -0.02, -0.42), vmScale: 0.42 },
+  kukri: { tip: new THREE.Vector3(0, -0.22, -1.2), mid: new THREE.Vector3(0, -0.12, -0.72), vmScale: 0.32 },
+  tomahawk: { tip: new THREE.Vector3(0, -0.4, -1.0), mid: new THREE.Vector3(0, -0.12, -0.86), vmScale: 0.3 },
+};
+
+/** Karambit: bilah cakar melengkung ke bawah (sisi tajam di lengkung dalam), gagang pendek G10, cincin jari di pangkal. */
+function karambitGeo() {
+  const Z0 = -0.12, geos: THREE.BufferGeometry[] = [];
+  const s = new THREE.Shape();
+  s.moveTo(0, 0.05);
+  s.quadraticCurveTo(0.3, 0.11, 0.5, -0.04);
+  s.quadraticCurveTo(0.6, -0.13, 0.58, -0.22);
+  s.quadraticCurveTo(0.48, -0.1, 0.3, -0.045);
+  s.quadraticCurveTo(0.14, -0.03, 0, -0.045);
+  s.closePath();
+  geos.push(tint(extrude(s, 0.022, 0.01, Z0, -1), (_x, y, z, nx) =>
+    Math.abs(nx) > 0.9 ? 0x4c535b : (y < -0.02 && z < Z0 - 0.12 ? 0xe9edf1 : 0x6d757e)));   // bilah hitam, sisi tajam berkilat
+  geos.push(boxNI(-0.04, -0.07, Z0, 0.04, 0.08, Z0 + 0.03, 0x2b2e31));             // pelindung
+  const h = new THREE.Shape();
+  h.moveTo(0, -0.06); h.quadraticCurveTo(0.12, -0.08, 0.24, -0.04); h.lineTo(0.26, 0.05);
+  h.quadraticCurveTo(0.13, 0.07, 0, 0.055); h.closePath();
+  const HZ = Z0 + 0.03;
+  geos.push(tint(extrude(h, 0.056, 0.014, HZ, 1), (_x, _y, z) => (Math.floor((z - HZ) / 0.04) % 2 === 0 ? 0x4a5236 : 0x3e452d)));
+  const ring = new THREE.TorusGeometry(0.07, 0.02, 6, 14).toNonIndexed();
+  ring.rotateY(Math.PI / 2); ring.translate(0, 0.0, HZ + 0.33);
+  geos.push(tint(ring, () => 0x2f3236));
+  return mergeGeometries(geos)!;
+}
+
+/** Kukri: bilah besar menekuk ke depan-bawah (perut lebar di ujung, takik cho dekat gagang), bolster kuningan, gagang kayu. */
+function kukriGeo() {
+  const Z0 = -0.2, geos: THREE.BufferGeometry[] = [];
+  const s = new THREE.Shape();
+  s.moveTo(0, 0.07);
+  s.quadraticCurveTo(0.45, 0.1, 0.8, -0.04);
+  s.quadraticCurveTo(0.98, -0.12, 1.0, -0.24);
+  s.quadraticCurveTo(0.88, -0.31, 0.72, -0.27);
+  s.quadraticCurveTo(0.45, -0.19, 0.18, -0.1);
+  s.lineTo(0.07, -0.09); s.lineTo(0.05, -0.125); s.lineTo(0.03, -0.09);
+  s.lineTo(0, -0.075);
+  s.closePath();
+  geos.push(tint(extrude(s, 0.03, 0.012, Z0, -1), (_x, y, z, nx) =>
+    Math.abs(nx) > 0.9 ? 0x9aa2ab : (y < -0.1 && z < Z0 - 0.3 ? 0xf0f3f6 : 0xc3c9d0)));
+  geos.push(boxNI(-0.045, -0.1, Z0, 0.045, 0.1, Z0 + 0.05, 0xb58a3c));            // bolster kuningan
+  const h = new THREE.Shape();
+  h.moveTo(0, -0.07); h.quadraticCurveTo(0.16, -0.06, 0.3, -0.085); h.lineTo(0.36, -0.1); h.lineTo(0.36, 0.08);
+  h.quadraticCurveTo(0.18, 0.06, 0, 0.065); h.closePath();
+  const HZ = Z0 + 0.05;
+  geos.push(tint(extrude(h, 0.06, 0.016, HZ, 1), (_x, _y, z) => (Math.floor((z - HZ) / 0.06) % 2 === 0 ? 0x5a3a22 : 0x4c311c)));
+  geos.push(boxNI(-0.05, -0.11, HZ + 0.36, 0.05, 0.09, HZ + 0.4, 0xb58a3c));        // tutup pommel
+  return mergeGeometries(geos)!;
+}
+
+/** Tomahawk: gagang G10 panjang, kepala kapak di ujung (mata melengkung ke depan-bawah), paku di punggung. */
+function tomahawkGeo() {
+  const geos: THREE.BufferGeometry[] = [];
+  geos.push(boxNI(-0.035, -0.05, -0.86, 0.035, 0.05, 0.3, 0x2c2f33));            // gagang
+  for (let z = -0.2; z < 0.25; z += 0.09) geos.push(boxNI(-0.038, -0.053, z, 0.038, 0.053, z + 0.04, 0x1d1f22));   // lilitan cengkeram
+  const s = new THREE.Shape();                                                   // kepala (u = maju, v = atas)
+  s.moveTo(0.66, 0.06); s.lineTo(0.92, 0.06);
+  s.lineTo(0.95, -0.08);
+  s.quadraticCurveTo(1.04, -0.26, 0.98, -0.42);
+  s.lineTo(0.86, -0.36);
+  s.quadraticCurveTo(0.78, -0.2, 0.72, -0.06);
+  s.lineTo(0.66, -0.05);
+  s.closePath();
+  geos.push(tint(extrude(s, 0.03, 0.01, 0, -1), (_x, y, z, nx) =>
+    Math.abs(nx) > 0.9 ? 0x5b6168 : (z < -0.93 && y < 0 ? 0xeef1f4 : 0x7d858e)));
+  const sp = new THREE.Shape();                                                  // paku punggung
+  sp.moveTo(0.7, 0.06); sp.lineTo(0.84, 0.06); sp.lineTo(0.76, 0.22); sp.closePath();
+  geos.push(tint(extrude(sp, 0.026, 0.006, 0, -1), () => 0x5b6168));
+  return mergeGeometries(geos)!;
+}
 
 /** Granat K-400 di tangan (ukuran sama dengan badan granat dunia GrenadeK400). */
 let flashGeo: THREE.BufferGeometry | null = null;

@@ -19,11 +19,11 @@ import type { TriggerInput } from '../combat/WeaponSystem';
 import type { GrenadeInput } from '../combat/GrenadeK400';
 import type { Slot } from '../combat/Slots';
 import { castShot } from '../combat/Ballistics';
-import type { ScopeId, WeaponId } from '../config/weaponsData';
+import { sameLoadout, type Loadout } from '../combat/Loadout';
 import type { Variant } from '../entities/CharacterArt';
 import { CommandHistory, CommandQueue, HitLedger, HostClock, InterpBuffer, SnapStats } from './sync';
 import {
-  EF, H, I, MATCH_STATES, encodeCommands, encodeSnapshot, packBounce, qAxis, qPitch, qYaw, unpackBounce,
+  EF, H, I, MATCH_STATES, SHOT_PELLET, encodeCommands, encodeSnapshot, packBounce, qAxis, qPitch, qYaw, unpackBounce,
   type Command, type EntState, type MiscFx, type OwnState, type ShotFx, type Snapshot,
 } from './protocol';
 import { SURFACE_COLOR, surfaceCode, surfaceOf } from '../world/surfaces';
@@ -33,7 +33,8 @@ import { cleanLoadout, type NetClient, type NetHost } from './Session';
 import { captureSave } from './Resume';
 
 const NET = XCFG.net, STEP = CFG.world.fixedStep;
-const SLOTS: Slot[] = ['ar', 'knife', 'grenade'];
+/** Kode slot di snapshot (urutan tetap; 'flash' dulu tidak tercatat → tampil sebagai senapan). */
+const SLOTS: Slot[] = ['ar', 'knife', 'grenade', 'flash', 'pistol'];
 const GSTATES = ['NONE', 'EQUIP', 'READY', 'COOKING', 'THROWN'] as const;
 const MKINDS: MeleeKind[] = ['butt', 'slash', 'stab'];
 const NPART = PART_KEYS.length;
@@ -127,8 +128,9 @@ function entState(e: Entity): EntState {
 }
 
 function ownState(e: Entity): OwnState {
-  const s = e.ctrl.getState(), w = e.weapon;
-  return { ...s, ammo: w.ammo, reserve: w.reserve, modeIdx: w.modeIdx, grenades: e.grenades, shots: w.shotsFired, flashes: e.flashes };
+  const s = e.ctrl.getState(), w = e.weapon, g = w.primary, p = w.secondary;
+  return { ...s, ammo: g.ammo, reserve: g.reserve, modeIdx: g.modeIdx, grenades: e.grenades, shots: w.shotsFired, flashes: e.flashes,
+    ammo2: p.ammo, reserve2: p.reserve, mode2: p.modeIdx };
 }
 
 // ───────────────────────────── HOST
@@ -169,7 +171,8 @@ export class HostRep {
     const all = (m: Record<string, unknown>) => this.net.sendAll({ t: 'ev', ...m });
     on('spawn', (p) => {
       const e = ctx.byId.get(p.entityId);
-      if (e) all({ e: 'spawn', id: e.id, x: e.pos.x, y: e.pos.y, z: e.pos.z, yaw: e.yaw, w: e.loadout.weapon, s: e.loadout.scope, v: e.char.variant });
+      if (e) all({ e: 'spawn', id: e.id, x: e.pos.x, y: e.pos.y, z: e.pos.z, yaw: e.yaw, w: e.loadout.weapon, s: e.loadout.scope,
+        p: e.loadout.pistol, ps: e.loadout.pscope, m: e.loadout.melee, v: e.char.variant });
     });
     on('death', (p) => this.deathImp.set(p.entityId, { x: p.impulse.x, y: p.impulse.y, z: p.impulse.z, grenade: p.grenade }));
     on('kill', (p) => {
@@ -187,12 +190,14 @@ export class HostRep {
       sb: p.scores[0], sr: p.scores[1], tl: p.timeLeft }));
     on('grenade:explode', (p) => all({ e: 'boom', x: p.position.x, y: p.position.y, z: p.position.z, o: p.ownerId }));
     // flashbang: tiap klien menghitung silau layarnya sendiri dari kameranya (arah pandang, jarak, dinding)
-    on('flash:explode', (p) => all({ e: 'flashbang', x: p.position.x, y: p.position.y, z: p.position.z, o: p.ownerId }));
+    on('flash:explode', (p) => all({ e: 'flashbang', x: p.position.x, y: p.position.y, z: p.position.z, o: p.ownerId, h: p.inHand ? 1 : 0 }));
+    on('glass:break', (p) => all({ e: 'glass', i: p.index }));
     on('melee', (p) => this.pushFx(p.phase === 'swing' ? 1 : p.phase === 'hit' ? 2 : 3, p.entityId, meleeIdx(p.kind), p.position));
     on('grenade:bounce', (p) => this.pushFx(4, 0, packBounce(surfaceCode(p.material), p.speed), p.position));
     on('reload', (p) => { const e = ctx.byId.get(p.entityId); if (e) this.pushFx(5, e.id, p.stage, e.pos); });
     on('dryfire', (p) => { const e = ctx.byId.get(p.entityId); if (e) this.pushFx(6, e.id, 0, e.pos); });
     on('pin', (p) => { const e = ctx.byId.get(p.entityId); if (e) this.pushFx(7, e.id, 0, e.pos); });
+    on('cycle', (p) => { const e = ctx.byId.get(p.entityId); if (e) this.pushFx(8, e.id, p.kind === 'bolt' ? 1 : 0, e.pos); });
   }
 
   private pushFx(type: number, ent: number, a: number, pos: { x: number; y: number; z: number }) {
@@ -277,8 +282,8 @@ export class HostRep {
     it.jump = control && !!(c.imp & I.JUMP);
     it.sprint = control && !!(c.held & H.SPRINT); it.crouch = !!(c.held & H.CROUCH);
     it.cooking = e.grenadeState === 'COOKING';
-    it.wantFire = e.weapon.slot === 'ar' && !!(c.held & H.FIRE) && e.meleeT < 0;
-    it.speedMult = e.weapon.slot === 'knife' ? XCFG.knife.speedMult : 1;
+    it.wantFire = e.weapon.holdingGun && !!(c.held & H.FIRE) && e.meleeT < 0;
+    it.speedMult = e.moveMult;
     frameFromCommand(c, n.prevHeld, r.frame);
     return true;
   }
@@ -289,7 +294,7 @@ export class HostRep {
   }
 
   /** Klien mengganti loadout di tengah match: berlaku pada spawn berikutnya (sama dengan pemain lokal); tampilan langsung. */
-  setLoadout(pid: string, lo: { weapon: WeaponId; scope: ScopeId }, variant: Variant) {
+  setLoadout(pid: string, lo: Loadout, variant: Variant) {
     const e = this.byPid.get(pid);
     if (!e) return;
     e.pendingLoadout = lo;
@@ -469,7 +474,10 @@ export class ClientRep {
     // amunisi/granat: ikut host saat tidak sedang menembak/reload/granat (prediksi tidak berebut dengan konfirmasi)
     const w = p.weapon;
     if (!(this.held & H.FIRE) && w.reloadT < 0 && p.grenadeState === 'NONE' && this.seq - ack < 20) {
-      w.ammo = own.ammo; w.reserve = own.reserve; w.modeIdx = own.modeIdx; p.grenades = own.grenades; p.flashes = own.flashes; w.shotsFired = own.shots;
+      const g = w.primary, q = w.secondary;
+      g.ammo = own.ammo; g.reserve = own.reserve; g.modeIdx = Math.min(own.modeIdx, g.def.modes.length - 1);
+      q.ammo = own.ammo2; q.reserve = own.reserve2; q.modeIdx = Math.min(own.mode2, q.def.modes.length - 1);
+      p.grenades = own.grenades; p.flashes = own.flashes; w.shotsFired = own.shots;
     }
     if (pred && err <= NET.correctEps && pred.grounded === own.grounded && pred.crouched === own.crouched) return;
     this.diag.corrections++; this.diag.lastErr = err === Infinity ? -1 : err;
@@ -525,11 +533,13 @@ export class ClientRep {
     c.prevStepPhase = c.stepPhase = s.stepPhase;
     e.yaw = s.yaw; e.pitch = s.pitch;
     w.slot = SLOTS[s.slot] ?? 'ar'; w.hasPrimary = !!(s.flags & EF.PRIMARY); w.adsActive = !!(s.flags & EF.ADS);
-    w.reloadT = s.reloadP >= 0 ? s.reloadP * w.def.reloadTime : -1;
+    w.reloadT = s.reloadP >= 0 ? 0 : -1; w.netReload = s.reloadP >= 0 ? s.reloadP : null;
     e.grenadeState = GSTATES[s.gstate] ?? 'NONE'; e.throwOver = !!(s.flags & EF.THROW_OVER); e.throwAnimT = s.throwAnimT;
     e.meleeKind = MKINDS[s.meleeKind] ?? 'butt'; e.meleeT = s.meleeT;
     e.hp = s.hp; e.protectT = s.flags & EF.PROTECT ? 0.5 : 0; e.char.protectT = e.protectT;
   }
+
+  private pelletN = 0;
 
   /** Tembakan pemain lain: kilat moncong, tracer, selongsong, bekas kena, suara (event), dorongan buku lokal. */
   private remoteShot(f: ShotFx) {
@@ -538,18 +548,22 @@ export class ClientRep {
     e.muzzleWorld(_a);
     _b.set(f.x, f.y, f.z);
     _v.copy(_b).sub(_a); const dist = _v.length(); if (dist > 1e-4) _v.divideScalar(dist); else _v.set(0, 0, -1);
-    ctx.vfx.muzzleFlash(_a, _v);
-    if (++e.weapon.shotsFired % CFG.combat.tracerEvery.bot === 0) ctx.vfx.tracer(_a, _b);
-    ctx.vfx.shell(e, false);
-    bus.emit('shot', { shooterId: e.id, weaponId: e.weapon.def.id, origin: _a.clone(), dir: _v.clone(), end: _b.clone() });
+    // pellet tambahan shotgun: hanya bekas kena (+ sebagian tracer); kilat, suara & selongsong sekali per tembakan
+    const pellet = (f.kind & SHOT_PELLET) !== 0, kind = f.kind & 7;
+    if (!pellet) {
+      ctx.vfx.muzzleFlash(_a, _v, !!e.weapon.def.suppressed);
+      if (++e.weapon.shotsFired % CFG.combat.tracerEvery.bot === 0) ctx.vfx.tracer(_a, _b);
+      ctx.vfx.shell(e, false);
+      bus.emit('shot', { shooterId: e.id, weaponId: e.weapon.def.id, origin: _a.clone(), dir: _v.clone(), end: _b.clone() });
+    } else if ((this.pelletN++ & 3) === 0) ctx.vfx.tracer(_a, _b);
     e.eye(_n); _v.copy(_b).sub(_n).normalize();
     castShot(_n, _v, 0, e);   // buku di lintasan terdorong (lokal, kosmetik); hasil kena diabaikan (host yang menentukan)
     _n.set(f.nx, f.ny, f.nz);
-    if (f.kind === 2) {
+    if (kind === 2) {
       const v = ctx.byId.get(f.victim);
       if (v) ctx.vfx.bodyHit(_b, v, (PART_KEYS[f.part] ?? 'upper') as PartKey);
       bus.emit('impact', { position: _b.clone(), normal: _n.clone(), material: 'body' });
-    } else if (f.kind === 1) {
+    } else if (kind === 1) {
       const mat = surfaceOf(f.mat);
       ctx.vfx.decal(_b, _n); ctx.vfx.chips(_b, _n, SURFACE_COLOR[mat], 4); ctx.vfx.puff(_b, _n, SURFACE_COLOR[mat]);
       bus.emit('impact', { position: _b.clone(), normal: _n.clone(), material: mat });
@@ -563,6 +577,7 @@ export class ClientRep {
     else if (f.type === 5) bus.emit('reload', { entityId: f.ent, stage: Math.min(2, f.a) as 0 | 1 | 2 });
     else if (f.type === 6) bus.emit('dryfire', { entityId: f.ent });
     else if (f.type === 7) bus.emit('pin', { entityId: f.ent });
+    else if (f.type === 8) bus.emit('cycle', { entityId: f.ent, kind: f.a === 1 ? 'bolt' : 'pump' });
   }
 
   /** Event reliable dari host. */
@@ -572,8 +587,8 @@ export class ClientRep {
       case 'spawn': {
         const e = ctx.byId.get(num('id'));
         if (!e) break;
-        const lo = cleanLoadout(m.w, m.s);
-        if (lo.weapon !== e.loadout.weapon || lo.scope !== e.loadout.scope) e.pendingLoadout = lo;
+        const lo = cleanLoadout(m.w, m.s, m.p, m.ps, m.m);
+        if (!sameLoadout(lo, e.loadout)) e.pendingLoadout = lo;
         if (isVariant(m.v) && e !== p && e.char.variant !== m.v) e.char.setVariant(m.v);
         this.bufs.get(e.id)?.clear(); this.lastStep.delete(e.id);
         ctx.spawns.applySpawn(e, num('x'), num('y') - 0.05, num('z'), num('yaw'));
@@ -596,7 +611,8 @@ export class ClientRep {
         break;
       }
       case 'boom': ctx.grenades.explodeFx(new THREE.Vector3(num('x'), num('y'), num('z')), num('o')); break;
-      case 'flashbang': ctx.grenades.flashFx(new THREE.Vector3(num('x'), num('y'), num('z')), num('o')); break;
+      case 'flashbang': ctx.grenades.flashFx(new THREE.Vector3(num('x'), num('y'), num('z')), num('o'), m.h === 1); break;
+      case 'glass': ctx.breakables.breakPanel(num('i')); break;
       case 'mstate':
         ctx.match.winner = (m.w as never) ?? 'draw'; ctx.match.roundWinner = (m.rw as never) ?? null;
         ctx.match.applyNet(m.s as MatchStateName, num('sb'), num('sr'), num('tl'), ctx.match.countdown, num('r'));
