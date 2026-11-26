@@ -22,7 +22,8 @@
 - 100% prosedural: tidak ada file gambar/audio/model eksternal.
 - Hot loop (fixedUpdate/update) tanpa alokasi objek baru bila memungkinkan: reuse Vector3/Quaternion sementara dan pool.
 - Cek signature API Three.js/Rapier di node_modules/**/*.d.ts sebelum memakainya.
-- localStorage hanya untuk settings (key: studwarfare.settings.v1).
+- localStorage hanya untuk settings (key: studwarfare.settings.v1). Pengecualian tunggal: sesi login akun `studwarfare.auth.v1`
+  (dikelola Supabase Auth, wajib agar pemain tetap masuk; lihat "Akun & leaderboard").
 
 ## Keputusan implementasi (menyimpang minimal dari teks PDF, dengan alasan)
 - Layout map Brick Hall = layout ORISINAL (bukan replika map game lain): aturan §4 tetap dipakai
@@ -684,6 +685,54 @@
   - Bila pengguna merasa bot terlalu tajam: turunkan `gateIntent` (≤ 0.4 = mendekati perilaku lama, akurasi naik lagi ±60%) atau
     naikkan `aimLag`; nilai GDD §11.5 tetap perlu persetujuan.
 
+- Akun & leaderboard (permintaan pengguna 2026-11-26: "leaderboard di halaman utama" + "akun ter-register agar nama tidak berubah-ubah",
+  syarat "security harus aman — menyimpan data orang lain"). Angka/aturan di `src/game/Leaderboard.ts` (murni) + `supabase/accounts.sql`.
+  - MODEL KEAMANAN: kunci publik (anon/publishable) ada di bundle → SEMUA aturan ditegakkan DATABASE. `supabase/accounts.sql` (dijalankan
+    pemilik di SQL Editor, aman diulang): tabel `profiles` (id = auth.users, username unik tanpa beda kapital, banned) & `match_results`
+    (satu baris per (user, match_key), constraint rentang & konsistensi: hs ≤ kill, pisau + granat ≤ kill, streak ≤ kill, assist flash ≤
+    assist, skor ≤ 125·kill + 50·assist, kill·2 ≤ durasi, durasi 30–7200, humans 2–10) — hak tabel DICABUT dari public/anon/authenticated
+    (Supabase memberi ALL secara bawaan) + RLS aktif TANPA policy (dua kunci; JANGAN pakai FORCE RLS — fungsi milik pemilik tabel harus
+    tetap bisa). Pintu satu-satunya = fungsi SECURITY DEFINER `set search_path = ''` (nama lengkap): `get_my_profile`, `set_username`
+    (regex ^[A-Za-z0-9_]{3,16}$ + wajib huruf, nama terlarang `sw_reserved`, ganti nama 30 hari kecuali beda kapital), `delete_my_account`
+    (hapus auth.users → cascade), `submit_match` (hanya untuk auth.uid(); batas laju ≥ 30 s, ≤ 60/24 jam, durasi ≤ jeda sejak kiriman
+    terakhir + 60 s; duplikat diabaikan) — EXECUTE hanya authenticated; `get_leaderboard(board, period, limit ≤ 50)` — anon & authenticated,
+    hanya username + angka, HANYA match TERKONFIRMASI (≥ 1 akun lain yang tidak diblokir mengirim match_key sama ±3 jam), akun diblokir
+    disembunyikan, mingguan sejak Senin 00:00 WIB, K/D min. 5/10 match, nilai 0 tidak tampil, peringkat sendiri ikut walau di luar batas.
+    Email/password TIDAK pernah ada di tabel kita (Supabase Auth; password di-hash). Moderasi: `update public.profiles set banned = true …`.
+  - Klien: `net/supabase.ts` (SATU klien Supabase lazy untuk signaling + akun; PKCE, persistSession, storageKey `studwarfare.auth.v1`) —
+    `SupabaseSignaling` kini memakai klien bersama (terukur Supabase Realtime asli: gabung 1.5 s, match jalan). `net/Account.ts`
+    (`account`: init (initialize → tukar ?code=, lalu bersihkan code/sb_flow_id/error dari URL), Google OAuth (redirect = origin + path;
+    Redirect URLs Supabase harus pola `…/**`), daftar/masuk email, lupa password (PKCE: link harus dibuka di browser yang sama →
+    PASSWORD_RECOVERY → layar password baru), username, keluar, hapus akun (konfirmasi ketik username), `submit`, `leaderboard` (cache 60 s);
+    callback onAuthStateChange TIDAK menunggu panggilan Supabase lain (deadlock pustaka) → profil lewat setTimeout; pesan error dari kode
+    (auth `error.code` / token SQL / PGRST202 = "server peringkat belum dipasang"), teks mentah server tidak ditampilkan; daftar & lupa
+    password menjawab generik (tidak membocorkan email terdaftar); email sendiri disamarkan (`maskEmail`); kotak hitam tanpa email/token
+    (log boot membuang parameter login).
+  - Game: `Game.trackKill` / assist flash → `mlog` (kill jarak dekat termasuk popor, kill K-400, assist flash, kill senjata api terjauh);
+    `MatchManager.playedT` (detik PLAYING semua ronde, ikut `MatchSave.played` saat pindah host); layar hasil match ONLINE (TDM/Eliminasi)
+    → `submitLeaderboard` (sekali per seed host = match_key; humans = entitas non-bot di NetStart; `buildReport` menjepit ke constraint
+    database dan menolak match tak memenuhi syarat; gangguan jaringan → coba ulang sekali) + status di layar hasil (`Menus.setResultNote`).
+    Username akun = nama pemain room (kolom nama Main Bareng terkunci).
+  - UI (`Menus`): menu utama 2 kartu (`.main-wrap`; kartu utama 470 px) — panel 🏆 Peringkat (Minggu ini / Sepanjang masa, 13 papan,
+    baris dibangun dengan textContent), tombol akun; layar Akun (`showAccount`; digambar ulang hanya bila ringkasan keadaan berubah
+    (`accountSig`) agar ketikan tidak hilang saat token diperbarui); datang dari link reset / baru masuk tanpa username → layar Akun otomatis.
+  - Header situs `vercel.json`: CSP (`script-src 'self' 'wasm-unsafe-eval'` untuk Rapier, `worker-src blob:` untuk keep-alive & realtime,
+    `connect-src` Supabase https/wss, `style-src 'unsafe-inline'` untuk atribut style menu), X-Frame-Options DENY + frame-ancestors,
+    nosniff, Referrer-Policy, Permissions-Policy (mikrofon self untuk voice), COOP same-origin, HSTS. Terukur: build produksi + CSP →
+    0 pelanggaran, Latihan Boston jalan.
+  - Tests: `tests/accounts.test.ts` (aturan murni + cermin SQL: nama terlarang, papan, map, parameter submit, hak & search_path, fuzz
+    2000 laporan), `tests/accountsSql.test.ts` (Postgres ASLI lewat devDependency `@electric-sql/pglite`, tiruan role & hak bawaan
+    Supabase: anon/authenticated tidak bisa menyentuh tabel, validasi, batas laju, konfirmasi, blokir, hapus akun, 300 laporan
+    `buildReport` diterima). Browser (skrip lokal scratchpad/pw: acct_ui.js — build produksi + CSP + Supabase TIRUAN lewat route:
+    XSS username tampil sebagai teks, masuk/daftar/lupa/reset password PKCE, Google authorize PKCE, hapus akun wajib konfirmasi;
+    acct_online.js — 2 jendela, kiriman hasil per pemain dengan match_key/humans/durasi/statistik benar, tidak dobel; real_signal.js).
+  - Belum / batas: statistik dihitung browser pemain (P2P) → 2 akun yang berkomplot tetap bisa memalsukan (diperlambat batas + blokir);
+    nama tamu di room tidak diverifikasi (papan memakai username akun); Tantangan Latihan (time trial) tidak dibuat (hasil solo tidak
+    bisa dicek silang). Pengaturan Supabase (Redirect URLs, Confirm email, password 8 + huruf/angka, Google OAuth, SMTP) dilakukan
+    pemilik — lihat README "Pasang online" langkah 6. Email bawaan Supabase HANYA terkirim ke anggota tim organisasi (alamat lain →
+    `email_address_not_authorized`, game menyarankan Masuk dengan Google; lupa password tetap generik) → SMTP sendiri WAJIB agar
+    pemain lain bisa daftar pakai email. CAPTCHA Supabase jangan dinyalakan (klien belum mengirim captchaToken).
+
 - Map Boston (permintaan pengguna 2026-11-26; dokumen pengguna "IDE MAP BARU/Stud Warfare — Blueprint Map Boston.pdf" + 4 gambar Gemini,
   lokal saja, jangan di-commit; adaptasi lantai 3 & 4 kantor pengguna sendiri — layout orisinal, bukan replika map game lain):
   - `src/world/maps/boston/`: `layout.ts` (data ditulis dalam koordinat DOKUMEN — Utara = +Z, Biru L4 di Utara — lalu DIPUTAR 180°
@@ -722,7 +771,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 460 test Vitest / 28 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 486 test Vitest / 30 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -738,7 +787,8 @@
   cadangan, bot tanpa Venny (tests/variants.test.ts), ekspansi senjata: angka dokumen batch 1–3, kalibrasi pola pellet, reload selongsong,
   bolt, dua senjata api, migrasi tombol v3, loadout/protokol, garis bidik 30 model, jarak dekat (tests/weaponsX.test.ts), lemparan 34 u/s & garis
   lintasan = body Rapier (lantai/dinding/grup tabrakan/sumbu habis/jarak lempar/rumus balistik bot), flash pelempar × 0.5, setelan nadeArc
-  (tests/throw.test.ts)) hijau;
+  (tests/throw.test.ts), akun & leaderboard: aturan murni + cermin SQL (tests/accounts.test.ts) & keamanan SQL di Postgres asli PGlite
+  (tests/accountsSql.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

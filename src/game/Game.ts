@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import { SCOPE_ORDER, WEAPONS, WEAPON_ORDER, classOf, scopeAllowed, type ScopeId, type WeaponId } from '../config/weaponsData';
-import { X_ORDER } from '../config/weaponsExtra';
+import { MELEES, X_ORDER } from '../config/weaponsExtra';
 import { physics } from '../physics/Physics';
 import { Engine } from '../core/Engine';
 import { blackbox } from '../core/BlackBox';
@@ -79,6 +79,8 @@ import { makePlan, migrationTimes, parseSave, type MatchSave, type Plan } from '
 import { applySaveEntities, captureSave } from '../net/Resume';
 import { loadTicket, saveTicket, type Ticket } from '../net/Ticket';
 import { HoldQueue } from '../net/HoldQueue';
+import { account } from '../net/Account';
+import { buildReport } from './Leaderboard';
 import { H, I, type Command } from '../net/protocol';
 
 const D2R = THREE.MathUtils.degToRad, R2D = THREE.MathUtils.radToDeg;
@@ -113,6 +115,11 @@ export class Game {
   private gfxLostAt = 0;
   private gfxTimer = 0;
   private matchNo = 0;
+  /** Catatan match pemain di layar ini untuk leaderboard (tidak ada di Entity.stats): kill jarak dekat / K-400, assist flash, kill
+   *  senjata api terjauh (u). Direset tiap match. */
+  private mlog = { knife: 0, nade: 0, flash: 0, longest: 0 };
+  /** match_key (seed) yang hasilnya sudah dikirim — sekali per match. */
+  private lbSent = -1;
   private bbPerfT = 0; private bbFrames = 0;
   // ── pindah host & AFK (permintaan pengguna 2026-11-25: host ditelepon / keluar mendadak → game tetap jalan untuk semua)
   /** Online: susunan match yang sedang berjalan (host & klien) — bahan pindah host & bergabung ulang. */
@@ -335,7 +342,7 @@ export class Game {
         keys: [keyLabel(this.settings.binds.voiceTeam), keyLabel(this.settings.binds.voiceAll)] as [string, string] }),
       voiceMic: () => this.voice.cap.start(),
       myTeam: () => this.localTeam(),
-      setPlayerName: (n) => { this.settings.playerName = cleanName(n); saveSettings(this.settings); },
+      setPlayerName: (n) => { this.settings.playerName = account.profile?.username ?? cleanName(n); saveSettings(this.settings); },
       selectMap: (c) => void this.selectMap(c), mapId: () => currentMap().id, mapChoice: () => this.urlMap ?? this.settings.map,
       handoverTargets: () => this.handoverTargets(), handover: (pid) => this.handover(pid),
       mergeBackCode: () => this.mergeBackCode(), mergeBack: () => void this.mergeBack(),
@@ -371,7 +378,8 @@ export class Game {
     setInterval(() => this.netTick(), 1000);
     document.addEventListener('visibilitychange', () => { this.updateAfk(); void this.syncWakeLock(); });
     bus.on('match:state', (e) => this.onMatchState(e.state));
-    bus.on('kill', (e) => this.onKill(e));
+    bus.on('kill', (e) => { this.onKill(e); this.trackKill(e); });
+    bus.on('assist', (e) => { const p = ctx.player; if (p && this.inMatch && e.entityId === p.id && e.flash) this.mlog.flash++; });
     // pisau pemain: hentakan kamera tepat saat bilah menyapu/menyodok (dijadwalkan sedikit sebelum titik kena), + ekstra saat kena
     bus.on('melee', (e) => {
       const p = ctx.player;
@@ -419,6 +427,66 @@ export class Game {
     // link room (…?room=KODE): buka Main Bareng dengan kode terisi → isi nama lalu Gabung
     const roomLink = new URLSearchParams(location.search).get('room');
     if (roomLink !== null && auto === null) this.menus.showLobbyHome(() => this.menus.showMain(), roomLink);
+    this.startAccount();
+  }
+
+  // ───────────────────────────────── akun & leaderboard (net/Account; aturan keamanan di supabase/accounts.sql)
+  /** Pulihkan sesi akun setelah menu tampil (segera bila URL membawa hasil login / link email). */
+  private startAccount() {
+    if (!account.available) return;
+    account.onChange(() => this.onAccountChange());
+    const fromAuth = /[?&#](code|error_code|error_description)=/.test(location.href);
+    if (fromAuth) void account.init(); else setTimeout(() => void account.init(), 500);
+  }
+
+  private onAccountChange() {
+    const u = account.profile?.username;
+    if (u && this.settings.playerName !== u) { this.settings.playerName = u; saveSettings(this.settings); }
+    if (this.inMatch) return;
+    const cur = this.menus.current;
+    // datang dari link reset password (layar apa pun di luar match) atau baru masuk tapi belum punya username (dari menu utama)
+    // → langsung ke layar Akun
+    if (account.ready && cur !== 'account' && (account.recovery || (account.signedIn && !account.profile && account.profileChecked && (cur === 'main' || cur === null))))
+      this.menus.showAccount(() => this.menus.showMain());
+    else this.menus.accountChanged();
+  }
+
+  private trackKill(ev: GameEvents['kill']) {
+    const p = ctx.player;
+    if (!p || !this.inMatch || ev.killerId !== p.id || ev.victimId === p.id) return;
+    const w = ev.weaponId;
+    if (w === 'k400') this.mlog.nade++;
+    else if (w === 'melee' || Object.prototype.hasOwnProperty.call(MELEES, w)) this.mlog.knife++;
+    else if (w !== 'fall') {
+      const v = ctx.byId.get(ev.victimId);
+      if (v) this.mlog.longest = Math.max(this.mlog.longest, p.pos.distanceTo(v.pos));
+    }
+  }
+
+  /** Layar hasil match ONLINE: kirim hasil pemain ini (hanya miliknya sendiri) bila masuk akun. Database memvalidasi & baru
+   *  menghitungnya di peringkat setelah ≥ 1 akun lain di match yang sama juga mengirim (match terkonfirmasi). */
+  private async submitLeaderboard() {
+    const p = ctx.player, st = this.netStart;
+    if (!p || !st || ctx.net.role === 'offline' || this.mode === 'practice' || this.lbSent === st.seed) return;
+    const note = (t: string, kind: 'info' | 'ok' | 'err' = 'info') => this.menus.setResultNote(t, kind);
+    if (!account.available) return;
+    await account.init();
+    if (!account.signedIn) { note('Masuk akun (menu utama → Akun) agar hasil match online kamu masuk papan peringkat.'); return; }
+    if (!account.profile) { note('Buat username dulu (menu utama → Akun) agar hasil match masuk papan peringkat.'); return; }
+    const all = ctx.entities.filter(e => !e.dummyAt);
+    const mvp = all.reduce<typeof all[number] | null>((b, e) => (!b || e.stats.score > b.stats.score ? e : b), null);
+    const s = p.stats;
+    const r = buildReport({ matchKey: st.seed, map: this.mapId ?? '', mode: ctx.match.mode, won: ctx.match.winner === p.team, mvp: mvp === p,
+      humans: st.ents.filter(e => !e.bot).length, duration: ctx.match.playedT, score: s.score, kills: s.kills, deaths: s.deaths,
+      assists: s.assists, hsKills: s.hsKills, knifeKills: this.mlog.knife, nadeKills: this.mlog.nade, flashAssists: this.mlog.flash,
+      bestStreak: s.bestStreak, longestKill: this.mlog.longest });
+    if (!r) { note('Match ini tidak masuk peringkat (perlu minimal 2 pemain manusia & 30 detik bermain).'); return; }
+    this.lbSent = st.seed;
+    note('Menyimpan hasil ke papan peringkat…');
+    let res = await account.submit(r);
+    if (!res.ok && res.retry) { await new Promise(ok => setTimeout(ok, 4000)); res = await account.submit(r); }   // gangguan jaringan: coba sekali lagi
+    if (res.ok) note('✓ Hasil tersimpan — masuk peringkat setelah dikonfirmasi akun lain di match ini.', 'ok');
+    else note(`Hasil tidak tersimpan: ${res.error}`, 'err');
   }
 
   // ───────────────────────────────── entitas
@@ -667,6 +735,7 @@ export class Game {
       } else ctx.match.start(opts);
     }
     this.netStart = net; this.hadFriends = role === 'host' && (this.host?.connected ?? 0) > 0;
+    this.mlog = { knife: 0, nade: 0, flash: 0, longest: 0 };
     this.afkOn = false; if (!resume) this.awaySince = -1;   // dilanjutkan (pindah host): masih AFK → langsung dimainkan bot lagi
     if (!resume) this.introBanner(opts);
     this.matchNo++;
@@ -1092,6 +1161,7 @@ export class Game {
     ctx.props.reset(); ctx.vfx.clear();
     const online = ctx.net.role === 'offline' ? null : ctx.net.role;
     this.menus.showResults(ctx.match.winner, ctx.player?.team ?? 'blue', !!this.room && (!!this.roster || !!online), online);
+    void this.submitLeaderboard();
   }
 
   private onKill(ev: GameEvents['kill']) {

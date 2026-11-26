@@ -26,7 +26,7 @@ export function captureSave(): MatchSave {
   const m = ctx.match;
   return { v: SAVE_V, state: m.state, round: m.round, timeLeft: r2(m.timeLeft), countdown: r2(m.countdown),
     sb: ctx.teams.scores.blue, sr: ctx.teams.scores.red, winner: m.winner, roundWinner: m.roundWinner, ents: ctx.entities.map(saveEnt),
-    glass: ctx.breakables.brokenList() };
+    glass: ctx.breakables.brokenList(), played: ctx.match.playedT };
 }
 
 /** Terapkan cadangan ke entitas yang baru dibuat (setelah MatchManager.resume): loadout, statistik, lalu hidup di posisinya

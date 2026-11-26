@@ -40,6 +40,8 @@ export class MatchManager {
   puppet = false;
   /** Dipanggil setiap awal ronde (TDM/Latihan: sekali di awal match). */
   onRoundStart: ((round: number) => void) | null = null;
+  /** Detik match benar-benar dimainkan (PLAYING, semua ronde; ikut cadangan pindah host) — durasi hasil untuk leaderboard. */
+  playedT = 0;
 
   constructor() {
     bus.on('kill', () => { if (!this.puppet) this.checkScore(); });
@@ -49,7 +51,7 @@ export class MatchManager {
   startPuppet(opts: MatchOptions) {
     this.puppet = true;
     this.opts = { ...opts };
-    this.round = 1; this.roundWinner = null; this.winner = 'draw';
+    this.round = 1; this.roundWinner = null; this.winner = 'draw'; this.playedT = 0;
     this.timeLeft = opts.mode === 'elim' ? XCFG.elim.roundTime : opts.timeLimit;
     this.countdown = CFG.match.countdown;
     ctx.teams.reset();
@@ -64,7 +66,7 @@ export class MatchManager {
     this.puppet = puppet;
     this.opts = { ...opts };
     this.round = s.round; this.timeLeft = s.timeLeft; this.countdown = s.countdown;
-    this.winner = s.winner; this.roundWinner = s.roundWinner; this.roundEndT = 0; this.endT = 0;
+    this.winner = s.winner; this.roundWinner = s.roundWinner; this.roundEndT = 0; this.endT = 0; this.playedT = s.played ?? 0;
     ctx.teams.reset(); ctx.teams.scores.blue = s.sb; ctx.teams.scores.red = s.sr;
     for (const e of ctx.entities) { e.stats = newStats(); e.streak = 0; e.respawnT = 0; e.dmgBy.clear(); }
     ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear(); ctx.breakables.reset();
@@ -99,7 +101,7 @@ export class MatchManager {
   start(opts: MatchOptions) {
     this.puppet = false;
     this.opts = { ...opts };
-    this.round = 0;
+    this.round = 0; this.playedT = 0;
     ctx.teams.reset();
     for (const e of ctx.entities) { e.stats = newStats(); e.streak = 0; e.respawnT = 0; e.dmgBy.clear(); }
     this.beginRound();
@@ -122,7 +124,7 @@ export class MatchManager {
   update(dt: number, realDt: number) {
     if (this.puppet) {   // klien: hanya haluskan timer; transisi datang dari host
       if (this.state === 'COUNTDOWN') this.countdown = Math.max(0, this.countdown - dt);
-      else if (this.state === 'PLAYING' && this.opts.mode !== 'practice') this.timeLeft = Math.max(0, this.timeLeft - dt);
+      else if (this.state === 'PLAYING' && this.opts.mode !== 'practice') { this.timeLeft = Math.max(0, this.timeLeft - dt); this.playedT += dt; }
       return;
     }
     switch (this.state) {
@@ -132,6 +134,7 @@ export class MatchManager {
         break;
       case 'PLAYING':
         if (this.opts.mode === 'practice') break;
+        this.playedT += dt;
         this.timeLeft = Math.max(0, this.timeLeft - dt);
         if (this.opts.mode === 'elim') this.checkRound(this.timeLeft <= 0);
         else if (this.timeLeft <= 0) this.end();

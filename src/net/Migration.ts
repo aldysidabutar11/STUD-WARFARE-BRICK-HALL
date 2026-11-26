@@ -60,6 +60,8 @@ export interface MatchSave {
   sb: number; sr: number; winner: Win; roundWinner: Win | null; ents: SaveEnt[];
   /** Panel kaca destruktibel yang sudah pecah (indeks MapDef.breakables; Boston). */
   glass?: number[];
+  /** Detik match sudah dimainkan (state PLAYING, semua ronde) — durasi kiriman hasil ke leaderboard tetap benar setelah pindah host. */
+  played?: number;
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -98,5 +100,6 @@ export function parseSave(raw: unknown): MatchSave | null {
   return { v: SAVE_V, state: r.state as MatchStateName, round: clamp(Math.round(r.round), 0, 99), timeLeft: clamp(r.timeLeft, 0, 7200),
     countdown: clamp(r.countdown, 0, 10), sb: clamp(Math.round(r.sb), 0, 999), sr: clamp(Math.round(r.sr), 0, 999),
     winner: isWin(r.winner) ? r.winner : 'draw', roundWinner: isWin(r.roundWinner) ? r.roundWinner : null, ents,
-    ...(Array.isArray(r.glass) ? { glass: [...new Set(r.glass.filter((i): i is number => Number.isInteger(i) && (i as number) >= 0 && (i as number) < 32))].slice(0, 32) } : {}) };
+    ...(Array.isArray(r.glass) ? { glass: [...new Set(r.glass.filter((i): i is number => Number.isInteger(i) && (i as number) >= 0 && (i as number) < 32))].slice(0, 32) } : {}),
+    ...(fin(r.played) ? { played: clamp(r.played, 0, 7200) } : {}) };
 }

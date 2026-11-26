@@ -24,6 +24,9 @@ import type { JoinFail } from '../net/Session';
 import { onlineConfigured } from '../net/Signaling';
 import { blackbox } from '../core/BlackBox';
 import { CharPreview } from './CharPreview';
+import { account, type LbRow } from '../net/Account';
+import { BOARDS, NAME_PROBLEM_TEXT, PASSWORD_PROBLEM_TEXT, USERNAME_MAX, formatValue, passwordProblem, usernameProblem, weekResetText,
+  type BoardId, type Period } from '../game/Leaderboard';
 
 /** Aksi di layar room (host: langsung; klien: dikirim ke host untuk divalidasi). */
 export type RoomAction = { type: 'team'; team: Team } | { type: 'ready'; ready: boolean } | { type: 'kick'; id: string }
@@ -121,6 +124,12 @@ export class Menus {
   private vSel: Variant = 'm';
   private stopCapture: (() => void) | null = null;
   private settingsTab = 'mouse';
+  // papan peringkat di menu utama (pilihan diingat selama halaman terbuka) & layar Akun
+  private lbBoard: BoardId = 'points';
+  private lbPeriod: Period = 'week';
+  private lbTok = 0;
+  private accountBack: (() => void) | null = null;
+  private acctSig = '';
 
   constructor(private api: MenuApi) {}
 
@@ -151,14 +160,16 @@ export class Menus {
         (kode ${formatRoomCode(tk.code)}) — ${tk.match ? 'slotmu dimainkan bot sampai kamu kembali' : 'kamu bisa masuk lagi'}.</div>
       <div class="bb-btns"><button class="primary" data-a="tkgo">Kembali ke ${tk.match ? 'match' : 'room'}</button><button data-a="tkno">Abaikan</button></div>
       <div class="bb-why" data-tkmsg></div></div>` : '';
-    const m = this.mount('main', `<div class="card main"><h1>STUD WARFARE</h1><div class="sub">BRICK HALL</div>${tkHtml}${issueHtml}
+    const m = this.mount('main', `<div class="main-wrap"><div class="card main"><h1>STUD WARFARE</h1><div class="sub">BRICK HALL</div>${tkHtml}${issueHtml}
       <div class="btns"><button class="primary" data-a="play">▶ Main</button><button data-a="room">👥 Main Bareng (Room)</button>
       <button data-a="practice">◎ Latihan Menembak <small class="bsub">· ${esc(mc === 'random' ? 'map acak' : MAPS[mc].name)}</small></button>
       <button data-a="loadout">Loadout</button><button data-a="settings">Pengaturan</button><button data-a="controls">Kontrol</button>
       <button data-a="fs">Layar Penuh</button></div>
       <div class="note">Biru di Selatan menghadap Utara. Mode: Team Deathmatch atau Eliminasi melawan bot, atau Main Bareng di room (5 lawan 5, slot kosong diisi bot).
         ${MAP_IDS.length} map: ${listNames(MAP_IDS.map(id => MAPS[id].name))} — pilih di ▶ Main (Latihan memakai map yang sama). Gamepad didukung.</div>
-      <button class="bb-link" data-a="bbreport" title="Catatan kejadian teknis (koneksi, grafis, error) untuk dikirim ke pengembang">Salin laporan teknis</button></div>`);
+      <button class="bb-link" data-a="bbreport" title="Catatan kejadian teknis (koneksi, grafis, error) untuk dikirim ke pengembang">Salin laporan teknis</button></div>
+      ${this.lbCardHtml()}</div>`);
+    this.bindLeaderboard(m);
     this.on(m, 'bbcopy', () => this.copyReport(m, m.querySelector('[data-a="bbcopy"]')));
     this.on(m, 'bbreport', () => this.copyReport(m, m.querySelector('[data-a="bbreport"]')));
     this.on(m, 'bbclose', () => { blackbox.dismissPrev(); this.showMain(); });
@@ -179,6 +190,206 @@ export class Menus {
     this.on(m, 'settings', () => this.showSettings(() => this.showMain()));
     this.on(m, 'controls', () => this.showControls(() => this.showMain()));
     this.on(m, 'fs', () => this.api.fullscreen());
+  }
+
+  // ───────────────────────────── papan peringkat (menu utama) & akun — net/Account (aturan keamanan di supabase/accounts.sql)
+  private lbCardHtml(): string {
+    const opts = BOARDS.map(b => `<option value="${b.id}"${b.id === this.lbBoard ? ' selected' : ''}>${esc(b.name)}</option>`).join('');
+    return `<div class="card lb"><div class="lb-head"><h2>🏆 Peringkat</h2><button class="lb-acct" data-a="acct"></button></div>
+      <div class="tabs lb-per"><button data-per="week">Minggu ini</button><button data-per="all">Sepanjang masa</button></div>
+      <select class="lb-board" data-board aria-label="Jenis peringkat">${opts}</select>
+      <div class="lb-desc" data-desc></div>
+      <ol class="lb-list" data-list></ol>
+      <div class="note lb-foot">Masuk peringkat: punya akun, lalu main <b>online</b> (TDM / Eliminasi) bareng minimal 1 teman yang juga punya akun.</div></div>`;
+  }
+
+  private bindLeaderboard(m: HTMLElement) {
+    const card = m.querySelector('.card.lb') as HTMLElement | null;
+    if (!card) return;
+    const sel = card.querySelector('[data-board]') as HTMLSelectElement;
+    card.querySelectorAll<HTMLButtonElement>('[data-per]').forEach(b => b.addEventListener('click', () => {
+      this.lbPeriod = b.dataset.per === 'all' ? 'all' : 'week'; this.renderLbMeta(card); void this.loadLb(card);
+    }));
+    sel.addEventListener('change', () => { this.lbBoard = BOARDS.find(b => b.id === sel.value)?.id ?? 'points'; this.renderLbMeta(card); void this.loadLb(card); });
+    this.on(card, 'acct', () => this.showAccount(() => this.showMain()));
+    this.renderLbMeta(card);
+    void this.loadLb(card);
+    this.acctSig = this.accountSig();
+  }
+
+  private renderLbMeta(card: HTMLElement) {
+    card.querySelectorAll<HTMLButtonElement>('[data-per]').forEach(b => b.classList.toggle('sel', b.dataset.per === this.lbPeriod));
+    const def = BOARDS.find(b => b.id === this.lbBoard)!;
+    (card.querySelector('[data-desc]') as HTMLElement).textContent = def.desc + (this.lbPeriod === 'week' ? ` · ${weekResetText(new Date())}` : '');
+    const btn = card.querySelector('[data-a="acct"]') as HTMLButtonElement, A = account;
+    btn.disabled = !A.available;
+    btn.textContent = !A.available ? 'Akun belum aktif' : !A.ready ? 'Akun…' : !A.signedIn ? 'Masuk / Daftar' : !A.profile ? 'Buat username' : `👤 ${A.profile.username}`;
+  }
+
+  private async loadLb(card: HTMLElement, force = false) {
+    const list = card.querySelector('[data-list]') as HTMLOListElement, tok = ++this.lbTok;
+    const line = (text: string, cls = 'lb-empty') => { const li = document.createElement('li'); li.className = cls; li.textContent = text; return li; };
+    if (!account.available) { list.replaceChildren(line('Fitur akun & peringkat belum aktif di build ini.')); return; }
+    list.replaceChildren(line('Memuat…'));
+    const r = await account.leaderboard(this.lbBoard, this.lbPeriod, force);
+    if (tok !== this.lbTok || !card.isConnected) return;
+    if (!r.ok) {
+      const li = line(r.error), retry = document.createElement('button');
+      retry.textContent = 'Coba lagi'; retry.className = 'lb-retry';
+      retry.addEventListener('click', () => { this.api.click(); void this.loadLb(card, true); });
+      li.append(' ', retry); list.replaceChildren(li); return;
+    }
+    if (!r.rows.length) {
+      list.replaceChildren(line(this.lbPeriod === 'week' ? 'Belum ada yang masuk peringkat minggu ini — jadilah yang pertama!' : 'Belum ada yang masuk peringkat.'));
+      return;
+    }
+    const items: HTMLLIElement[] = [];
+    r.rows.forEach((row: LbRow, i) => {
+      if (i > 0 && row.rank > r.rows[i - 1].rank + 1) items.push(line('…', 'lb-gap'));
+      const li = document.createElement('li');
+      li.className = row.isMe ? 'me' : '';
+      const rk = document.createElement('span'), nm = document.createElement('span'), val = document.createElement('span');
+      rk.className = 'rk'; nm.className = 'nm'; val.className = 'val';
+      rk.textContent = `#${row.rank}`; nm.textContent = row.username + (row.isMe ? ' (kamu)' : ''); val.textContent = formatValue(this.lbBoard, row.value);
+      li.title = `${row.matches} match`;
+      li.append(rk, nm, val);
+      items.push(li);
+    });
+    list.replaceChildren(...items);
+  }
+
+  /** Ringkasan keadaan akun — layar digambar ulang hanya bila ini berubah (bukan tiap token diperbarui → ketikan tidak hilang). */
+  private accountSig(): string {
+    const A = account;
+    return [A.available, A.ready, A.signedIn, A.recovery, A.profile?.username ?? '', A.profile?.banned ?? false, A.profileChecked].join('|');
+  }
+
+  /** Dipanggil Game saat keadaan akun berubah. */
+  accountChanged() {
+    const sig = this.accountSig();
+    if (sig === this.acctSig) return;
+    this.acctSig = sig;
+    if (this.current === 'main') {
+      const card = this.root.querySelector('.card.lb') as HTMLElement | null;
+      if (card) { this.renderLbMeta(card); void this.loadLb(card); }
+    } else if (this.current === 'account' && this.accountBack) this.showAccount(this.accountBack);
+  }
+
+  /** Layar hasil: status kiriman hasil ke papan peringkat. */
+  setResultNote(text: string, kind: 'info' | 'ok' | 'err') {
+    if (this.current !== 'results') return;
+    const box = this.root.querySelector('[data-lbres]') as HTMLElement | null;
+    if (!box) return;
+    box.textContent = text; box.className = `lb-res ${kind}`;
+  }
+
+  /** Layar Akun: masuk (Google / email), daftar, lupa password, password baru (dari link), username, keluar, hapus akun. */
+  showAccount(back: () => void) {
+    this.accountBack = back;
+    const A = account;
+    const notice = A.notice ? `<div class="acct-notice">${esc(A.notice)}</div>` : '';
+    A.notice = '';
+    let body: string;
+    if (!A.available) body = '<p>Fitur akun belum aktif di build ini (server belum dipasang).</p>';
+    else if (!A.ready) body = '<p>Memuat akun…</p>';
+    else if (A.recovery && A.signedIn) body = `<div class="sec">Buat password baru</div>
+      <label class="acct-f">Password baru<input class="txt" type="password" data-pw1 autocomplete="new-password" maxlength="72"></label>
+      <label class="acct-f">Ulangi password<input class="txt" type="password" data-pw2 autocomplete="new-password" maxlength="72"></label>
+      <div class="note">Minimal 8 karakter, berisi huruf dan angka.</div>
+      <div class="row"><button class="primary" data-a="newpw">Simpan password</button></div>`;
+    else if (!A.signedIn) body = `<button class="primary acct-google" data-a="google"><span class="g-logo">G</span> Masuk dengan Google</button>
+      <div class="acct-or"><span>atau pakai email</span></div>
+      <div class="tabs acct-tabs"><button data-t="in" class="sel">Masuk</button><button data-t="up">Daftar</button><button data-t="reset">Lupa password</button></div>
+      <div class="acct-form" data-form="in">
+        <label class="acct-f">Email<input class="txt" type="email" data-email autocomplete="email" maxlength="254" spellcheck="false"></label>
+        <label class="acct-f">Password<input class="txt" type="password" data-pw autocomplete="current-password" maxlength="72"></label>
+        <div class="row"><button class="primary" data-a="signin">Masuk</button></div></div>
+      <div class="acct-form" data-form="up" hidden>
+        <label class="acct-f">Email<input class="txt" type="email" data-email autocomplete="email" maxlength="254" spellcheck="false"></label>
+        <label class="acct-f">Password<input class="txt" type="password" data-pw autocomplete="new-password" maxlength="72"></label>
+        <label class="acct-f">Ulangi password<input class="txt" type="password" data-pw2 autocomplete="new-password" maxlength="72"></label>
+        <div class="note">Minimal 8 karakter, berisi huruf dan angka. Kami kirim link konfirmasi ke email kamu.</div>
+        <div class="row"><button class="primary" data-a="signup">Daftar</button></div></div>
+      <div class="acct-form" data-form="reset" hidden>
+        <label class="acct-f">Email<input class="txt" type="email" data-email autocomplete="email" maxlength="254" spellcheck="false"></label>
+        <div class="note">Kami kirim link untuk membuat password baru. Buka link-nya di browser ini.</div>
+        <div class="row"><button class="primary" data-a="reset">Kirim link</button></div></div>
+      <div class="acct-privacy"><b>Privasi:</b> yang disimpan game hanya username & statistik match online. Email & password diurus
+        Supabase Auth (password tersimpan ter-hash — tidak bisa dilihat siapa pun, termasuk kami). Email tidak pernah ditampilkan ke pemain
+        lain. Akun & semua datanya bisa kamu hapus kapan saja.</div>`;
+    else {
+      const P = A.profile, via = A.provider === 'google' ? 'Google' : 'email';
+      const since = P?.createdAt ? new Date(P.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+      const cd = A.nameCooldownDays;
+      const who = `Masuk via ${via}${A.emailMasked ? ` · ${esc(A.emailMasked)}` : ''}`;
+      body = (P ? `<div class="acct-me"><b class="acct-name">${esc(P.username)}</b><span>${who}${since ? ` · bergabung ${esc(since)}` : ''}</span></div>
+          ${P.banned ? '<div class="acct-notice">Akun ini diblokir dari papan peringkat.</div>' : ''}
+          <div class="sec">Ganti username</div>`
+        : `<div class="acct-me"><span>${who}</span></div><div class="sec">Pilih username</div>`)
+        + `<div class="acct-row"><input class="txt" data-name maxlength="${USERNAME_MAX}" spellcheck="false" autocomplete="username" value="${esc(P?.username ?? '')}" placeholder="mis. Aldy_11">
+          <button class="primary" data-a="setname"${P && cd > 0 ? ' disabled' : ''}>Simpan</button></div>
+        <div class="note">3–16 karakter: huruf, angka, garis bawah (_). Username tampil di papan peringkat & jadi nama kamu di room.
+          ${P ? (cd > 0 ? `Bisa diganti lagi dalam ${cd} hari.` : 'Setelah diganti, baru bisa diganti lagi 30 hari kemudian.') : ''}</div>
+        <div class="row"><button data-a="signout">Keluar dari akun</button></div>
+        <details class="acct-danger"><summary>Hapus akun</summary>
+          <p>Username & semua hasil match kamu dihapus permanen dan tidak bisa dikembalikan. Ketik <b>${esc(P ? P.username : 'HAPUS')}</b> untuk konfirmasi.</p>
+          <div class="acct-row"><input class="txt" data-confirm maxlength="20" spellcheck="false" autocomplete="off"><button class="danger" data-a="delete">Hapus permanen</button></div></details>`;
+    }
+    const m = this.mount('account', `<div class="card acct"><h2>Akun</h2>${notice}${body}<div class="acct-msg" data-msg role="status"></div>
+      <div class="row"><button data-a="back">Kembali</button></div></div>`);
+    this.acctSig = this.accountSig();
+    const msg = m.querySelector('[data-msg]') as HTMLElement;
+    const say = (t: string, ok = false) => { msg.textContent = t; msg.className = t ? `acct-msg ${ok ? 'ok' : 'err'}` : 'acct-msg'; };
+    const val = (scope: Element | null, sel: string) => ((scope ?? m).querySelector(sel) as HTMLInputElement | null)?.value ?? '';
+    /** Aksi async: tombol dikunci selama proses, hasil (teks ramah dari net/Account) ditampilkan. */
+    const run = (btn: string, fn: () => Promise<{ ok: boolean; info?: string; error?: string }>) => {
+      const b = m.querySelector(`[data-a="${btn}"]`) as HTMLButtonElement | null;
+      if (!b || b.disabled) return;
+      b.disabled = true; say('Memproses…', true);
+      void fn().then((r) => {
+        if (!b.isConnected) return;
+        b.disabled = false;
+        if (r.ok) say(r.info ?? 'Berhasil.', true); else say(r.error ?? 'Gagal.');
+      }).catch(() => { if (b.isConnected) { b.disabled = false; say('Gagal — cek koneksi lalu coba lagi.'); } });
+    };
+    this.on(m, 'back', () => { this.accountBack = null; back(); });
+    if (!A.ready && A.available) void A.init();
+    // tamu: tab Masuk / Daftar / Lupa password
+    m.querySelectorAll<HTMLButtonElement>('[data-t]').forEach(t => t.addEventListener('click', () => {
+      m.querySelectorAll<HTMLButtonElement>('[data-t]').forEach(x => x.classList.toggle('sel', x === t));
+      m.querySelectorAll<HTMLElement>('[data-form]').forEach(f => { f.hidden = f.dataset.form !== t.dataset.t; });
+      say('');
+      (m.querySelector(`[data-form="${t.dataset.t}"] input`) as HTMLInputElement | null)?.focus();
+    }));
+    const form = (k: string) => m.querySelector(`[data-form="${k}"]`);
+    this.on(m, 'google', () => run('google', () => A.signInGoogle()));
+    this.on(m, 'signin', () => run('signin', () => A.signIn(val(form('in'), '[data-email]'), val(form('in'), '[data-pw]'))));
+    this.on(m, 'signup', () => run('signup', async () => {
+      const f = form('up'), pw = val(f, '[data-pw]');
+      if (pw !== val(f, '[data-pw2]')) return { ok: false, error: 'Ulangi password tidak sama.' };
+      const pp = passwordProblem(pw);
+      if (pp) return { ok: false, error: PASSWORD_PROBLEM_TEXT[pp] };
+      return A.signUp(val(f, '[data-email]'), pw);
+    }));
+    this.on(m, 'reset', () => run('reset', () => A.sendReset(val(form('reset'), '[data-email]'))));
+    this.on(m, 'newpw', () => run('newpw', async () => {
+      const pw = val(null, '[data-pw1]');
+      if (pw !== val(null, '[data-pw2]')) return { ok: false, error: 'Ulangi password tidak sama.' };
+      return A.setNewPassword(pw);
+    }));
+    this.on(m, 'setname', () => run('setname', async () => {
+      const n = val(null, '[data-name]').trim(), p = usernameProblem(n);
+      if (p) return { ok: false, error: NAME_PROBLEM_TEXT[p] };
+      return A.setUsername(n);
+    }));
+    this.on(m, 'signout', () => run('signout', async () => { await A.signOut(); return { ok: true, info: 'Kamu sudah keluar.' }; }));
+    this.on(m, 'delete', () => run('delete', () => A.deleteAccount(val(null, '[data-confirm]'))));
+    // Enter = tombol utama formulir / baris
+    m.querySelectorAll<HTMLInputElement>('input.txt').forEach(inp => inp.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const scope = inp.closest('[data-form]') ?? inp.closest('.acct-row') ?? m;
+      (scope.querySelector('button.primary, button.danger') as HTMLButtonElement | null)?.click();
+    }));
   }
 
   /** Atur match: mode (TDM / Eliminasi) + aturan + bot. Disimpan ke settings saat Mulai. */
@@ -228,7 +439,7 @@ export class Menus {
   showLobbyHome(back: () => void, code = '', message = '') {
     const s = this.api.settings(), LB = XCFG.lobby, internet = onlineConfigured();
     const m = this.mount('lobby', `<div class="card lobby-home"><h2>Main Bareng Teman</h2>
-      <div class="set-row"><span>Nama kamu</span><input class="txt" data-name maxlength="${LB.nameMax}" value="${esc(s.playerName)}" placeholder="mis. Aldy"><span></span></div>
+      <div class="set-row"><span>Nama kamu</span><input class="txt" data-name maxlength="${LB.nameMax}" value="${esc(account.profile?.username ?? s.playerName)}" placeholder="mis. Aldy"${account.profile ? ' readonly title="Nama dari akun (ganti di menu Akun)"' : ''}><span>${account.profile ? '<small>akun</small>' : ''}</span></div>
       <div class="lh-grid">
         <div class="lh-box"><b>Buat Room</b><span>Kamu jadi host: atur mode & aturan, bagikan kode ke teman. Slot kosong otomatis diisi bot (5 lawan 5).</span>
           <button class="primary" data-a="create">＋ Buat Room</button></div>
@@ -784,6 +995,7 @@ export class Menus {
       <div class="scoreboard on" style="position:static;transform:none;min-width:0;background:none;border:none;padding:0">
       <h3 class="b">BIRU</h3><table>${head}${rows('blue')}</table><h3 class="r">MERAH</h3><table>${head}${rows('red')}</table></div>
       ${online ? '<div class="room-chat" data-chat></div>' : ''}
+      <div class="lb-res" data-lbres></div>
       <div class="row">${online === 'client' ? '' : '<button class="primary" data-a="again">Main Lagi</button>'}<button data-a="menu">${fromRoom ? 'Kembali ke Room' : 'Menu'}</button>
         ${online === 'client' ? '<span class="room-status">Host bisa langsung memulai match berikutnya</span>' : ''}</div></div>`);
     this.attachChat(m, () => {});

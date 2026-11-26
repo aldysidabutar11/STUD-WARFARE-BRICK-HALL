@@ -210,6 +210,21 @@ kamera miring saat strafe, FOV melebar saat sprint, hentakan saat mendarat, senj
 (kaki mengikuti arah gerak). Kurangi/matikan lewat Pengaturan → *Gerak kamera & senjata*. Untuk menyetel langsung saat main:
 panel debug `` ` `` → **RASA GERAK** (slider uji coba, tidak disimpan).
 
+## Akun & papan peringkat
+
+- **Papan peringkat** di menu utama: *Minggu ini* (reset Senin 00:00 WIB) atau *Sepanjang masa*, 13 papan — Poin, Kill, K/D (min.
+  5 / 10 match), Menang, MVP, **Ahli Pisau**, **Raja Granat**, **Si Penyilau** (assist flashbang), Streak Terpanjang, Sniper Terjauh,
+  Raja Brick Hall / Steel Yard / Boston. Peringkatmu sendiri ikut tampil walau di luar 10 besar.
+- **Akun opsional** — tanpa akun tetap bisa main seperti biasa. Menu utama → tombol akun di panel Peringkat → **Masuk dengan Google**
+  atau email + password (daftar, lupa password). Lalu pilih **username** (3–16 huruf/angka/_, unik; ganti maks. sekali per 30 hari) —
+  username jadi namamu di papan & di room.
+- **Yang dihitung:** match **online** (TDM / Eliminasi) dengan ≥ 2 pemain manusia dan ≥ 30 detik bermain. Tiap pemain mengirim
+  hasilnya sendiri di layar hasil; hasil baru masuk papan setelah **≥ 1 akun lain di match yang sama** juga mengirim (satu orang
+  tidak bisa mengarang match sendirian). Main lawan bot saja / Latihan tidak dihitung.
+- **Privasi:** game hanya menyimpan username & statistik match online. Email & password diurus Supabase Auth (password di-hash —
+  tidak bisa dilihat siapa pun); email tidak pernah ditampilkan ke pemain lain (di layar Akun milikmu sendiri pun disamarkan).
+  **Hapus akun** (layar Akun → Hapus akun) menghapus username & semua hasil match secara permanen.
+
 ## Main Bareng online
 
 **Cara kerjanya (100% gratis, tanpa server game sewaan):** browser pembuat room (**host**) menjalankan match — simulasi, bot, damage, skor.
@@ -265,8 +280,8 @@ di URL kedua tab (ping ±120 ms, 2% paket hilang).
 ### Pasang online (sekali saja, ±10 menit)
 
 1. **Supabase** — daftar di supabase.com (gratis) → *New project* (region terdekat, mis. Singapore) → tombol **Connect** (atau
-   *Settings → API Keys*): salin **Project URL** dan **publishable key** (`sb_publishable_…`; kunci *anon* lama juga bisa). Tidak perlu
-   membuat tabel apa pun; pastikan *Realtime → Settings → Allow public access* menyala (kanal room memakai kanal publik).
+   *Settings → API Keys*): salin **Project URL** dan **publishable key** (`sb_publishable_…`; kunci *anon* lama juga bisa). Tabel
+   dibuat lewat file SQL di langkah 5–6; pastikan *Realtime → Settings → Allow public access* menyala (kanal room memakai kanal publik).
 2. **Lokal (opsional)** — salin `.env.example` jadi `.env.local`, isi `VITE_SUPABASE_URL` & `VITE_SUPABASE_ANON_KEY`, jalankan ulang `npm run dev`.
 3. **Vercel** — daftar di vercel.com dengan akun GitHub (paket Hobby, gratis) → *Add New → Project* → pilih repo ini (framework: Vite,
    otomatis) → *Environment Variables*: isi dua variabel di atas → **Deploy**. Bagikan link `https://<nama>.vercel.app`; tombol
@@ -281,6 +296,53 @@ di URL kedua tab (ping ±120 ms, 2% paket hilang).
    itu, jadi project tidak dijeda. Cek di Vercel → *Settings → Cron Jobs* (bisa *Run* manual). Opsional: tambah env `CRON_SECRET`
    (teks acak) di Vercel lalu redeploy → hanya Vercel Cron yang boleh memanggil endpoint itu.
 
-Bila project Supabase tetap terjeda (mis. cron belum dipasang): buka dashboard Supabase dan klik *Restore* (bisa dalam 90 hari);
-lewat dari itu, buat project baru dan ganti 2 env di Vercel — game tidak menyimpan data apa pun di Supabase.
+6. **Akun & papan peringkat (sekali saja)** — semua aturan keamanan ada di database, jadi langkah ini wajib sebelum fitur akun dipakai:
+   1. *SQL Editor → New query* → tempel isi `supabase/accounts.sql` → *Run* (aman dijalankan ulang). Tabel dikunci total untuk
+      publik; pemain hanya bisa memakai fungsi tervalidasi (username sendiri, kirim hasil sendiri, baca peringkat, hapus akun sendiri).
+   2. *Authentication → URL Configuration*: **Site URL** = `https://<nama>.vercel.app`; **Redirect URLs** tambahkan
+      `https://<nama>.vercel.app/**` dan `http://localhost:5173/**` (hanya alamat milikmu — jangan pola bebas seperti `**`).
+   3. *Authentication → Sign In / Providers → Email*: aktif, **Confirm email** ON, **Secure email change** ON. Di pengaturan
+      password: panjang minimum **8**, syarat karakter **huruf dan angka** (sama dengan aturan di game). Biarkan *Anonymous
+      sign-ins* MATI.
+   4. **Google** — Google Cloud Console (project baru) → *Google Auth Platform* (dulu *APIs & Services → OAuth consent screen*) →
+      *Get started* (nama app, email dukungan, Audience **External**) → *Clients → Create client* (Web application): *Authorized
+      JavaScript origins* = `https://<nama>.vercel.app` (+ `http://localhost:5173` untuk uji lokal), *Authorized redirect URIs* =
+      **Callback URL** yang tertera di Supabase → *Authentication → Sign In / Providers → Google* (bentuknya
+      `https://<project>.supabase.co/auth/v1/callback`). Salin *Client ID* & *Client secret* SAAT ITU JUGA (Google bisa tidak
+      menampilkan secret lagi) ke halaman Google di Supabase → *Enable* → Save. Lalu *Audience → Publish app* (status *In
+      production*): selama *Testing* hanya akun yang didaftarkan sebagai *test user* yang bisa masuk; scope dasar (email, profil)
+      tidak perlu verifikasi. Layar Google menulis "lanjutkan ke `<project>.supabase.co`" — normal. Client secret hanya disimpan di
+      Supabase — jangan pernah ditaruh di repo / env Vercel / chat.
+   5. **Email (WAJIB agar pemain lain bisa daftar pakai email)** — pengirim email bawaan Supabase HANYA mengirim ke anggota tim
+      organisasi Supabase-mu (alamat lain ditolak "Email address not authorized") dan dibatasi beberapa email per jam. Pasang SMTP
+      sendiri di *Authentication → Emails → SMTP Settings*: tanpa domain sendiri → akun Gmail KHUSUS game + *App Password* (wajib
+      verifikasi 2 langkah; host `smtp.gmail.com`, port 465, user & pengirim = alamat Gmail itu, ratusan email/hari); punya domain →
+      mis. Resend (gratis, domain wajib diverifikasi — tanpa domain Resend hanya mengirim ke email pemilik akun Resend). Setelah
+      SMTP terpasang, nyalakan *Emails → Security → Password changed* & *Email address changed* (pemain diberi tahu bila akunnya
+      diubah). Sebelum itu pemain lain masuk dengan
+      **Google** (game menyarankannya bila email ditolak). Jangan mematikan *Confirm email* sebagai jalan pintas — orang jadi bisa
+      mendaftar memakai email milik orang lain. Jangan menyalakan CAPTCHA (*Attack Protection*): game belum mengirim token CAPTCHA,
+      semua daftar/masuk email akan gagal.
+   6. **Moderasi** (SQL Editor): blokir akun curang dari peringkat —
+      `update public.profiles set banned = true where lower(username) = lower('NAMA');` — atau ganti nama yang tidak pantas —
+      `update public.profiles set username = 'Pemain_123' where lower(username) = lower('NAMA');`.
 
+Bila project Supabase tetap terjeda (mis. cron belum dipasang): buka dashboard Supabase dan klik *Restore* (bisa dalam 90 hari);
+lewat dari itu, buat project baru, jalankan lagi kedua file SQL, dan ganti 2 env di Vercel — akun & papan peringkat lama
+ikut hilang (tersimpan di project lama).
+
+### Keamanan
+
+- **Kunci publik saja di game.** `VITE_SUPABASE_ANON_KEY` memang publik (ada di bundle). Kunci rahasia *service role*, password
+  database, dan *client secret* Google tidak pernah dipakai game / tidak boleh masuk repo maupun env Vercel.
+- **Database = penjaga.** Tabel `profiles` & `match_results` tidak bisa dibaca/diubah langsung oleh siapa pun dari browser (hak
+  dicabut + RLS tanpa policy). Semua lewat fungsi `SECURITY DEFINER` (search_path kosong) yang hanya bekerja untuk pemilik sesi dan
+  memvalidasi isian (format username, rentang & konsistensi statistik, batas laju 30 s / 60 per hari, durasi match). Papan peringkat
+  hanya mengeluarkan username + angka. Diuji otomatis di Postgres asli (`tests/accountsSql.test.ts`).
+- **Login:** alur PKCE (token tidak lewat URL; parameter login dibersihkan dari URL & tidak tercatat di laporan teknis). Sesi
+  disimpan di `localStorage` kunci `studwarfare.auth.v1` (agar tetap masuk saat game dibuka lagi).
+- **Header situs** (`vercel.json`): Content-Security-Policy (skrip hanya dari situs sendiri, koneksi hanya ke Supabase), anti
+  framing, `nosniff`, Referrer-Policy, Permissions-Policy (mikrofon hanya untuk voice chat), HSTS.
+- **Batas yang jujur:** game ini P2P tanpa server game, jadi statistik dihitung di browser pemain. Konfirmasi ≥ 2 akun + batas
+  angka membuat kecurangan jauh lebih sulit, tapi orang yang paham teknis dengan 2 akun tetap bisa memalsukan hasil — blokir lewat
+  moderasi di atas.
