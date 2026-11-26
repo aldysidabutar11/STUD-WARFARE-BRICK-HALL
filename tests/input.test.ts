@@ -101,8 +101,8 @@ describe('Input: controller', () => {
 });
 
 describe('Input: pintasan browser saat bermain (laporan pengguna: host ter-refresh di tengah match)', () => {
-  let inp: InstanceType<typeof Input>;
-  beforeEach(() => { now = 10_000; pads = []; doc.pointerLockElement = null; inp = new Input(canvas); });
+  // Input dibuat demi listener-nya di jendela tiruan (tes membaca hasil lewat event yang dibatalkan, bukan objeknya)
+  beforeEach(() => { now = 10_000; pads = []; doc.pointerLockElement = null; new Input(canvas); });
   /** keydown yang bisa dibatalkan; true = browser dicegah menjalankan pintasannya. */
   const press = (code: string, mods: { ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; shiftKey?: boolean } = {}) => {
     const e = Object.assign(new Event('keydown', { cancelable: true }), { code, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false,

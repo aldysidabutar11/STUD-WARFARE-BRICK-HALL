@@ -1,12 +1,13 @@
 // src/entities/PlayerController.ts — input → kecepatan → KCC, sprint, crouch, jump, fall damage (GDD §3.3–3.6)
 import * as THREE from 'three';
 import { RAPIER, physics } from '../physics/Physics';
-import { GROUPS, QUERY } from '../physics/groups';
+import { QUERY, charGroups, moveQuery } from '../physics/groups';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import { fallDamage, integrateVertical, moveTarget } from '../combat/Damage';
 import { bus } from '../core/EventBus';
 import { charGravity, moveFeel } from './moveFeel';
+import type { Team } from './BlockyCharacter';
 
 const P = CFG.player, K = CFG.kcc;
 const D2R = THREE.MathUtils.degToRad;
@@ -62,12 +63,15 @@ export class PlayerController {
   enabled = true;
   /** Replay prediksi klien: tanpa suara langkah / fall damage (event sudah terjadi saat langkah aslinya). */
   quiet = false;
+  /** Grup query KCC: rekan setim ditembus, karakter tim lawan menahan (physics/groups.ts). */
+  private readonly moveGroups: number;
 
-  constructor(readonly entityId: number, x: number, y: number, z: number) {
+  constructor(readonly entityId: number, x: number, y: number, z: number, team: Team = 'blue') {
     const w = physics.world;
+    this.moveGroups = moveQuery(team);
     this.body = w.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y, z));
     this.collider = w.createCollider(RAPIER.ColliderDesc.capsule(STAND_HH, P.capsuleRadius)
-      .setTranslation(0, P.standHeight / 2, 0).setFriction(0).setCollisionGroups(GROUPS.CHAR), this.body);
+      .setTranslation(0, P.standHeight / 2, 0).setFriction(0).setCollisionGroups(charGroups(team)), this.body);
     this.kcc = w.createCharacterController(K.offset);
     this.kcc.setUp({ x: 0, y: 1, z: 0 });
     this.kcc.setMaxSlopeClimbAngle(D2R(K.maxSlopeClimbDeg));
@@ -200,7 +204,7 @@ export class PlayerController {
     }
 
     this.desired.x = this.vel.x * dt; this.desired.y = dy; this.desired.z = this.vel.z * dt;
-    this.kcc.computeColliderMovement(this.collider, this.desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, QUERY.MOVE);
+    this.kcc.computeColliderMovement(this.collider, this.desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, this.moveGroups);
     const m = this.kcc.computedMovement();
     if (this.velY > 0 && m.y < this.desired.y * 0.5) this.velY = 0; // kepala terbentur
     this.pos.x += m.x; this.pos.y += m.y; this.pos.z += m.z;

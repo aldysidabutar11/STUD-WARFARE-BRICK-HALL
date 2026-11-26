@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { physics } from '../physics/Physics';
 import { bus } from '../core/EventBus';
 import { ctx } from '../game/ctx';
+import { DISPLAY_FONT } from '../ui/fonts';
 import { moveFeel, resetMoveFeel } from '../entities/moveFeel';
 
 /** Slider "Rasa gerak" (uji coba langsung; tidak disimpan — nilai final dipindah ke config). */
@@ -72,7 +73,7 @@ export class DebugPanel {
       const v = ctx.byId.get(e.victimId);
       if (!v) return;
       const d = document.createElement('div');
-      d.style.cssText = `position:fixed;z-index:25;font:bold 16px sans-serif;color:${e.headshot ? '#ff4040' : '#fff'};text-shadow:0 1px 2px #000;pointer-events:none`;
+      d.style.cssText = `position:fixed;z-index:25;font:700 condensed 18px ${DISPLAY_FONT};color:${e.headshot ? '#ff4040' : '#fff'};text-shadow:0 1px 2px #000;pointer-events:none`;
       d.textContent = String(e.damage);
       document.body.appendChild(d);
       this.nums.push({ el: d, pos: v.pos.clone().add(new THREE.Vector3(0, 5.4, 0)), t: 0.9 });

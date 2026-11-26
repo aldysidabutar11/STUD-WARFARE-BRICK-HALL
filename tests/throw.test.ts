@@ -3,7 +3,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { RAPIER, physics, type V3 } from '../src/physics/Physics';
-import { GROUPS } from '../src/physics/groups';
+import { GROUPS, charGroups } from '../src/physics/groups';
 import { CFG } from '../src/config/gameConfig';
 import { XCFG } from '../src/config/extraConfig';
 import { ARC_GROUPS, ArcTrace, RAPIER_SUBSTEPS, nadeStep, throwLaunch, traceThrow, type LaunchIn } from '../src/combat/throwArc';
@@ -127,9 +127,11 @@ describe('garis lintasan (traceThrow) = granat Rapier sungguhan', () => {
     } finally { drop(floor, wall); }
   });
 
-  it('kapsul karakter diabaikan (CHAR), pembatas tak terlihat (BARRIER) & benda lepas (PROP) memantulkan', () => {
+  it('kapsul karakter kedua tim diabaikan, pembatas tak terlihat (BARRIER) & benda lepas (PROP) memantulkan', () => {
     const floor = box(v3(0, Y0 - 0.5, 0), v3(300, 0.5, 300));
-    const ch = physics.world.createCollider(RAPIER.ColliderDesc.capsule(1.7, 0.8).setTranslation(0, Y0 + 4, -6).setCollisionGroups(GROUPS.CHAR));
+    const cap = (z: number, t: 'blue' | 'red') =>
+      physics.world.createCollider(RAPIER.ColliderDesc.capsule(1.7, 0.8).setTranslation(0, Y0 + 4, z).setCollisionGroups(charGroups(t)));
+    const ch = cap(-6, 'blue'), ch2 = cap(-3, 'red');
     physics.world.step();
     try {
       const { pos, vel } = launch({ pitch: 0 });
@@ -141,7 +143,7 @@ describe('garis lintasan (traceThrow) = granat Rapier sungguhan', () => {
         drop(c);
       }
       expect((ARC_GROUPS >>> 16) & 0xffff).toBe((GROUPS.GRENADE >>> 16) & 0xffff);
-    } finally { drop(ch, floor); }
+    } finally { drop(ch, ch2, floor); }
   });
 
   it('sumbu habis di udara → akhir "fuse" di langkah ⌈sisa/dt⌉ − 1 (granat meledak sebelum step tick itu)', () => {

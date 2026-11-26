@@ -49,6 +49,13 @@
   489 test. Dijaga tests/runSmooth.test.ts (gagal dengan kode lama: lantai datar → 0, tangga → 3). Skrip lokal: pw/run_ground_bots.js
   (macet & potongan per map, `git stash` untuk sebelum/sesudah), pw/run_feel.js (online: koreksi + kecepatan layar/simulasi —
   pakai stempel waktu rAF, bukan performance.now()).
+- Tabrakan karakter per tim (disetujui pengguna 2026-11-27, opsi A dari audit; menyimpang dari GDD §10.1 yang membuat semua CHAR saling
+  menahan): bit keanggotaan kapsul dipecah `G.CHAR_BLUE` (0x0004) / `G.CHAR_RED` (0x0040); `G.CHAR` = keduanya (filter granat & pagar
+  BARRIER tetap mengenai kedua tim). Kapsul `charGroups(team)` & query KCC `moveQuery(team)` (src/physics/groups.ts; tim dari `Entity`
+  → `PlayerController`) hanya menahan karakter tim LAWAN → rekan setim saling tembus (pemain, bot, host, klien, boneka sama).
+  Alasan (terukur, online 5v5, teman lari menembus rekan bot 6 s): koreksi prediksi BH 58 / SY 78 / Boston 63 (beda ≤ 0.43 u — klien
+  melihat rekan ±0.1 s di masa lalu, host di posisi sekarang) → 0 di ketiga map. Musuh tetap saling menahan (berdesakan dengan musuh
+  masih bisa memicu koreksi — jarang). Dijaga tests/runSmooth.test.ts (rekan tembus tanpa melambat, musuh menahan, bit grup).
 - Rapier: world.step() dijalankan sekali setelah membangun map sebelum raycast/validator; setelah teleport/respawn
   panggil world.propagateModifiedBodyPositionsToColliders().
 - PCFSoftShadowMap deprecated sejak three r186 → HIGH memakai PCFShadowMap + shadow.radius.
@@ -486,8 +493,8 @@
     manusia di tim itu (BotChatGate: 1/tim/6 s, area sama 15 s; Pengaturan `chatBots`). Bisukan per pid (memori; juga untuk voice nanti)
     di room & menu pause. Riwayat/bisukan direset saat buat/gabung/keluar room (bukan saat pindah host). Terukur (browser): routing
     tim/semua benar di room & match, bisukan, ketikan bertahan saat room digambar ulang, allTalk off menolak Y & klien nakal, anti-spam
-    3 dari 7 sampai, HTML tidak tereksekusi, callout bot di host & klien, 0 error; tes online lama tetap lulus. Catatan: karakter diam bisa
-    tergeser bot setim yang menabraknya (perilaku tabrakan lama, bukan chat).
+    3 dari 7 sampai, HTML tidak tereksekusi, callout bot di host & klien, 0 error; tes online lama tetap lulus. Catatan: karakter diam dulu
+    bisa tergeser bot setim yang menabraknya (perilaku tabrakan, bukan chat) — sejak 2026-11-27 rekan setim saling tembus.
   - Voice chat (TAHAP 2; keputusan pengguna 2026-11-25): push-to-talk T = tim, Z = semua (musuh yang dekat ikut dengar); di match
     KEDUANYA berdasarkan jarak karakter (jelas sampai XCFG.voice.near 12 u → (1 − x)^2 & lowpass 12 kHz → 900 Hz → hilang di 95% diagonal
     batas map = ujung ke ujung; arah 3D HRTF; terhalang dinding ×0.55 & cutoff ×0.45, cek LOS tiap 0.2 s); di room/layar hasil jelas penuh;
@@ -749,6 +756,35 @@
     `email_address_not_authorized`, game menyarankan Masuk dengan Google; lupa password tetap generik) → SMTP sendiri WAJIB agar
     pemain lain bisa daftar pakai email. CAPTCHA Supabase jangan dinyalakan (klien belum mengirim captchaToken).
 
+- Audit menyeluruh + tipografi FPS (permintaan pengguna 2026-11-27: "cek seluruh game — UI, engine, fisika — bug/error/hardcode yang
+  tidak kelihatan, perbaiki tanpa mengubah struktur gameplay; ganti semua font UI agar gaming banget"):
+  - Cara audit: penjelajahan runtime (skrip lokal pw/audit_sweep.js: semua layar menu + semua tab, 3 ukuran jendela, TDM 3 map,
+    Eliminasi, Latihan, pause, layar hasil; catat console error/warning, pageerror, promise gagal, elemen meluber), kebocoran
+    (pw/prog_leak.js: program shader 50 / heap ±73 MB / listener EventBus 34 stabil antar match; geometri naik lalu datar = cache model
+    senjata per id), pindaian pola (catch kosong, innerHTML + nama (semua pintu masuk lewat cleanName), storage, JSON.parse, listener
+    global, angka gameplay di luar config), tsc lebih ketat, fisika (jalan 8.10 / jongkok 4.32 / sprint 11.48 konstan, meluncur di
+    dinding, undakan 0.4, puncak lompat 1.382), online 2 jendela.
+  - Diperbaiki: (1) `Peer` kanal reliable: JSON.parse DAN penanganan pesan dulu satu try/catch "pesan rusak" → bug di logika room/match
+    ditelan diam-diam; kini hanya parse yang dibungkus, error penanganan terlihat (konsol + kotak hitam). (2) `protocol.decodeCommands`
+    (data teman, tidak dipercaya): jumlah perintah dibatasi isi paket (17 B/perintah; paket terpotong tidak melempar RangeError), sumbu
+    gerak dijepit [−1, 1]; `decodeSnapshot` paket rusak → null. (3) Atlas Venny dibaca balik getImageData 3× → kanvas
+    `willReadFrequently` (`Atlas(rng, readback)`; peringatan konsol hilang). (4) tsconfig `noUnusedLocals` / `noUnusedParameters` /
+    `noImplicitReturns` aktif (kode mati dibuang: properti `scene` tak terpakai di GrenadeManager & Vfx, `SnapStats.now`, impor).
+  - Keputusan pengguna (opsi A): koreksi prediksi klien saat sprint berdesakan dengan rekan di awal ronde (online 5v5: 16 koreksi
+    0.07–0.44 u dalam ±4 s, 0 saat lapang; sebab: kapsul karakter saling menahan, klien melihat rekan ±0.1 s di masa lalu) → tabrakan
+    antar rekan setim dimatikan — lihat "Tabrakan karakter per tim" di Keputusan implementasi.
+  - Tidak diubah (dilaporkan): peringatan presisi compiler shader D3D dari dalam three.js (bukan kode kita); Eliminasi: ronde seri
+    persis (jumlah hidup & total HP sama saat waktu habis) tidak menambah skor → secara teori ronde berulang (aturan gameplay, sangat
+    jarang).
+  - Tipografi (`src/ui/fonts.ts` + `hud.css`): FONT SISTEM saja (tanpa file aset, lolos CSP) — `--font-ui` (teks umum, font-stretch
+    semi-condensed) & `--font-display` (judul, angka HUD, tombol, label, killfeed, radar, papan nama: condensed tebal, kapital untuk
+    judul/tombol/label; angka tabular). Bahnschrift (DIN bawaan Windows 10/11, lebar variabel) → DIN / Avenir Next Condensed (macOS) →
+    Roboto Condensed ('sans-serif-condensed', Android/ChromeOS) → Arial Narrow / Impact. Teks penjelas di dalam tombol (kartu map,
+    sub-label) & tombol Google tetap huruf biasa. Kanvas: `canvasFont(px, weight)` (radar "U", kartu map Acak, angka damage melayang).
+    Papan nama "VENNY" di rompi (tekstur karakter) tidak diubah. tests/fonts.test.ts menjaga CSS = TS & tanpa @font-face/URL font
+    (vitest `css.include: /hud\.css/` agar `?raw` berisi). Terukur: semua layar tanpa elemen meluber di 800×500 / 1280×720 /
+    1366×768 / 1920×1080.
+
 - Map Boston (permintaan pengguna 2026-11-26; dokumen pengguna "IDE MAP BARU/Stud Warfare — Blueprint Map Boston.pdf" + 4 gambar Gemini,
   lokal saja, jangan di-commit; adaptasi lantai 3 & 4 kantor pengguna sendiri — layout orisinal, bukan replika map game lain):
   - `src/world/maps/boston/`: `layout.ts` (data ditulis dalam koordinat DOKUMEN — Utara = +Z, Biru L4 di Utara — lalu DIPUTAR 180°
@@ -787,7 +823,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 489 test Vitest / 31 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 495 test Vitest / 32 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -805,7 +841,7 @@
   lintasan = body Rapier (lantai/dinding/grup tabrakan/sumbu habis/jarak lempar/rumus balistik bot), flash pelempar × 0.5, setelan nadeArc
   (tests/throw.test.ts), akun & leaderboard: aturan murni + cermin SQL (tests/accounts.test.ts) & keamanan SQL di Postgres asli PGlite
   (tests/accountsSql.test.ts), kehalusan lari: lantai datar tanpa macet, tangga Boston naik/turun konstan, batas udara saat lepas
-  tanah (tests/runSmooth.test.ts)) hijau;
+  tanah, rekan setim tembus / musuh menahan (tests/runSmooth.test.ts), tipografi: CSS = TS, font sistem saja (tests/fonts.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

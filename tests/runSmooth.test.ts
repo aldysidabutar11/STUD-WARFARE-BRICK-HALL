@@ -4,12 +4,16 @@
 //    → kecepatan jatuh ke 0 lalu berakselerasi lagi ±0.15 s;
 // 2) kaki ramp: aturan "dinding menahan → kecepatan nyata" ikut memotong kecepatan ±40% padahal yang disentuh lereng yang bisa didaki;
 // 3) puncak ramp: KCC melayang 2–4 tick → batas kecepatan udara lama (3.0, bukan kecepatan saat lepas landas §3.4) & sprint mati sesaat.
+// 4) tabrakan karakter (keputusan pengguna 2026-11-27, menyimpang dari GDD §10.1): rekan setim saling TEMBUS — online, kapsul rekan
+//    yang berdesakan keluar spawn membuat prediksi klien (rekan tampil ±0.1 s di masa lalu) berbeda dari host → koreksi posisi berulang.
+//    Karakter tim lawan tetap saling menahan; granat & pagar BARRIER tetap mengenai kedua tim.
 import { beforeAll, describe, expect, it } from 'vitest';
 import '../src/world/maps/registry';
 import { physics } from '../src/physics/Physics';
 import { bostonColliders } from '../src/world/maps/boston/colliders';
 import { cuboidCollider } from '../src/world/maps/shared';
 import { PlayerController, type MoveIntent } from '../src/entities/PlayerController';
+import { G, GROUPS, charGroups, moveQuery } from '../src/physics/groups';
 import { CFG } from '../src/config/gameConfig';
 import { moveTarget } from '../src/combat/Damage';
 import { moveFeel } from '../src/entities/moveFeel';
@@ -82,5 +86,54 @@ describe('kehalusan lari (PlayerController + KCC Rapier)', () => {
     expect(c.grounded).toBe(false);
     expect(c.speedH).toBeGreaterThan(vSprint * 0.95);   // dulu langsung dipotong ke 3.0 u/s
     c.dispose(); physics.world.step();
+  });
+});
+
+describe('tabrakan karakter: rekan setim tembus, musuh menahan', () => {
+  /** Biru sprint +X 2 s ke arah karakter diam (tim `other`) yang berdiri tepat di jalurnya (x 230). */
+  const charge = (other: 'blue' | 'red') => {
+    const b = new PlayerController(997, 230, 0, 40, other);
+    b.teleport(230, 0, 40);
+    const a = new PlayerController(996, 215, 0, 40, 'blue');
+    a.teleport(215, 0, 40);
+    physics.world.step();
+    let maxX = -Infinity, minV = Infinity, maxDz = 0;
+    for (let i = 0; i < 120; i++) {
+      a.fixedUpdate(DT, intent(-Math.PI / 2), false);
+      physics.world.step();
+      maxX = Math.max(maxX, a.pos.x); maxDz = Math.max(maxDz, Math.abs(a.pos.z - 40));
+      if (i >= 15) minV = Math.min(minV, a.speedH);
+    }
+    const out = { x: a.pos.x, maxX, minV, maxDz };
+    a.dispose(); b.dispose(); physics.world.step();
+    return out;
+  };
+
+  it('rekan setim: lewat menembus tanpa melambat sedikit pun', () => {
+    const r = charge('blue');
+    expect(r.x).toBeGreaterThan(230 + 5);
+    expect(r.minV).toBeGreaterThan(vSprint * 0.99);
+    expect(r.maxDz).toBeLessThan(1e-3);
+  });
+
+  it('musuh: tetap menahan (jarak pusat ≥ dua jari-jari kapsul)', () => {
+    const r = charge('red');
+    expect(r.maxX).toBeLessThan(230 - 2 * CFG.player.capsuleRadius + 0.05);
+    expect(r.x).toBeGreaterThan(230 - 2 * CFG.player.capsuleRadius - 0.3);   // sampai menempel, lalu tertahan
+  });
+
+  it('bit grup: query gerak menembus rekan & benda lepas; granat, pagar BARRIER & dinding tetap mengenai kapsul kedua tim', () => {
+    const hits = (a: number, b: number) => ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0;
+    for (const [t, o] of [['blue', 'red'], ['red', 'blue']] as const) {
+      expect(hits(moveQuery(t), charGroups(o))).toBe(true);
+      expect(hits(moveQuery(t), charGroups(t))).toBe(false);
+      expect(hits(moveQuery(t), GROUPS.STATIC)).toBe(true);
+      expect(hits(moveQuery(t), GROUPS.BARRIER)).toBe(true);
+      expect(hits(moveQuery(t), GROUPS.PROP)).toBe(false);
+      expect(hits(moveQuery(t), GROUPS.DEBRIS)).toBe(false);
+      for (const g of [GROUPS.GRENADE, GROUPS.BARRIER, GROUPS.STATIC]) expect(hits(g, charGroups(t))).toBe(true);
+      expect(hits(GROUPS.DEBRIS, charGroups(t))).toBe(false);
+    }
+    expect(G.CHAR).toBe(G.CHAR_BLUE | G.CHAR_RED);
   });
 });

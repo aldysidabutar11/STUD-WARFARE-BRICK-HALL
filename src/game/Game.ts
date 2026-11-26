@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
-import { SCOPE_ORDER, WEAPONS, WEAPON_ORDER, classOf, scopeAllowed, type ScopeId, type WeaponId } from '../config/weaponsData';
+import { SCOPE_ORDER, WEAPONS, WEAPON_ORDER, classOf, scopeAllowed, type WeaponId } from '../config/weaponsData';
 import { MELEES, X_ORDER } from '../config/weaponsExtra';
 import { physics } from '../physics/Physics';
 import { Engine } from '../core/Engine';

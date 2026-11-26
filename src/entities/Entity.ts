@@ -87,7 +87,7 @@ export class Entity {
   constructor(readonly id: number, readonly name: string, readonly team: Team, readonly isPlayer: boolean, castShadow: boolean,
     variant: Variant = 'm') {
     this.char = new BlockyCharacter(id, team, castShadow, variant);
-    this.ctrl = new PlayerController(id, 0, -100 - id * 10, 0);
+    this.ctrl = new PlayerController(id, 0, -100 - id * 10, 0, team);
     this.ctrl.setEnabled(false);
     this.weapon = new WeaponSystem(id);
     this.worldGun = new THREE.Mesh(new THREE.BufferGeometry(), WEAPON_MATERIAL);

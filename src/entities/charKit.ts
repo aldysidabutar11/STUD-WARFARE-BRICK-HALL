@@ -29,9 +29,11 @@ export class Atlas {
   readonly canvas = document.createElement('canvas');
   readonly g: G;
   private cx = 2; private cy = 2; private rowH = 0;
-  constructor(private rng: Rng) {
+  /** readback: pelukis membaca piksel kembali (getImageData, mis. wajah/rambut Venny) → kanvas CPU (willReadFrequently) — tanpa itu
+   *  Chrome membaca balik dari GPU berkali-kali (lambat + peringatan konsol). */
+  constructor(private rng: Rng, readback = false) {
     this.canvas.width = ATLAS; this.canvas.height = ATLAS;
-    this.g = this.canvas.getContext('2d')!;
+    this.g = this.canvas.getContext('2d', { willReadFrequently: readback })!;
   }
   /** Region seukuran (wu × hu) unit dunia. */
   region(wu: number, hu: number, paint: Painter): Rect { return this.px(Math.round(wu * PX), Math.round(hu * PX), paint); }

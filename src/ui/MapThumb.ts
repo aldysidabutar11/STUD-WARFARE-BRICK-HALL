@@ -8,6 +8,7 @@ import { MAPS } from '../world/maps/registry';
 import { MAP_IDS, type MapDef } from '../world/maps/types';
 import { stairFrame, type Box } from '../world/MapData';
 import { isMapChoice, type MapChoice } from '../game/Lobby';
+import { canvasFont } from './fonts';
 
 interface Pal { bg: string; floor: string; dots: string; upper: string; stair: string; wall: string; pillar: string; shelf: string;
   cover: string; low: string; rail: string }
@@ -163,7 +164,7 @@ function randomThumb(W: number, H: number, dpr: number): HTMLCanvasElement {
   g.fillStyle = 'rgba(10,6,3,0.5)'; g.fillRect(0, 0, W, H);
   g.strokeStyle = 'rgba(245,205,48,0.75)'; g.lineWidth = 2 * dpr;
   for (let i = 1; i < n; i++) { const b = (i / n) * W; g.beginPath(); g.moveTo(b + k, 0); g.lineTo(b - k, H); g.stroke(); }
-  g.font = `900 ${Math.round(H * 0.62)}px 'Segoe UI', system-ui, sans-serif`;
+  g.font = canvasFont(H * 0.62, 700);
   g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillStyle = '#6b4226'; g.fillText('?', W / 2, H / 2 + 4 * dpr);
   g.fillStyle = '#f5cd30'; g.fillText('?', W / 2, H / 2);

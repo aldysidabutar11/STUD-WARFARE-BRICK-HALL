@@ -103,7 +103,7 @@ export class GrenadeManager {
   /** Bot: sudah sadar flash ini & memalingkan muka (TacticalBot) → kekuatan × XCFG.flash.lookAway. */
   noticed: ((bot: Entity, nadeId: number) => boolean) | null = null;
 
-  constructor(private scene: THREE.Scene) {
+  constructor(scene: THREE.Scene) {
     for (let i = 0; i < 8; i++) { const m = grenadeMesh(); m.visible = false; scene.add(m); this.pool.push(m); }
     for (let i = 0; i < 6; i++) { const m = flashMeshWorld(); m.visible = false; scene.add(m); this.flashPool.push(m); }
     this.handMesh = grenadeMesh();

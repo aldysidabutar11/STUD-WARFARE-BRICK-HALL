@@ -82,7 +82,7 @@ export class Vfx {
   private puffVel: Float32Array;
   private puffNext = 0;
 
-  constructor(private scene: THREE.Scene, private preset: Preset, high: boolean) {
+  constructor(scene: THREE.Scene, private preset: Preset, high: boolean) {
     const lam = (c: number) => new THREE.MeshLambertMaterial({ color: c });
     this.chipPool = new ParticlePool(scene, new THREE.BoxGeometry(X.chipSize, X.chipSize, X.chipSize), lam(0xffffff), X.chipPool, -18);
     this.debris = new ParticlePool(scene, new THREE.BoxGeometry(1, 1, 1), lam(0xffffff), Math.max(16, preset.debris * 2), -22, 0x5a4a3a);

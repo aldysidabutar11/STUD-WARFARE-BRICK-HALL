@@ -10,6 +10,9 @@
     "isolatedModules": true,
     "useDefineForClassFields": true,
     "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
     "resolveJsonModule": true,
     "types": ["vite/client"]
   },

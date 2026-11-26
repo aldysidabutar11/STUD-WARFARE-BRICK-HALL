@@ -10,6 +10,7 @@ import { currentMap, type MapDef } from '../world/maps/registry';
 import { physics } from '../physics/Physics';
 import { bus } from '../core/EventBus';
 import { ctx } from '../game/ctx';
+import { canvasFont } from './fonts';
 import type { Entity } from '../entities/Entity';
 
 const RD = XCFG.radar;
@@ -201,7 +202,7 @@ export class Minimap {
     g.strokeStyle = 'rgba(245,205,48,0.55)'; g.lineWidth = 2 * this.dpr;
     g.beginPath(); g.arc(C, C, R, 0, Math.PI * 2); g.stroke();
     const nx = C - s * (R - 9 * this.dpr), ny = C + c * (R - 9 * this.dpr); // arah +Z (Utara) di layar
-    g.fillStyle = '#f5cd30'; g.font = `bold ${11 * this.dpr}px Segoe UI, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = '#f5cd30'; g.font = canvasFont(12 * this.dpr); g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText('U', nx, ny);
     // titik spawn tim pemain (orientasi): slot ke-3 lantai pertama yang ada (Brick Hall: ruang spawn atas)
     const ss = this.def.spawnSlots[player.team], fl = ss.upper.length ? ss.upper : ss.ground, sp = fl[Math.min(2, fl.length - 1)];

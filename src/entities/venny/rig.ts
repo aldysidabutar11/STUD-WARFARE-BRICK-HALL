@@ -112,7 +112,7 @@ export function vennyTemplate(team: Team): Tpl {
   const hit = TPL.get(team);
   if (hit) return hit;
   const look: P.Look = { red: team === 'red' };
-  const A = new Atlas(makeRng(team === 'blue' ? 3105 : 3205));
+  const A = new Atlas(makeRng(team === 'blue' ? 3105 : 3205), true);
   const px = (w: number, h: number, p: Painter) => A.px(w, h, p);
   // region — urutan dari yang tertinggi agar baris atlas padat
   const R = {

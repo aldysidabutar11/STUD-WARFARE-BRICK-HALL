@@ -47,7 +47,14 @@ export class Peer {
     ch.binaryType = 'arraybuffer';
     if (ch.label === 'r') {
       this.rel = ch;
-      ch.onmessage = (ev) => { if (typeof ev.data === 'string') { try { this.onRel?.(JSON.parse(ev.data)); } catch { /* pesan rusak */ } } };
+      ch.onmessage = (ev) => {
+        if (typeof ev.data !== 'string') return;
+        let msg: unknown;
+        try { msg = JSON.parse(ev.data); } catch { return; }   // pesan rusak dari jaringan: abaikan
+        // penanganan pesan DI LUAR try: error di logika room/match = bug → tetap terlihat (konsol + kotak hitam), dulu ikut ditelan
+        // sebagai "pesan rusak" sehingga keadaan bisa rusak diam-diam
+        if (msg && typeof msg === 'object') this.onRel?.(msg as Record<string, unknown>);
+      };
     } else {
       this.unr = ch;
       ch.onmessage = (ev) => { if (ev.data instanceof ArrayBuffer) this.onUnr?.(ev.data); };

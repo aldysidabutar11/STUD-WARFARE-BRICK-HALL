@@ -79,7 +79,6 @@ export class SnapStats {
   private gaps: number[] = [];
   private lossT = -1e9;
   private lastTick = -1;
-  private now = 0;
   private sorted: number[] = [];
   delay: number;
   target: number;
@@ -92,7 +91,6 @@ export class SnapStats {
   }
   /** lateTicks = seberapa telat snapshot ini dibanding kedatangan tercepat (≥ 0). */
   onSnapshot(tick: number, lateTicks: number, nowSec: number) {
-    this.now = nowSec;
     if (this.lastTick >= 0 && tick > this.lastTick) {
       const g = tick - this.lastTick;
       this.gaps.push(g); if (this.gaps.length > 16) this.gaps.shift();

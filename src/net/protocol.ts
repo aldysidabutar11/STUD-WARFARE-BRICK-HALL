@@ -105,11 +105,14 @@ export function encodeCommands(cmds: Command[]): ArrayBuffer {
   return w.done();
 }
 export function decodeCommands(buf: ArrayBuffer): Command[] {
+  if (buf.byteLength < 2) return [];
   const r = new R(buf);
   if (r.u8() !== MSG.CMD) return [];
-  const n = r.u8(), out: Command[] = [];
+  // paket dari teman (tidak dipercaya): jumlah perintah dibatasi isi paket (17 B per perintah) — paket terpotong tidak melempar
+  // RangeError di handler; sumbu gerak dijepit ke [−1, 1] (i8 −128 = −1.008)
+  const n = Math.min(r.u8(), Math.floor((buf.byteLength - 2) / 17)), out: Command[] = [];
   for (let i = 0; i < n; i++) {
-    const seq = r.u32(), mx = r.i8() / 127, mz = r.i8() / 127;
+    const seq = r.u32(), mx = Math.max(-1, r.i8() / 127), mz = Math.max(-1, r.i8() / 127);
     const yaw = (r.u16() / 65535) * TAU, pitch = (r.i16() / 32767) * (Math.PI / 2);
     out.push({ seq, mx, mz, yaw, pitch, held: r.u8(), imp: r.u16(), viewTick: r.u32() });
   }
@@ -221,6 +224,10 @@ export function encodeSnapshot(s: Snapshot): ArrayBuffer {
 }
 
 export function decodeSnapshot(buf: ArrayBuffer): Snapshot | null {
+  try { return readSnapshot(buf); } catch { return null; }   // paket terpotong/rusak (RangeError DataView) → dibuang, bukan error
+}
+
+function readSnapshot(buf: ArrayBuffer): Snapshot | null {
   const r = new R(buf);
   if (r.u8() !== MSG.SNAP) return null;
   const tick = r.u32(), ack = r.u32();
