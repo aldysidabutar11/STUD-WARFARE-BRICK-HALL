@@ -173,6 +173,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #120b06; col
 .slots .s.on { opacity: 1; border-color: #f5cd30; background: rgba(40, 30, 10, 0.6); }
 .slots .s.on b { background: #f5cd30; color: #1a1206; text-shadow: none; }
 .slots .s.empty { opacity: 0.3; }
+/* Bomb Mission: slot C4 pembawa (merah), timer C4 berdenyut, bar tanam/jinak merah-emas di bawah crosshair */
+.slots .s.c4 { border-color: rgba(255, 80, 64, 0.55); }
+.slots .s.c4.on { border-color: #ff5a40; background: rgba(60, 12, 8, 0.7); }
+.slots .s.c4 b { background: rgba(255, 90, 64, 0.3); }
+.score.c4 .t { color: #ff5a40; animation: c4pulse 0.9s ease-in-out infinite alternate; }
+@keyframes c4pulse { from { opacity: 1; } to { opacity: 0.45; } }
+.rbar.bomb i { background: linear-gradient(90deg, #ff5a40, #f5cd30); }
 .ammo.knife .cnt { font-size: 30px; letter-spacing: 1px; }
 .ammo.alt .mode, .ammo.alt .optic { display: none; }
 

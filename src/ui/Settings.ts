@@ -11,7 +11,7 @@ import { XH_MODES, XH_SHAPES, type XhMode, type XhShape } from './Crosshair';
 import { cleanName, isMapChoice, type MapChoice } from '../game/Lobby';
 export { XH_COLORS } from './Crosshair';
 
-export type MatchMode = 'tdm' | 'elim';
+export type MatchMode = 'tdm' | 'elim' | 'bomb';
 export const RENDER_SCALES = [0, 1, 0.85, 0.7, 0.5] as const;   // 0 = otomatis (resolusi dinamis §2.3)
 export const FPS_CAPS = [1, 2, 3] as const;                       // batas FPS = refresh layar ÷ n (selalu rata)
 export const SCORE_LIMITS = [25, 50, 75, 100] as const;
@@ -97,7 +97,7 @@ export function validate(raw: Partial<Settings> | null): Settings {
     allies: Math.round(clamp(r.allies, 0, 4, D.allies)), enemies: Math.round(clamp(r.enemies, 1, 5, D.enemies)),
     fullPause: bool(r.fullPause, D.fullPause), ...lo, charVariant: oneOf(r.charVariant, VARIANTS, D.charVariant),
     playerName: typeof r.playerName === 'string' ? cleanName(r.playerName) : D.playerName,
-    mode: oneOf(r.mode, ['tdm', 'elim'] as const, D.mode),
+    mode: oneOf(r.mode, ['tdm', 'elim', 'bomb'] as const, D.mode),
     scoreLimit: pick(r.scoreLimit, SCORE_LIMITS, D.scoreLimit as 50), timeLimit: pick(r.timeLimit, TIME_LIMITS, D.timeLimit as 10),
     roundsToWin: pick(r.roundsToWin, ROUNDS_TO_WIN, D.roundsToWin as 5),
     map: isMapChoice(r.map) ? r.map : D.map,

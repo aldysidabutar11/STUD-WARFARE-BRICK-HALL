@@ -30,7 +30,8 @@ const dprNow = () => Math.min(2, Math.max(1, (typeof devicePixelRatio === 'numbe
 
 /** Ringkasan map untuk kartu: "Dalam ruang · 2 lantai · 22 × 36 m" (lantai = level node nav berbeda; 1 u = 0.36 m). */
 export function mapFacts(def: MapDef): string {
-  const floors = new Set(def.nav.nodes.map(n => n[3]).filter(l => l % 10 === 0)).size, k = XCFG.killcam.unitToMeter;   // bordes tangga (Y 5) bukan lantai
+  // bordes tangga (Y 5) bukan lantai; map berelevasi tak kelipatan 10 (Meridian Vault: 0 / 1.5 / 3 / 6.5) menyebut jumlahnya sendiri
+  const floors = def.floors ?? new Set(def.nav.nodes.map(n => n[3]).filter(l => l % 10 === 0)).size, k = XCFG.killcam.unitToMeter;
   const w = Math.round((def.bounds.x[1] - def.bounds.x[0]) * k), l = Math.round((def.bounds.z[1] - def.bounds.z[0]) * k);
   return `${def.atmosphere.outdoor ? 'Luar ruang' : 'Dalam ruang'} · ${floors} lantai · ${w} × ${l} m`;
 }

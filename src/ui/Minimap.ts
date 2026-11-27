@@ -181,6 +181,31 @@ export class Minimap {
       g.fillStyle = '#ffb02e'; g.beginPath(); g.arc(sx, sy, 3.2 * this.dpr, 0, Math.PI * 2); g.fill();
       g.strokeStyle = 'rgba(255,90,40,0.6)'; g.lineWidth = 1 * this.dpr; g.beginPath(); g.arc(sx, sy, CFG.grenade.blastRadius * k, 0, Math.PI * 2); g.stroke();
     });
+    // Bomb Mission: huruf zona A/B; C4 tertanam (berkedip, semua) / jatuh (penyerang saja) / pembawa (rekan penyerang)
+    if (ctx.match.mode === 'bomb' && this.def.bombSites) {
+      g.font = canvasFont(13 * this.dpr, 900); g.textAlign = 'center'; g.textBaseline = 'middle';
+      for (const st of this.def.bombSites) {
+        const [sx, sy] = toScreen((st.min[0] + st.max[0]) / 2, (st.min[2] + st.max[2]) / 2);
+        g.fillStyle = 'rgba(0,0,0,0.55)'; g.beginPath(); g.arc(sx, sy, 7.5 * this.dpr, 0, Math.PI * 2); g.fill();
+        g.fillStyle = ctx.bomb.state === 'planted' && ctx.bomb.site === st.id ? '#ff5a40' : '#f5cd30';
+        g.fillText(st.id, sx, sy + 0.5 * this.dpr);
+      }
+      const b = ctx.bomb, att = player.team === b.attackers;
+      const show = b.state === 'planted' || (b.state === 'dropped' && att);
+      if (show) {
+        const [sx, sy] = toScreen(b.pos.x, b.pos.z), blink = b.state !== 'planted' || Math.floor(ctx.time * 3) % 2 === 0;
+        g.fillStyle = blink ? '#ff3b2e' : '#7a1a14';
+        g.fillRect(sx - 4 * this.dpr, sy - 2.5 * this.dpr, 8 * this.dpr, 5 * this.dpr);
+        g.strokeStyle = '#000'; g.lineWidth = 1 * this.dpr; g.strokeRect(sx - 4 * this.dpr, sy - 2.5 * this.dpr, 8 * this.dpr, 5 * this.dpr);
+      }
+      if (b.state === 'carried' && att) {
+        const c = ctx.byId.get(b.carrier);
+        if (c && c.alive && c !== focus) {
+          const [sx, sy] = toScreen(c.renderPos.x, c.renderPos.z);
+          g.strokeStyle = '#ff5a40'; g.lineWidth = 2 * this.dpr; g.beginPath(); g.arc(sx, sy, 6 * this.dpr, 0, Math.PI * 2); g.stroke();
+        }
+      }
+    }
     const now = ctx.time;
     for (const e of ctx.entities) {
       if (!e.alive || e === focus) continue;

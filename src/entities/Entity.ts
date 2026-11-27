@@ -20,8 +20,11 @@ import type { FlashExposure, NadeKind } from '../combat/Flash';
 export interface Stats {
   kills: number; deaths: number; assists: number; score: number; shots: number; hits: number; hsHits: number; hsKills: number;
   damage: number; bestStreak: number;
+  /** Bomb Mission: C4 ditanam / dijinakkan. */
+  plants: number; defuses: number;
 }
-export const newStats = (): Stats => ({ kills: 0, deaths: 0, assists: 0, score: 0, shots: 0, hits: 0, hsHits: 0, hsKills: 0, damage: 0, bestStreak: 0 });
+export const newStats = (): Stats => ({ kills: 0, deaths: 0, assists: 0, score: 0, shots: 0, hits: 0, hsHits: 0, hsKills: 0, damage: 0, bestStreak: 0,
+  plants: 0, defuses: 0 });
 export type GrenadeState = 'NONE' | 'EQUIP' | 'READY' | 'COOKING' | 'THROWN';
 
 const _v = new THREE.Vector3();
@@ -56,6 +59,10 @@ export class Entity {
   stats: Stats = newStats();
   /** Kill beruntun sejak spawn terakhir (medali streak). */
   streak = 0;
+  /** Bomb Mission: tombol "pakai" ditahan tick ini (E, atau klik saat memegang C4) — pemain lokal, perintah remote (host), bot. */
+  bombUse = false;
+  /** Bomb Mission (pemain lokal): sedang memegang C4 di tangan (tombol 6) — klik = tanam, senjata disimpan. */
+  c4Held = false;
   /** Kontribusi damage musuh per penyerang (assist & kredit kill jatuh). */
   readonly dmgBy = new Map<number, { dmg: number; t: number }>();
   // serangan jarak dekat (popor / pisau): meleeT = waktu sejak mulai (−1 = tidak), meleeCd = jeda sisa

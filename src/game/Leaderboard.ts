@@ -57,7 +57,7 @@ export function maskEmail(e: string): string {
 
 // ───────────────────────── papan peringkat
 export type BoardId = 'points' | 'kills' | 'kd' | 'wins' | 'mvp' | 'knife' | 'nade' | 'flash' | 'streak' | 'longest'
-  | 'wins_brickhall' | 'wins_steelyard' | 'wins_boston';
+  | 'wins_brickhall' | 'wins_steelyard' | 'wins_boston' | 'wins_meridian';
 export type Period = 'week' | 'all';
 export interface BoardDef { id: BoardId; name: string; desc: string }
 /** Urutan menu. SAMA dengan daftar yang diterima public.get_leaderboard (dicek test). */
@@ -75,6 +75,7 @@ export const BOARDS: readonly BoardDef[] = [
   { id: 'wins_brickhall', name: 'Raja Brick Hall', desc: 'Menang di Brick Hall.' },
   { id: 'wins_steelyard', name: 'Raja Steel Yard', desc: 'Menang di Steel Yard.' },
   { id: 'wins_boston', name: 'Raja Boston', desc: 'Menang di Boston.' },
+  { id: 'wins_meridian', name: 'Raja Meridian Vault', desc: 'Menang di Meridian Vault (TDM, Eliminasi, Bomb Mission).' },
 ];
 export const isBoard = (v: unknown): v is BoardId => typeof v === 'string' && BOARDS.some(b => b.id === v);
 
@@ -99,12 +100,20 @@ export interface ReportInput {
   matchKey: number; map: string; mode: string; won: boolean; mvp: boolean; humans: number; duration: number;
   score: number; kills: number; deaths: number; assists: number; hsKills: number; knifeKills: number; nadeKills: number;
   flashAssists: number; bestStreak: number; longestKill: number;
+  /** Bomb Mission: bom ditanam / dijinakkan pemain ini (mode lain: 0). */
+  plants?: number; defuses?: number;
 }
+export type ReportMode = 'tdm' | 'elim' | 'bomb';
 export interface MatchReport {
-  match_key: number; map: MapId; mode: 'tdm' | 'elim'; won: boolean; mvp: boolean; humans: number; duration: number;
+  match_key: number; map: MapId; mode: ReportMode; won: boolean; mvp: boolean; humans: number; duration: number;
   score: number; kills: number; deaths: number; assists: number; hs_kills: number; knife_kills: number; nade_kills: number;
-  flash_assists: number; best_streak: number; longest_kill: number;
+  flash_assists: number; best_streak: number; longest_kill: number; plants: number; defuses: number;
 }
+/** Bomb Mission: maks ronde per match (first to 5 → 9) = batas tanam / jinak per pemain (constraint mr_bomb). */
+export const BOMB_MAX_ROUNDS = 9;
+/** Skor tanam / jinak bom (constraint mr_consistent: skor ≤ 125·kill + 50·assist + 200·(tanam + jinak)). */
+export const BOMB_OBJ_SCORE = 200;
+const isMode = (m: string): m is ReportMode => m === 'tdm' || m === 'elim' || m === 'bomb';
 const MAX_KEY = 2147483647;
 const intIn = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(Number.isFinite(v) ? v : 0)));
 
@@ -113,7 +122,7 @@ const intIn = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, M
  * wajar). Nilai dijepit agar memenuhi constraint database (accounts.sql: rentang & konsistensi) — data jujur tidak berubah.
  */
 export function buildReport(i: ReportInput): MatchReport | null {
-  if (!(MAP_IDS as readonly string[]).includes(i.map) || (i.mode !== 'tdm' && i.mode !== 'elim')) return null;
+  if (!(MAP_IDS as readonly string[]).includes(i.map) || !isMode(i.mode)) return null;
   if (!Number.isInteger(i.matchKey) || i.matchKey < 0 || i.matchKey > MAX_KEY) return null;
   const humans = intIn(i.humans, 0, 10);
   if (humans < 2) return null;
@@ -121,13 +130,15 @@ export function buildReport(i: ReportInput): MatchReport | null {
   if (duration < 30) return null;
   const kills = intIn(i.kills, 0, 300), deaths = intIn(i.deaths, 0, 300), assists = intIn(i.assists, 0, 300);
   if (kills * 2 > duration || deaths * 2 > duration) return null;          // jam match tidak masuk akal → jangan kirim
-  const knife = intIn(i.knifeKills, 0, kills);
+  const knife = intIn(i.knifeKills, 0, kills), bomb = i.mode === 'bomb';
+  const plants = bomb ? intIn(i.plants ?? 0, 0, BOMB_MAX_ROUNDS) : 0, defuses = bomb ? intIn(i.defuses ?? 0, 0, BOMB_MAX_ROUNDS) : 0;
   return {
     match_key: i.matchKey, map: i.map as MapId, mode: i.mode, won: !!i.won, mvp: !!i.mvp, humans, duration,
-    score: intIn(i.score, 0, 125 * kills + 50 * assists), kills, deaths, assists,
+    score: intIn(i.score, 0, 125 * kills + 50 * assists + BOMB_OBJ_SCORE * (plants + defuses)), kills, deaths, assists,
     hs_kills: intIn(i.hsKills, 0, kills), knife_kills: knife, nade_kills: intIn(i.nadeKills, 0, kills - knife),
     flash_assists: intIn(i.flashAssists, 0, assists), best_streak: intIn(i.bestStreak, 0, kills),
     longest_kill: Math.min(500, Math.max(0, Math.round((Number.isFinite(i.longestKill) ? i.longestKill : 0) * 10) / 10)),
+    plants, defuses,
   };
 }
 
@@ -135,9 +146,11 @@ export function buildReport(i: ReportInput): MatchReport | null {
 export function reportIssues(r: MatchReport): string[] {
   const out: string[] = [], int = (k: keyof MatchReport) => Number.isInteger(r[k]);
   if (!(MAP_IDS as readonly string[]).includes(r.map)) out.push('map');
-  if (r.mode !== 'tdm' && r.mode !== 'elim') out.push('mode');
+  if (!isMode(r.mode)) out.push('mode');
   for (const k of ['match_key', 'humans', 'duration', 'score', 'kills', 'deaths', 'assists', 'hs_kills', 'knife_kills', 'nade_kills',
-    'flash_assists', 'best_streak'] as const) if (!int(k)) out.push(`${k}:int`);
+    'flash_assists', 'best_streak', 'plants', 'defuses'] as const) if (!int(k)) out.push(`${k}:int`);
+  if (r.plants < 0 || r.plants > BOMB_MAX_ROUNDS || r.defuses < 0 || r.defuses > BOMB_MAX_ROUNDS
+    || (r.mode !== 'bomb' && (r.plants !== 0 || r.defuses !== 0))) out.push('bomb');
   if (r.match_key < 0 || r.match_key > MAX_KEY) out.push('match_key');
   if (r.humans < 2 || r.humans > 10) out.push('humans');
   if (r.duration < 30 || r.duration > 7200) out.push('duration');
@@ -147,17 +160,20 @@ export function reportIssues(r: MatchReport): string[] {
   if (r.knife_kills < 0 || r.nade_kills < 0 || r.knife_kills + r.nade_kills > r.kills) out.push('knife+nade');
   if (r.best_streak < 0 || r.best_streak > r.kills) out.push('best_streak');
   if (r.flash_assists < 0 || r.flash_assists > r.assists) out.push('flash_assists');
-  if (r.score < 0 || r.score > 125 * r.kills + 50 * r.assists) out.push('score');
+  if (r.score < 0 || r.score > 125 * r.kills + 50 * r.assists + BOMB_OBJ_SCORE * (r.plants + r.defuses)) out.push('score');
   if (r.kills * 2 > r.duration || r.deaths * 2 > r.duration) out.push('rate');
   return out;
 }
 
-/** Argumen RPC public.submit_match. */
+/** Argumen RPC public.submit_match. p_plants / p_defuses (bawaan 0 di database) hanya dikirim untuk Bomb Mission → kiriman
+ *  TDM/Eliminasi tetap cocok dengan fungsi database versi lama (sebelum accounts.sql dijalankan ulang). */
 export function submitArgs(r: MatchReport): Record<string, number | string | boolean> {
-  return { p_match_key: r.match_key, p_map: r.map, p_mode: r.mode, p_won: r.won, p_mvp: r.mvp, p_humans: r.humans,
-    p_duration: r.duration, p_score: r.score, p_kills: r.kills, p_deaths: r.deaths, p_assists: r.assists, p_hs_kills: r.hs_kills,
-    p_knife_kills: r.knife_kills, p_nade_kills: r.nade_kills, p_flash_assists: r.flash_assists, p_best_streak: r.best_streak,
-    p_longest_kill: r.longest_kill };
+  const a: Record<string, number | string | boolean> = { p_match_key: r.match_key, p_map: r.map, p_mode: r.mode, p_won: r.won,
+    p_mvp: r.mvp, p_humans: r.humans, p_duration: r.duration, p_score: r.score, p_kills: r.kills, p_deaths: r.deaths,
+    p_assists: r.assists, p_hs_kills: r.hs_kills, p_knife_kills: r.knife_kills, p_nade_kills: r.nade_kills,
+    p_flash_assists: r.flash_assists, p_best_streak: r.best_streak, p_longest_kill: r.longest_kill };
+  if (r.mode === 'bomb') { a.p_plants = r.plants; a.p_defuses = r.defuses; }
+  return a;
 }
 
 // ───────────────────────── pesan error (kode dari database / Supabase Auth → teks ramah; teks mentah server tidak ditampilkan)

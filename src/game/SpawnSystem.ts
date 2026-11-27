@@ -13,6 +13,10 @@ const _eye = new THREE.Vector3();
 const FLOORS: SpawnFloor[] = ['upper', 'ground'];
 
 export class SpawnSystem {
+  /** Kelompok slot spawn untuk tim (bawaan = warnanya). Mode Bomb Mission menukar kelompok setelah tukar sisi (penyerang selalu di
+   *  kelompok slot penyerang map). Hanya host/offline yang memilih slot (klien menerima posisi & arah dari host). */
+  groupOf: (team: 'blue' | 'red') => 'blue' | 'red' = t => t;
+
   /**
    * v2 (permintaan pengguna): lantai spawn (Brick Hall: 1 = ruang spawn bawah, 2 = ruang spawn atas) dipilih ACAK tiap respawn.
    * Di lantai itu: lewati slot terisi (karakter dalam 1.6 u), pilih slot dengan jarak minimum terbesar ke musuh ber-LOS
@@ -20,7 +24,7 @@ export class SpawnSystem {
    * Mengembalikan indeks global = indeks di [...upper, ...ground] (Brick Hall: 0–4 atas, 5–9 bawah).
    */
   pickSlot(e: Entity): number {
-    const slots = currentMap().spawnSlots[e.team], off = [0, slots.upper.length];
+    const slots = currentMap().spawnSlots[this.groupOf(e.team)], off = [0, slots.upper.length];
     const first = Math.random() < 0.5 ? 0 : 1;
     for (const f of [first, 1 - first]) {
       const i = this.bestOn(e, slots[FLOORS[f]]);
@@ -32,7 +36,7 @@ export class SpawnSystem {
 
   /** Posisi slot dari indeks global. */
   slotPos(e: Entity, gi: number): [number, number, number] {
-    const slots = currentMap().spawnSlots[e.team], nu = slots.upper.length;
+    const slots = currentMap().spawnSlots[this.groupOf(e.team)], nu = slots.upper.length;
     return gi < nu ? slots.upper[gi] : slots.ground[gi - nu];
   }
 
@@ -58,7 +62,8 @@ export class SpawnSystem {
   spawn(e: Entity) {
     const i = e.dummyAt ? 0 : this.pickSlot(e);
     const [x, y, z] = e.dummyAt ? [e.dummyAt.x, e.dummyAt.y, e.dummyAt.z] : this.slotPos(e, i);
-    this.applySpawn(e, x, y, z, e.team === 'blue' ? Math.PI : 0, i);
+    const g = this.groupOf(e.team), yaw = currentMap().spawnYaw?.[g] ?? (g === 'blue' ? Math.PI : 0);
+    this.applySpawn(e, x, y, z, e.dummyAt ? (e.team === 'blue' ? Math.PI : 0) : yaw, i);
   }
 
   /** Hidupkan entitas di titik tertentu (host memilih slot; klien online menerapkan spawn dari host). */

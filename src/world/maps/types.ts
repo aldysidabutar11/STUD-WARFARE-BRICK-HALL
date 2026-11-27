@@ -7,9 +7,9 @@ import type { SurfaceMaterial } from '../../core/EventBus';
 import type { Box, SpawnFloor, Stair } from '../MapData';
 import type { EdgeKind } from '../NavGraph';
 
-export type MapId = 'brickhall' | 'steelyard' | 'boston';
+export type MapId = 'brickhall' | 'steelyard' | 'boston' | 'meridian';
 /** Urutan tampil di menu. */
-export const MAP_IDS: readonly MapId[] = ['brickhall', 'steelyard', 'boston'];
+export const MAP_IDS: readonly MapId[] = ['brickhall', 'steelyard', 'boston', 'meridian'];
 
 /** Template graf navigasi (gaya GDD §11.6). {H} = S (Biru, Z negatif) / N (Merah, Z positif); {X} = W (X negatif) / E;
  *  awalan C_ = garis tengah Z = 0. Koordinat ditulis untuk H=S, X=W lalu dicerminkan otomatis (N: z → −z, E: x → −x). */
@@ -24,6 +24,9 @@ export interface NavTemplate {
   drops?: [string, string, string][];
   /** Node yang dianggap posisi berlindung. */
   cover: string[];
+  /** Opsional (map dengan banyak elevasi, mis. Meridian Vault 0 / 1.5 / 3 / 6.5): `NavGraph.nearest` memilih node yang lantainya
+   *  ≤ toleransi ini dari tinggi posisi. Bawaan (Brick Hall, Steel Yard, Boston): aturan lama lantai 0 / 10 (y > 5 → 10). */
+  levelTol?: number;
 }
 
 /** Jalur bot (GDD §11.1/§11.7) — bobot pemilihan + rute node yang sudah diekspansi untuk tim di sisi `own`. */
@@ -77,6 +80,9 @@ export interface MapDef {
   stairs: Stair[];
   /** Slot spawn per tim & lantai; lantai yang tidak ada = array kosong (SpawnSystem jatuh ke lantai lain). */
   spawnSlots: Record<'blue' | 'red', Record<SpawnFloor, [number, number, number][]>>;
+  /** Arah hadap per kelompok slot (opsional; bawaan Biru π = +Z, Merah 0 = −Z). Mode Bomb Mission menukar kelompok slot saat tukar
+   *  sisi, arah hadap ikut kelompok slot (bukan warna tim). */
+  spawnYaw?: Record<'blue' | 'red', number>;
   nav: NavTemplate;
   lanes: LaneDef[];
   surfaceAt(x: number, y: number, z: number): SurfaceMaterial;
@@ -96,6 +102,10 @@ export interface MapDef {
   radarFloors?: number[];
   /** Panel kaca destruktibel (opsional; Boston) — runtime: world/Breakables.ts (urutan = indeks jaringan). */
   breakables?: import('../Breakables').BreakableDef[];
+  /** Jumlah lantai untuk kartu menu (opsional; bawaan = level nav kelipatan 10). */
+  floors?: number;
+  /** Zona tanam bom (opsional; mode Bomb Mission hanya bisa dimainkan di map yang punya zona — Meridian Vault). */
+  bombSites?: readonly import('../../game/BombRules').BombSiteDef[];
   /** Spesifikasi lompat drop bot per balok pendaratan (opsional; bawaan = rak Brick Hall). */
   dropSpec?(boxId: string): { jumpDist: number; sprint: boolean; brake: boolean } | undefined;
   /** Data buku fisika (Props) — hanya Brick Hall. */

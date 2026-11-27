@@ -4,7 +4,7 @@
 
 // ───────────────────────────── tombol perintah (bit)
 /** Tombol yang DITAHAN pada tick perintah (sudah di-resolve klien: ADS/jongkok/sprint mode tahan/toggle). */
-export const H = { FIRE: 1, ALT: 2, AIM: 4, CROUCH: 8, SPRINT: 16 } as const;
+export const H = { FIRE: 1, ALT: 2, AIM: 4, CROUCH: 8, SPRINT: 16, USE: 32 } as const;
 /** Tombol yang DITEKAN sejak perintah sebelumnya (impuls, diproses tepat sekali per seq). */
 export const I = {
   JUMP: 1, RELOAD: 2, FIREMODE: 4, MELEE: 8, SLOT_AR: 16, SLOT_KNIFE: 32, SLOT_NADE: 64, LAST: 128,

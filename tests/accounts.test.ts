@@ -25,7 +25,22 @@ describe('cermin aturan database', () => {
     const sig = between('create or replace function public.submit_match(', ') returns text');
     const names = [...sig.matchAll(/(p_[a-z_]+)\s/g)].map(m => m[1]);
     const r = buildReport(honest())!;
-    expect(Object.keys(submitArgs(r))).toEqual(names);
+    // TDM/Eliminasi tanpa p_plants/p_defuses (cocok dengan fungsi database versi lama); Bomb Mission = semua parameter
+    expect(Object.keys(submitArgs(r))).toEqual(names.filter(n => n !== 'p_plants' && n !== 'p_defuses'));
+    expect(names.slice(-2)).toEqual(['p_plants', 'p_defuses']);
+    const b = buildReport({ ...honest(), map: 'meridian', mode: 'bomb', plants: 2, defuses: 1 })!;
+    expect(Object.keys(submitArgs(b))).toEqual(names);
+    expect(submitArgs(b).p_plants).toBe(2);
+  });
+  it('Bomb Mission: tanam/jinak dijepit 0…9, hanya mode bomb, skor boleh + 200 per tanam/jinak', () => {
+    const b = buildReport({ ...honest(), map: 'meridian', mode: 'bomb', kills: 3, assists: 0, score: 3 * 125 + 600, plants: 2, defuses: 1 })!;
+    expect(b.score).toBe(975);
+    expect(reportIssues(b)).toEqual([]);
+    expect(buildReport({ ...honest(), mode: 'bomb', plants: 40 })!.plants).toBe(9);
+    const t = buildReport({ ...honest(), mode: 'tdm', plants: 3, defuses: 2 })!;
+    expect([t.plants, t.defuses]).toEqual([0, 0]);
+    expect(reportIssues({ ...t, plants: 1 })).toContain('bomb');
+    expect(buildReport({ ...honest(), mode: 'practice' })).toBeNull();
   });
   it('tabel terkunci: hak dicabut + RLS aktif; fungsi tulis hanya authenticated; tanpa kunci rahasia', () => {
     expect(SQL).toMatch(/revoke all on table public\.profiles, public\.match_results from public, anon, authenticated;/);
@@ -39,7 +54,7 @@ describe('cermin aturan database', () => {
     expect(SQL).toMatch(/grant execute on function public\.get_leaderboard\(text, text, int\) to anon, authenticated;/);
     // setiap SECURITY DEFINER memakai search_path kosong
     const defs = SQL.split('create or replace function').slice(1);
-    for (const d of defs) if (/security definer/.test(d.slice(0, 400))) expect(d.slice(0, 400)).toContain("set search_path = ''");
+    for (const d of defs) if (/security definer/.test(d.slice(0, 700))) expect(d.slice(0, 700)).toContain("set search_path = ''");
     expect(SQL).not.toMatch(/service_role|sb_secret|eyJhbGci/);
   });
 });

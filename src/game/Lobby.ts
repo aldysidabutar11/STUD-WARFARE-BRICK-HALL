@@ -10,7 +10,7 @@ import type { Team } from '../entities/BlockyCharacter';
 import { MAP_IDS, type MapId } from '../world/maps/types';
 
 const LB = XCFG.lobby;
-export type RoomMode = 'tdm' | 'elim';
+export type RoomMode = 'tdm' | 'elim' | 'bomb';
 
 // ───────────────────────────── pilihan map (murni — tanpa mengimpor registry yang ikut memuat builder map)
 /** Pilihan map: map tertentu atau 'random' ("Acak": diundi setiap match dimulai; Main Lagi / Ulangi memakai map yang sama). */
@@ -53,7 +53,7 @@ export interface RoomSettings {
 const isInt = (v: unknown, lo: number, hi: number) => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
 /** Nilai sah per kunci setelan room (patch host & data jaringan). Batas angka longgar (sama dengan net/start.parseStart). */
 const ROOM_CHECK: { readonly [K in keyof RoomSettings]: (v: unknown) => boolean } = {
-  mode: v => v === 'tdm' || v === 'elim',
+  mode: v => v === 'tdm' || v === 'elim' || v === 'bomb',
   scoreLimit: v => isInt(v, 1, 999), timeLimit: v => isInt(v, 1, 120), roundsToWin: v => isInt(v, 1, 15),
   difficulty: v => v === 'easy' || v === 'normal' || v === 'hard',
   fillBots: v => typeof v === 'boolean',

@@ -1,14 +1,20 @@
 // src/game/MatchManager.ts — aturan TDM & state match (GDD §1.3, §12)
-// + mode Eliminasi berbasis ronde dan Latihan menembak (pasca-MVP "mode Elimination").
+// + mode Eliminasi berbasis ronde dan Latihan menembak (pasca-MVP "mode Elimination")
+// + Bomb Mission (dokumen pengguna; aturan murni game/BombRules.ts, C4 combat/C4Bomb.ts): COUNTDOWN = freeze 5 s, PLAYING = ronde
+//   120 s (setelah C4 ditanam: timeLeft = sumbu 40 s), ROUND_END 5 s (+ 4 s banner tukar sisi setelah ronde 4), first to 5.
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
+import { BOMB_CFG } from '../config/bombConfig';
+import { attackersOf, bombRoundResult, shouldSwapSides, type RoundReason } from './BombRules';
 import { bus, type MatchStateName } from '../core/EventBus';
 import { newStats } from '../entities/Entity';
 import type { MatchSave } from '../net/Migration';
 import { ctx } from './ctx';
 
 export type Winner = 'blue' | 'red' | 'draw';
-export type GameMode = 'tdm' | 'elim' | 'practice';
+export type GameMode = 'tdm' | 'elim' | 'bomb' | 'practice';
+/** Mode berbasis ronde: tanpa respawn dalam ronde, menonton rekan, skor tim = ronde dimenangkan. */
+export const isRoundMode = (m: GameMode) => m === 'elim' || m === 'bomb';
 export interface MatchOptions { mode: GameMode; scoreLimit: number; timeLimit: number; roundsToWin: number }
 
 /**
@@ -34,6 +40,8 @@ export class MatchManager {
   winner: Winner = 'draw';
   round = 0;
   roundWinner: Winner | null = null;
+  /** Bomb Mission: alasan ronde selesai (banner). */
+  roundReason: RoundReason | null = null;
   private roundEndT = 0;
   onResults: (() => void) | null = null;
   /** Klien online: keadaan diatur host (tanpa transisi/skor lokal), timer hanya dihaluskan di antara snapshot. */
@@ -51,9 +59,10 @@ export class MatchManager {
   startPuppet(opts: MatchOptions) {
     this.puppet = true;
     this.opts = { ...opts };
-    this.round = 1; this.roundWinner = null; this.winner = 'draw'; this.playedT = 0;
-    this.timeLeft = opts.mode === 'elim' ? XCFG.elim.roundTime : opts.timeLimit;
-    this.countdown = CFG.match.countdown;
+    this.round = 1; this.roundWinner = null; this.roundReason = null; this.winner = 'draw'; this.playedT = 0;
+    this.timeLeft = this.roundTime();
+    this.countdown = this.freezeTime();
+    if (opts.mode === 'bomb') { ctx.bomb.resetMatch(); ctx.bomb.attackers = attackersOf(1); }
     ctx.teams.reset();
     for (const e of ctx.entities) { e.stats = newStats(); e.streak = 0; e.respawnT = 0; e.dmgBy.clear(); }
     ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear(); ctx.breakables.reset();
@@ -69,6 +78,11 @@ export class MatchManager {
     this.winner = s.winner; this.roundWinner = s.roundWinner; this.roundEndT = 0; this.endT = 0; this.playedT = s.played ?? 0;
     ctx.teams.reset(); ctx.teams.scores.blue = s.sb; ctx.teams.scores.red = s.sr;
     for (const e of ctx.entities) { e.stats = newStats(); e.streak = 0; e.respawnT = 0; e.dmgBy.clear(); }
+    if (opts.mode === 'bomb') {            // kelompok slot & penyerang ronde ini (C4 dipulihkan applySaveEntities)
+      const att = attackersOf(Math.max(1, s.round));
+      ctx.spawns.groupOf = t => (t === att ? 'red' : 'blue');
+      ctx.bomb.resetMatch(); ctx.bomb.attackers = att;
+    } else ctx.spawns.groupOf = t => t;
     ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear(); ctx.breakables.reset();
     this.set(s.state);
     if (s.state === 'RESULTS') this.onResults?.();
@@ -78,8 +92,8 @@ export class MatchManager {
   applyNet(state: MatchStateName, sb: number, sr: number, timeLeft: number, countdown: number, round: number) {
     ctx.teams.scores.blue = sb; ctx.teams.scores.red = sr;
     this.timeLeft = timeLeft; this.countdown = countdown;
-    if (round > this.round) {   // ronde baru (Eliminasi): bersihkan sisa visual ronde lalu
-      this.round = round; this.roundWinner = null;
+    if (round > this.round) {   // ronde baru (Eliminasi / Bomb Mission): bersihkan sisa visual ronde lalu
+      this.round = round; this.roundWinner = null; this.roundReason = null;
       ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.breakables.reset();
       this.onRoundStart?.(round);
     }
@@ -91,6 +105,15 @@ export class MatchManager {
   }
 
   get mode(): GameMode { return this.opts.mode; }
+  /** Durasi ronde / match & hitung mundur awal ronde per mode. */
+  private roundTime() { return this.opts.mode === 'elim' ? XCFG.elim.roundTime : this.opts.mode === 'bomb' ? BOMB_CFG.match.roundTime : this.opts.timeLimit; }
+  private freezeTime() { return this.opts.mode === 'bomb' ? BOMB_CFG.match.freezeTime : CFG.match.countdown; }
+  /** Ronde untuk menang (Bomb Mission: first to 5 — dokumen). */
+  get roundsToWin() { return this.opts.mode === 'bomb' ? BOMB_CFG.match.winRounds : this.opts.roundsToWin; }
+  /** Bomb Mission: tim penyerang ronde ini. */
+  get attackers() { return attackersOf(Math.max(1, this.round)); }
+  /** Bomb Mission: ronde yang baru selesai = ronde tukar sisi (banner + jeda ekstra). */
+  get halftimeNow() { return this.opts.mode === 'bomb' && this.state === 'ROUND_END' && shouldSwapSides(this.round); }
 
   set(s: MatchStateName) {
     this.state = s;
@@ -104,16 +127,25 @@ export class MatchManager {
     this.round = 0; this.playedT = 0;
     ctx.teams.reset();
     for (const e of ctx.entities) { e.stats = newStats(); e.streak = 0; e.respawnT = 0; e.dmgBy.clear(); }
+    ctx.bomb.resetMatch();
+    ctx.spawns.groupOf = t => t;
     this.beginRound();
   }
 
   private beginRound() {
     this.round++;
-    this.timeLeft = this.opts.mode === 'elim' ? XCFG.elim.roundTime : this.opts.timeLimit;
-    this.countdown = CFG.match.countdown;
-    this.roundWinner = null;
+    this.timeLeft = this.roundTime();
+    this.countdown = this.freezeTime();
+    this.roundWinner = null; this.roundReason = null;
     ctx.props.reset(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.grenades.clear(); ctx.drops.clear(); ctx.breakables.reset();
+    if (this.opts.mode === 'bomb') {
+      // kelompok slot map: 'red' = Barat Laut (penyerang), 'blue' = Tenggara (bertahan) → tim penyerang ronde ini memakai slot 'red'
+      const att = attackersOf(this.round);
+      ctx.spawns.groupOf = t => (t === att ? 'red' : 'blue');
+      for (const e of ctx.entities) e.c4Held = false;
+    }
     for (const e of ctx.entities) ctx.spawns.spawn(e);
+    if (this.opts.mode === 'bomb') ctx.bomb.startRound(attackersOf(this.round));
     this.onRoundStart?.(this.round);
     this.set(this.opts.mode === 'practice' ? 'PLAYING' : 'COUNTDOWN');
   }
@@ -135,15 +167,19 @@ export class MatchManager {
       case 'PLAYING':
         if (this.opts.mode === 'practice') break;
         this.playedT += dt;
-        this.timeLeft = Math.max(0, this.timeLeft - dt);
+        if (this.opts.mode === 'bomb' && ctx.bomb.state === 'planted') this.timeLeft = Math.max(0, ctx.bomb.fuseLeft);
+        else this.timeLeft = Math.max(0, this.timeLeft - dt);
         if (this.opts.mode === 'elim') this.checkRound(this.timeLeft <= 0);
+        else if (this.opts.mode === 'bomb') this.checkBombRound();
         else if (this.timeLeft <= 0) this.end();
         break;
       case 'ROUND_END': {
         this.roundEndT += realDt;
-        if (this.roundEndT < XCFG.elim.roundEnd) break;
-        const s = ctx.teams.scores, n = this.opts.roundsToWin;
-        if (s.blue >= n || s.red >= n) this.end(); else this.beginRound();
+        const s = ctx.teams.scores, n = this.roundsToWin, over = s.blue >= n || s.red >= n;
+        const wait = this.opts.mode === 'bomb'
+          ? BOMB_CFG.match.roundEndDelay + (!over && shouldSwapSides(this.round) ? BOMB_CFG.match.halftimeDelay : 0) : XCFG.elim.roundEnd;
+        if (this.roundEndT < wait) break;
+        if (over) this.end(); else this.beginRound();
         break;
       }
       case 'ENDED':
@@ -160,6 +196,23 @@ export class MatchManager {
       const s = ctx.teams.scores;
       if (s.blue >= this.opts.scoreLimit || s.red >= this.opts.scoreLimit) this.end();
     } else if (this.opts.mode === 'elim') this.checkRound(false);
+    else if (this.opts.mode === 'bomb') this.checkBombRound();
+  }
+
+  /** Bomb Mission: matriks menang ronde (BombRules) dari jumlah hidup per peran + keadaan C4. */
+  private checkBombRound() {
+    if (this.state !== 'PLAYING') return;
+    const att = attackersOf(this.round), b = ctx.bomb;
+    let aa = 0, da = 0;
+    for (const e of ctx.entities) if (e.alive) { if (e.team === att) aa++; else da++; }
+    const r = bombRoundResult({ attAlive: aa, defAlive: da, planted: b.state === 'planted', detonated: b.state === 'detonated',
+      defused: b.state === 'defused', timeUp: b.state !== 'planted' && this.timeLeft <= 0 });
+    if (!r) return;
+    const team = r.winner === 'att' ? att : att === 'red' ? 'blue' : 'red';
+    this.roundWinner = team; this.roundReason = r.reason;
+    ctx.teams.scores[team]++;
+    this.roundEndT = 0;
+    this.set('ROUND_END');
   }
 
   private checkRound(timeUp: boolean) {

@@ -67,7 +67,7 @@
 - Tampilan karakter = desain pengguna (Karakter/*.png, HANYA acuan; tidak dimuat game): Biru = pasukan taktis, Merah = gerilyawan,
   masing-masing pria/wanita (balok R6, src/entities/CharacterArt.ts + perkakas charKit.ts), + karakter khusus Venny (dua kostum) =
   model realistis ber-skin (src/entities/venny/). Semua 100% prosedural (lihat "Fitur pasca-MVP").
-- Multi-map (Brick Hall + Steel Yard + Boston, lihat "Multi-map & Steel Yard" & "Boston"): modul game membaca data map HANYA lewat `currentMap()`
+- Multi-map (Brick Hall + Steel Yard + Boston + Meridian Vault, lihat "Multi-map & Steel Yard" & "Boston"): modul game membaca data map HANYA lewat `currentMap()`
   (src/world/maps/registry.ts; Physics lewat maps/current.ts agar tidak impor melingkar) — jangan impor data Brick Hall langsung.
   Steel Yard = layout ORISINAL (gaya "halaman kontainer gurun" hanya inspirasi, bukan replika map game lain); peti 2.8 u, bukan 3.0
   dari brief (3.0 jatuh di pita cover terlarang GDD §4.4 2.95–3.75; tumpukan 2 = 5.6).
@@ -798,6 +798,70 @@
   bolong di layar teman, kill host hanya di layar host), 1920…800 px tanpa tabrakan amunisi/bar/chat, 0 error konsol. Skrip lokal
   (scratchpad, bisa hilang): pw/kstars.js, kstars_online.js, kstars_menu.js. Dijaga tests/killStars.test.ts.
 
+- Map Meridian Vault + mode Bomb Mission (permintaan pengguna 2026-11-27; dokumen pengguna "IDE MAP BARU (BOMB MISSION)/Stud Warfare —
+  Blueprint Map Meridian Vault & Mode Bomb Mission.pdf" + 4 gambar Gemini, lokal saja, jangan di-commit; layout orisinal bank sentral,
+  nama mode generik; review dilaporkan dulu → pengguna "gas", setuju semua saran):
+  - Map `src/world/maps/meridian/` (layout, nav, colliders, visual (tekstur + material), emit, build, index); MapId 'meridian' (map ke-4,
+    menu & papan "Raja Meridian Vault"). Koordinat dokumen × 2 di XZ = game (lihat "Denah x2"; Merah/penyerang babak 1 Barat Laut Z+,
+    Biru Tenggara Z−). Bangunan 152 × 136 × 16.8 (area main 144 × 128 u ≈ 52 × 46 m — map terbesar): West Long marmer (jendela
+    melengkung, skylight, pilar), Mid 3 elevasi (lantai 0 → platform 3 → dek 6.5), Site A ruang brankas (pintu bundar terbuka, kotak
+    deposit, plafon kaset emas Y 10, strip merah), South Connector, Site B atrium (panggung bom 1.5, tangga kembar karpet → balkon U 6.5,
+    6 skylight, papan "MERIDIAN VAULT"), terowongan B & Tangga Biru. 10 ramp convexHull (10.6°–18°; dokumen 20.6°–33° sebelum x2).
+  - Perbaikan atas dokumen (dilaporkan & disetujui): manifest ±40 dari "74" balok → ruang tak terdefinisi diisi massa padat, dinding
+    zona setinggi plafon 16 (dokumen 9–12: granat/peluru lewat di atas dinding), plafon rendah zona = massa; lubang ditutup (ambang pintu
+    Mid → Balkon B 6.5, bordes puncak Tangga Biru, ambang Mid-West Y 3 (dulu parit 1 u × 3 u), celah 0.5 u samping pintu brankas);
+    dinding dobel Site A/Mid dihapus; ruang tertutup di bawah dek Mid diisi; 4 node bot dokumen DI DALAM peti/meja + 4 menempel → graf
+    dibangun ulang (91 node); garis pandang ke slot spawn ditutup: barikade papan di dalam pintu Selatan & Timur Spawn Merah (Timur
+    setinggi ambang 7: garis pandang menurun dari dek), Spawn Biru = ruang slot dipisah dinding monitor CCTV dari lobi keluar (celah
+    Timur + kantong Barat di balik barikade baja), sekat kotak deposit di Site A (dulu garis lurus West Long → Site A → South Connector →
+    Spawn Biru ±52 u); konter Site A digeser 1.5 u; peti Mid Barat digeser 1 u; panggung B diperpanjang di bawah/antara tangga kembar;
+    etalase Timur ke dinding. 5 slot per kelompok (dokumen 5v5), arah hadap per kelompok slot (`MapDef.spawnYaw`), `MapDef.floors` 2.
+  - Denah x2 (laporan pengguna 2026-11-27 setelah mencoba: "map terlalu kecil — cepat ketemu musuh, C4 malah tidak terpakai, jadi
+    seperti deathmatch; jalannya terlalu sempit", minta ±2× map lain): arsitektur dikali 2 di XZ, tinggi TETAP (pita cover §4.4, lompat,
+    plafon, ambang, balkon sama) → pintu/koridor/ruang 2× lebih lebar, tangga 2× lebih panjang; prop (peti, meja, etalase, kios) tetap
+    ukuran asli di posisi × 2 (yang menempel dinding tetap menempel), barikade spawn tetap setebal 1–1.2. +34 benda: pilar marmer
+    `m_col` (West Long 2 setinggi plafon, penyangga balkon Atrium 2), peti/kios/etalase berselang di West Long, Mid-West, Mid (lantai,
+    platform, dek), South Connector, terowongan B, Atrium (lantai, panggung, 3 balkon), pulau lemari deposit 6.2 di Site A. Zona bom
+    16 × 16, `HOLD_RADIUS` bot 20. Visual: 14 skylight 8 × 8, 10 jendela, 51 lampu, kaset Site A tiap 4 u, papan nama 16 × 4, decal r 4.
+    Nav 95 node (node × 2 + RS_MID, WL_NE, WL_W, A_S2; sisi asimetris x − z > 30 / < −30). Garis pandang spawn tetap 0 (skala XZ
+    seragam menjaga garis pandang; benda baru hanya menambah penghalang). Terukur (Playwright, Iris Xe): muat bake 523 ms (medan 245),
+    ±90k segitiga statis, 40 draw call; TDM bot 240 s 67 kill, 0 macet; Bomb Mission bot 2 match × 9 ronde: C4 ditanam di 5 & 6
+    ronde (median ±32 s setelah ronde mulai), kontak pertama median 10.8 / 9.5 s, ronde median 46.8 / 35 s (denah lama, skrip & bot
+    sama: 0 tanam dari 9 ronde, semua ronde habis saling bunuh, kontak pertama median 4.8 s, ronde median 13.3 s); pemain 13/13,
+    online 8/8 (0 koreksi), menu 4/4 (kartu "52 × 46 m"), 0 error konsol. Skrip lokal: pw/mv_map.js (denah + nav tampak atas → PNG),
+    mv2_look.js, mv2_stuck.js, bomb2_bots.js (waktu kontak & tanam per ronde), bomb2_player.js, bomb2_online.js.
+  - Engine umum: `NavTemplate.levelTol` (opt-in; `NavGraph.nearest` memilih node selantai ±toleransi — map lama tetap aturan 0/10),
+    `SpawnSystem.groupOf` (kelompok slot per tim; Bomb Mission menukar setelah tukar sisi), `MapDef.bombSites`, `XCFG.bots.lanesMeridian`.
+  - Mode 'bomb' (angka `src/config/bombConfig.ts` = dokumen §8.1; aturan murni `game/BombRules.ts`; C4 `combat/C4Bomb.ts`): hanya di map
+    berzona bom (play/room memaksa Meridian). COUNTDOWN = freeze 5 s, ronde 120 s, C4 tertanam → timeLeft = sumbu 40 s, ROUND_END 5 s
+    (+ 4 s banner TUKAR SISI setelah ronde 4), first to 5 (maks 9 ronde), skor tim = ronde (`isRoundMode`: tanpa respawn, menonton rekan,
+    pip hidup). Penyerang ronde 1–4 Merah, 5–9 Biru (`attackersOf`). Pembawa bergilir adil (`pickCarrier`). Tahan E (atau tombol 6 =
+    C4 di tangan + klik; aksi `bomb` Digit6, setelan lama diisi otomatis) di zona = tanam 4 s; bertahan ≤ 3 u & menghadap ≤ 60° = jinak
+    5 s (satu orang); gerak & tembak terkunci selama menanam/menjinakkan (`BombSystem.lockFor`, aturan sama di host & klien → 0 koreksi
+    prediksi). C4 jatuh = body Rapier DEBRIS, dipungut penyerang ≤ 2.2 u; diam di tempat tak terjangkau → dipindah ke node terdekat;
+    pembawa keluar (online) → jatuh (AFK = slotnya dimainkan bot, tetap membawa). Ledakan: round(250 × (1 − (r/32)²) × okklusi 3 titik),
+    melukai SEMUA orang, tanpa kredit kill (TeamManager: senjata 'c4' tidak dikreditkan); tanam/jinak +200 & statistik plants/defuses.
+    Matriks menang (+ keputusan pengguna): meledak/bertahan habis → penyerang; dijinakkan/penyerang habis sebelum tanam/waktu habis →
+    bertahan; habis bersamaan → sebelum tanam bertahan, sesudah tanam penyerang. Suara (Recipes c4Keypad/c4Beep/c4DefuseClick/
+    c4Explosion), beep makin rapat + LED berkedip, model C4 prosedural (punggung pembawa, lantai, viewmodel).
+  - HUD/menu: skor "R# · waktu" → "C4 A 00:32" merah berdenyut, prompt tahan E + bar progres merah-emas, slot "6 C4" pembawa, radar huruf
+    A/B + C4 (tertanam semua, jatuh penyerang) + cincin pembawa, banner peran tiap ronde & alasan selesai, killfeed [C4], layar hasil
+    kolom Tanam/Jinak; kartu mode di Atur Match & room (memilih Bomb Mission memilih Meridian; map lain → kembali TDM).
+  - Online: bit perintah `H.USE` (32); host `take()` → `e.bombUse` + kunci; event reliable 'bomb' (`BombNet`, `parseBombNet`) saat berubah
+    + tiap 0.5 s; 'mstate' membawa alasan ronde; baris 'stats' + plants/defuses; cadangan pindah host `MatchSave.bomb/carried` + statistik
+    12 angka (cadangan lama 10 tetap sah), `BombSystem.restore`.
+  - Bot (`game/BombBots.ts`, 4 Hz, host/offline): rencana ronde 40% A / 40% B / 20% split, pembawa → titik tanam & menahan "pakai",
+    pengawal & 1 penyusup, bertahan 2-2-1; C4 jatuh → penyerang terdekat memungut; tertanam → penyerang jaga, bertahan merebut & bot
+    terdekat menjinakkan (menghadap C4). `TacticalBot.objective/setObjective` (tujuan menggantikan lane saat PATROL; ENGAGE membatalkan).
+  - Papan peringkat: `supabase/accounts.sql` + kolom plants/defuses, map 'meridian', mode 'bomb', skor ≤ 125·kill + 50·assist +
+    200·(tanam + jinak), `mr_bomb`, papan 'wins_meridian', `submit_match` + p_plants/p_defuses (bawaan 0; versi lama di-drop) — kiriman
+    TDM/Eliminasi tetap 17 argumen (cocok dengan fungsi lama sampai pengguna menjalankan ulang SQL; map/mode baru butuh SQL baru).
+  - Terukur sebelum denah x2 (Playwright): visual 40 draw call / ±83k segitiga, muat ±400 ms; TDM bot 120 s 64 kill, 0 macet; Bomb Mission bot penuh
+    8 ronde (Merah 5–3), tukar sisi ronde 5 benar, bot menanam A & B, menjinakkan, memungut C4; pemain: tombol 6 + klik / tahan E tanam,
+    lepas = batal, meledak (musuh 6 u mati), jinak hanya saat menghadap; online 2 jendela: teman menanam lewat USE (0 koreksi), host
+    menjinakkan, banner & timer klien benar; 0 error konsol. Skrip lokal (scratchpad, bisa hilang): pw/mv_look.js, mv_stuck.js,
+    bomb_bots.js, bomb_player.js, bomb_online.js, bomb_menu.js.
+
 - Map Boston (permintaan pengguna 2026-11-26; dokumen pengguna "IDE MAP BARU/Stud Warfare — Blueprint Map Boston.pdf" + 4 gambar Gemini,
   lokal saja, jangan di-commit; adaptasi lantai 3 & 4 kantor pengguna sendiri — layout orisinal, bukan replika map game lain):
   - `src/world/maps/boston/`: `layout.ts` (data ditulis dalam koordinat DOKUMEN — Utara = +Z, Biru L4 di Utara — lalu DIPUTAR 180°
@@ -836,7 +900,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 506 test Vitest / 33 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 546 test Vitest / 35 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -855,7 +919,10 @@
   (tests/throw.test.ts), akun & leaderboard: aturan murni + cermin SQL (tests/accounts.test.ts) & keamanan SQL di Postgres asli PGlite
   (tests/accountsSql.test.ts), kehalusan lari: lantai datar tanpa macet, tangga Boston naik/turun konstan, batas udara saat lepas
   tanah, rekan setim tembus / musuh menahan (tests/runSmooth.test.ts), tipografi: CSS = TS, font sistem saja (tests/fonts.test.ts), bintang kill: nyawa/mati/ronde/lanjut match, aturan event kill,
-  maks 10 + "+N", bentuk bintang, setelan (tests/killStars.test.ts)) hijau;
+  maks 10 + "+N", bentuk bintang, setelan (tests/killStars.test.ts), Meridian Vault: balok tanpa tumpang-tindih, pita cover, tangga,
+  lubang tertutup, spawn & zona bom, nav (node bebas, pijakan, edge, validate, nearest per lantai, lane), garis pandang spawn = 0
+  (tests/meridian.test.ts), Bomb Mission: test vector dokumen §8.3, matriks menang, giliran pembawa, syarat jinak, BombNet, cadangan,
+  mode/setelan/tombol 6 (tests/bombMission.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

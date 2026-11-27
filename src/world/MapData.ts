@@ -15,7 +15,12 @@ export type OutdoorStyle = 'steel' | 'fence' | 'concrete' | 'timber' | 'rubber' 
   | OfficeStyle;
 export type OfficeStyle = 'o_ground' | 'o_slab' | 'o_roof' | 'o_ext' | 'o_beam' | 'o_window' | 'o_wall' | 'o_conc' | 'o_glass' | 'o_frame'
   | 'o_rail' | 'o_col' | 'o_hbeam' | 'o_wood' | 'o_marble' | 'o_locker' | 'o_counter' | 'o_part' | 'o_desk' | 'o_tv' | 'o_cab'
-  | 'o_crateB' | 'o_crateR' | 'o_sofaO' | 'o_sofaY' | 'o_sofaG' | 'o_planter' | 'o_store' | 'o_kiosk';
+  | 'o_crateB' | 'o_crateR' | 'o_sofaO' | 'o_sofaY' | 'o_sofaG' | 'o_planter' | 'o_store' | 'o_kiosk'
+  // bank 2 tingkat (Meridian Vault): label permukaan untuk builder map itu sendiri
+  | MeridianStyle;
+export type MeridianStyle = 'm_ground' | 'm_ext' | 'm_ceil' | 'm_mass' | 'm_wall' | 'm_lintel' | 'm_sill' | 'm_barr' | 'm_barrB'
+  | 'm_crateR' | 'm_crateG' | 'm_crateB' | 'm_desk' | 'm_kiosk' | 'm_vault' | 'm_vdoor' | 'm_deposit' | 'm_plat' | 'm_case' | 'm_cctv'
+  | 'm_slab' | 'm_stage' | 'm_rail' | 'm_col';
 
 /** rotY (opsional, radian): putaran balok di PUSATNYA terhadap sumbu Y (konvensi three.js). x/z = rentang LOKAL sebelum diputar. */
 export interface Row { id: string; cat: Cat; x: [number, number]; y: [number, number]; z: [number, number]; m: Mirror; style: Style; rotY?: number }

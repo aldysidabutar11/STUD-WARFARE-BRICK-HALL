@@ -15,6 +15,8 @@ import type { Settings } from './Settings';
 import type { DroppedWeapon } from '../combat/WeaponDrops';
 import { Crosshair } from './Crosshair';
 import { KillStars, killEarnsStar } from './KillStars';
+import { BOMB_CFG } from '../config/bombConfig';
+import { isRoundMode } from '../game/MatchManager';
 
 /** Nama pemain dari jaringan → teks aman di innerHTML (nama juga sudah dibersihkan cleanName). */
 const escHtml = (t: string) => t.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -25,7 +27,7 @@ const fmtTime = (s: number) => { const m = Math.floor(s / 60), r = Math.floor(s 
 const MODE_LABEL: Record<string, string> = { AUTO: 'AUTO', SINGLE: 'SINGLE', BURST2: 'BURST', BURST3: 'BURST' };
 const _v = new THREE.Vector3();
 
-export const weaponLabel = (w: KillWeapon) => w === 'k400' ? 'K-400' : w === 'fall' ? 'jatuh' : w === 'melee' ? 'Pukul'
+export const weaponLabel = (w: KillWeapon) => w === 'k400' ? 'K-400' : w === 'c4' ? 'C4' : w === 'fall' ? 'jatuh' : w === 'melee' ? 'Pukul'
   : w === 'knife' ? 'Pisau'
   : isMeleeId(w) ? MELEES[w].name
   : WEAPONS[w as keyof typeof WEAPONS]?.name ?? w;
@@ -91,7 +93,7 @@ export class Hud {
   private center = h('div', 'center-msg');
   private prompt = h('div', 'prompt');
   /** Bar slot senjata (1 utama · 2 pistol · 3 pisau · 4 granat · 5 flashbang), slot aktif menyala. */
-  private slots = h('div', 'slots', '<div class="s"><b></b><span></span></div><div class="s"><b></b><span></span></div><div class="s"><b></b><span>Pisau</span></div><div class="s"><b></b><span>K-400</span></div><div class="s"><b></b><span>Flash</span></div>');
+  private slots = h('div', 'slots', '<div class="s"><b></b><span></span></div><div class="s"><b></b><span></span></div><div class="s"><b></b><span>Pisau</span></div><div class="s"><b></b><span>K-400</span></div><div class="s"><b></b><span>Flash</span></div><div class="s c4" style="display:none"><b></b><span>C4</span></div>');
   /** Flashbang: layar putih + "bayangan" gambar terakhir (afterimage) yang memudar (combat/Flash.flashWhite). */
   private readonly flashImg = document.createElement('canvas');
   private readonly flashEl = h('div', 'flashbang', '');
@@ -308,6 +310,14 @@ export class Hud {
       fill(3, b.grenade, `K-400 ×${v.grenades}`, grenadeHeld, v.grenades < 1);
       fill(4, b.flash, `Flash ×${v.flashes}`, flashHeld, v.flashes < 1);
     });
+    // Bomb Mission: slot 6 C4 hanya untuk pembawa (menyala saat dipegang)
+    const carrying = ctx.match.mode === 'bomb' && ctx.bomb.state === 'carried' && ctx.bomb.carrier === v.id && v.alive;
+    this.set('c4slot', `${carrying}|${p.c4Held}|${b.bomb}`, () => {
+      const d = this.slots.children[5] as HTMLElement;
+      d.style.display = carrying ? '' : 'none';
+      (d.children[0] as HTMLElement).textContent = keyLabel(b.bomb);
+      d.className = 's c4' + (carrying && p.c4Held && v === p ? ' on' : '');
+    });
     this.set('md', MODE_LABEL[w.mode], () => (this.ammo.querySelector('.mode')!.textContent = MODE_LABEL[w.mode]));
     this.set('op', w.scope.name, () => (this.ammo.querySelector('.optic')!.textContent = w.scope.name));
     this.set('gr', `${v.id}|${v.grenades}|${v.flashes}`, () => {
@@ -330,12 +340,15 @@ export class Hud {
       this.ringArc.setAttribute('stroke', left < 1 ? '#ff2a2a' : '#f4efe6');
     }
     // bar progres reload di bawah crosshair
-    const rp = p.alive ? p.weapon.reloadTotal : -1;   // shotgun: seluruh pengisian selongsong
+    const bt = ctx.match.mode === 'bomb' ? (ctx.bomb.planter === p.id ? ctx.bomb.plantT / BOMB_CFG.c4.plantTime
+      : ctx.bomb.defuser === p.id ? ctx.bomb.defuseT / BOMB_CFG.c4.defuseTime : -1) : -1;
+    const rp = !p.alive ? -1 : bt >= 0 ? Math.min(1, bt) : p.weapon.reloadTotal;   // shotgun: seluruh pengisian selongsong; bom: progres tanam/jinak
+    this.rbar.classList.toggle('bomb', bt >= 0);
     this.rbar.classList.toggle('on', rp >= 0);
     if (rp >= 0) (this.rbar.firstChild as HTMLElement).style.width = `${(rp * 100).toFixed(0)}%`;
     // pesan tengah: respawn / perlindungan / menonton
     const st = ctx.match.state;
-    const msg = !p.alive ? (st === 'PLAYING' && ctx.match.mode !== 'elim' ? `Respawn dalam ${Math.max(1, Math.ceil(p.respawnT))}...` : '')
+    const msg = !p.alive ? (st === 'PLAYING' && !isRoundMode(ctx.match.mode) ? `Respawn dalam ${Math.max(1, Math.ceil(p.respawnT))}...` : '')
       : p.protectT > 0 ? 'Terlindungi' : '';
     this.set('msg', msg, () => (this.center.textContent = msg));
     // prompt: ambil/tukar senjata tim > pesan singkat > amunisi
@@ -343,7 +356,8 @@ export class Hud {
     if (this.toastT > 0) this.toastT -= dt;
     const d = p.alive ? this.pickup : null;
     const pk = keyLabel(ctx.settings.binds.pickup) + (ctx.input.padActive ? ' / X' : '');
-    const pr = d ? `[${pk}] ${w.hasPrimary ? 'Tukar dengan' : 'Ambil'} ${WEAPONS[d.weapon].name} · ${SCOPES[d.scope].name} (${d.ammo}/${d.reserve})`
+    const bp = this.bombPrompt(p);
+    const pr = bp ? bp : d ? `[${pk}] ${w.hasPrimary ? 'Tukar dengan' : 'Ambil'} ${WEAPONS[d.weapon].name} · ${SCOPES[d.scope].name} (${d.ammo}/${d.reserve})`
       : this.toastT > 0 ? this.toastText
       : !p.alive || !gunHeld || w.reloading ? ''
       : w.ammo === 0 && w.reserve === 0 ? (w.slot === 'ar' ? `Amunisi habis — [${keyLabel(ctx.settings.binds.pistol)}] pistol · [${mk}] pukul` : `Amunisi habis — [${mk}] pukul`)
@@ -388,20 +402,36 @@ export class Hud {
     });
   }
 
-  /** Skor & waktu per mode: TDM "BIRU 12 — 9 MERAH · 07:32"; Eliminasi + nomor ronde & pip hidup; Latihan. */
+  /** Bomb Mission: teks prompt tanam / jinak (null = tidak ada). */
+  private bombPrompt(p: Entity): string | null {
+    const b = ctx.bomb;
+    if (ctx.match.mode !== 'bomb' || !p.alive || ctx.match.state !== 'PLAYING') return null;
+    const ek = keyLabel(ctx.settings.binds.pickup), C4 = BOMB_CFG.c4;
+    if (b.planter === p.id) return `MENANAM BOM… ${Math.max(0, C4.plantTime - b.plantT).toFixed(1)} s`;
+    if (b.defuser === p.id) return `MENJINAKKAN BOM… ${Math.max(0, C4.defuseTime - b.defuseT).toFixed(1)} s`;
+    const site = b.canPlant(p);
+    if (site) return `Tahan [${ek}] untuk menanam bom di ${site} (${C4.plantTime.toFixed(1)} s)`;
+    if (b.canDefuse(p)) return `Tahan [${ek}] untuk menjinakkan bom (${C4.defuseTime.toFixed(1)} s)`;
+    if (b.state === 'planted' && p.team !== b.attackers && b.defuser >= 0) return 'Rekan sedang menjinakkan bom';
+    return null;
+  }
+
+  /** Skor & waktu per mode: TDM "BIRU 12 — 9 MERAH · 07:32"; Eliminasi + nomor ronde & pip hidup; Bomb Mission + timer C4; Latihan. */
   private updateScore() {
     const m = ctx.match, s = ctx.teams.scores, tl = m.timeLeft, mode = m.mode;
-    this.set('mode', mode, () => { this.score.classList.toggle('practice', mode === 'practice'); this.pips.style.display = mode === 'elim' ? 'flex' : 'none'; });
+    this.set('mode', mode, () => { this.score.classList.toggle('practice', mode === 'practice'); this.pips.style.display = isRoundMode(mode) ? 'flex' : 'none'; });
     if (mode === 'practice') {
       const p = ctx.player, k = p ? p.stats.kills : 0, acc = p && p.stats.shots ? Math.round(100 * p.stats.hits / p.stats.shots) : 0;
       this.set('prac', `${k}|${acc}`, () => (this.score.children[0].textContent = `LATIHAN · ${k} dummy jatuh · akurasi ${acc}%`));
     } else {
       this.set('sb', s.blue, () => (this.score.children[0].textContent = `BIRU ${s.blue}`));
       this.set('sr', s.red, () => (this.score.children[2].textContent = `${s.red} MERAH`));
-      const tstr = (mode === 'elim' ? `R${m.round} · ` : '') + fmtTime(Math.ceil(tl));
+      const planted = mode === 'bomb' && ctx.bomb.state === 'planted';
+      const tstr = (isRoundMode(mode) ? `R${m.round} · ` : '') + (planted ? `C4 ${ctx.bomb.site ?? ''} ${fmtTime(Math.ceil(ctx.bomb.fuseLeft))}` : fmtTime(Math.ceil(tl)));
       this.set('tl', tstr, () => (this.score.children[4].textContent = tstr));
+      this.set('c4live', planted, () => this.score.classList.toggle('c4', planted));
     }
-    if (mode === 'elim') {
+    if (isRoundMode(mode)) {
       let ab = 0, nb = 0, ar = 0, nr = 0;
       for (const e of ctx.entities) { if (e.team === 'blue') { nb++; if (e.alive) ab++; } else { nr++; if (e.alive) ar++; } }
       this.set('pips', `${ab}/${nb}|${ar}/${nr}`, () => {
@@ -460,7 +490,7 @@ export class Hud {
         `<td>${e.stats.score}</td><td>${acc}%</td><td>${hs}%</td>${ping(e)}</tr>`;
     }).join('');
     const head = `<tr><th>Nama</th><th>K</th><th>D</th><th>A</th><th>Skor</th><th>Akurasi</th><th>% HS</th>${online ? '<th>Ping</th>' : ''}</tr>`;
-    const unit = ctx.match.mode === 'elim' ? ' ronde' : '';
+    const unit = isRoundMode(ctx.match.mode) ? ' ronde' : '';
     this.board.innerHTML = `<h3 class="b">BIRU — ${ctx.teams.scores.blue}${unit}</h3><table>${head}${rows('blue')}</table>` +
       `<h3 class="r">MERAH — ${ctx.teams.scores.red}${unit}</h3><table>${head}${rows('red')}</table>`;
   }

@@ -25,7 +25,7 @@ describe('Registry & ganti map (murni)', () => {
     expect(Object.keys(MAPS).sort()).toEqual([...MAP_IDS].sort());
     for (const id of MAP_IDS) expect(MAPS[id].id).toBe(id);
     expect(mapInfo().map(m => m.id)).toEqual([...MAP_IDS]);
-    expect(mapInfo().map(m => m.name)).toEqual(['Brick Hall', 'Steel Yard', 'Boston']);
+    expect(mapInfo().map(m => m.name)).toEqual(['Brick Hall', 'Steel Yard', 'Boston', 'Meridian Vault']);
     for (const m of mapInfo()) expect(m.desc.length).toBeGreaterThan(10);
   });
   it('bawaan Brick Hall; setCurrentMap mengganti map aktif; id tak dikenal ditolak', () => {
@@ -51,7 +51,8 @@ describe('Registry & ganti map (murni)', () => {
       const inB = (x: number, z: number) => x > d.bounds.x[0] && x < d.bounds.x[1] && z > d.bounds.z[0] && z < d.bounds.z[1];
       for (const team of ['blue', 'red'] as const) {
         const all = [...d.spawnSlots[team].upper, ...d.spawnSlots[team].ground];
-        expect(all.length, `${d.id} ${team}`).toBe(10);
+        // Meridian Vault: map Bomb Mission 5v5 → 5 slot per kelompok (dokumen §5); map TDM lain 10
+        expect(all.length, `${d.id} ${team}`).toBe(d.id === 'meridian' ? 5 : 10);
         for (const [x, , z] of all) { expect(inB(x, z)).toBe(true); expect(Math.sign(z)).toBe(team === 'blue' ? -1 : 1); }
       }
       expect(d.practice.length).toBe(12);

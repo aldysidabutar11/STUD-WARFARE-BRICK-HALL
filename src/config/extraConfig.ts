@@ -167,6 +167,9 @@ export const XCFG = {
     // Boston (map ketiga, asimetris 2 lantai; dokumen pengguna §7): Veranda L4, Garden Lounge tengah L3, flank Tangga Cokelat /
     // Servis, Jalur Sofa Timur — rute Biru (L4) & Merah (L3) berbeda per jalur (maps/boston/nav.ts)
     lanesBoston: { veranda: 0.35, lounge: 0.30, flank: 0.20, sofa: 0.15 },
+    // Meridian Vault (TDM/Eliminasi; Bomb Mission memakai rencana ronde sendiri): West Long → A, Mid bertingkat, North Upper → balkon
+    // B, jalur bawah B lewat terowongan
+    lanesMeridian: { west: 0.30, mid: 0.25, north: 0.25, b: 0.20 },
     // granat bot (§11.8). Lempar 34 u/s (2026-11-26, GDD 24): jarak maks 24 → 32 u; batas masak rumus §11.8 2.0 → 2.8 s — di 34 u/s
     // granat tiba lebih cepat & menggelinding jauh melewati sasaran sebelum meledak (terukur 3 map, 8–24 u: kena 77–81% → 40–60%,
     // damage rata 62–72 → 37–55); 2.8 = "meledak sesaat (0.4 s) setelah tiba" seperti maksud GDD → kena 91–98%, damage rata 71–82

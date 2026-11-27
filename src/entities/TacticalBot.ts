@@ -30,6 +30,8 @@ import { flashWhite, type FlashExposure, type NadeKind } from '../combat/Flash';
 const B = XCFG.bots, H = XCFG.bots.human;
 const D2R = THREE.MathUtils.degToRad, R2D = THREE.MathUtils.radToDeg;
 const EYE = CFG.player.eyeStand, EYE_C = CFG.player.eyeCrouch;
+/** Tujuan bot Bomb Mission (game/BombBots.ts). */
+export interface BotObjective { key: string; node: number; point: THREE.Vector3 | null; use: boolean; look: THREE.Vector3 | null }
 export type BotState = 'SPAWN' | 'PATROL' | 'ENGAGE' | 'TAKE_COVER' | 'RELOAD' | 'INVESTIGATE' | 'THROW_GRENADE' | 'EVADE' | 'DEAD';
 type FightPhase = 'go' | 'hide' | 'peek';
 
@@ -64,6 +66,9 @@ export class TacticalBot {
   /** Id jalur dari MapDef.lanes ('' = belum dibagi → laneRoute memakai jalur pertama map). */
   lane: Lane = '';
   private route: string[] = [];
+  /** Bomb Mission (game/BombBots.ts): tujuan dari otak tim — node, titik akhir (didatangi lurus setelah node), "pakai" (tanam /
+   *  jinak) saat tiba, arah pandang paksa (menjinakkan: menghadap C4). key berubah → jalur dihitung ulang. null = jalur lane biasa. */
+  objective: BotObjective | null = null;
   private routeIdx = 0;
   private exploreT = 0;
   // persepsi & memori
@@ -308,9 +313,24 @@ export class TacticalBot {
   }
 
   // ─────────────────────────── FSM (10 Hz)
+  /** Pasang / ganti tujuan Bomb Mission (otak tim). */
+  setObjective(o: BotObjective | null) {
+    const same = (this.objective?.key ?? '') === (o?.key ?? '');
+    this.objective = o;
+    if (!o) { this.e.bombUse = false; return; }
+    if (!same && (this.state === 'PATROL' || this.state === 'SPAWN')) this.goToNode(o.node);
+  }
+  private thinkObjective() {
+    const o = this.objective!, e = this.e;
+    if (this.goal !== o.node) this.goToNode(o.node);
+    const arrived = this.pathDone() && (!o.point || Math.hypot(e.pos.x - o.point.x, e.pos.z - o.point.z) < (o.use ? 1.4 : 1.0));
+    e.bombUse = o.use && arrived;
+  }
+
   think() {
     const e = this.e, now = ctx.time;
-    if (!e.alive) { this.set('DEAD'); return; }
+    if (!e.alive) { this.set('DEAD'); e.bombUse = false; return; }
+    if (this.state !== 'PATROL') e.bombUse = false;
     this.ensureNodeArrays();
     ctx.directors[e.team].deliver(now, ctx.entities, ctx.nav);
     this.perceive();
@@ -324,8 +344,9 @@ export class TacticalBot {
         if (this.stateT > rand(B.spawnIdle[0], B.spawnIdle[1])) { this.lane = ctx.directors[e.team].assign(e); this.startRoute(); this.set('PATROL'); }
         break;
       case 'PATROL':
-        if (this.visible) { this.enterEngage(); break; }
-        if (this.reactUnseen(now)) break;
+        if (this.visible) { this.enterEngage(); e.bombUse = false; break; }
+        if (this.reactUnseen(now)) { e.bombUse = false; break; }
+        if (this.objective) { this.thinkObjective(); break; }      // Bomb Mission: fokus tujuan tim (tanpa investigasi suara)
         if (heardRecent) { this.investigate.copy(this.heardAt); this.goTo(this.investigate); this.set('INVESTIGATE'); break; }
         if (e.weapon.ammo < e.weapon.def.magSize * 0.35 && e.weapon.reserve > 0) e.weapon.startReload();
         if (this.pathDone()) {
@@ -578,6 +599,7 @@ export class TacticalBot {
         break;
     }
     if (this.drop) { this.lookFast = true; this.lookAlongPath(); return; }
+    if (this.state === 'PATROL' && this.objective?.look && this.pathDone()) { this.lookFast = true; this.lookP.copy(this.objective.look); return; }
     // waspada (kena tembak / peluru lewat / callout): menoleh cepat ke sana
     if (now - this.alertT < H.patrol.alertHold) { this.lookFast = true; this.lookP.copy(this.alertAt); this.lookP.y += EYE; return; }
     if (now < this.glanceUntil) return;                                   // sedang melirik sudut
@@ -649,6 +671,7 @@ export class TacticalBot {
 
   // ─────────────────────────── rute & path
   private startRoute() {
+    if (this.objective) { this.route = []; this.routeIdx = 0; this.exploreT = 0; this.goToNode(this.objective.node); return; }
     this.route = laneRoute(this.lane, this.e.team === 'blue' ? 'S' : 'N', this.e.pos.x);
     this.routeIdx = 0; this.exploreT = 0;
     this.nextRouteNode();
@@ -888,6 +911,12 @@ export class TacticalBot {
     switch (this.state) {
       case 'PATROL': case 'INVESTIGATE': case 'TAKE_COVER': {
         if (this.state === 'PATROL' && this.pauseT > 0) { this.pauseT -= dt; break; }   // berhenti cek persimpangan
+        const o = this.objective;
+        if (this.state === 'PATROL' && o?.point && this.pathDone()) {
+          const dx = o.point.x - e.pos.x, dz = o.point.z - e.pos.z, l = Math.hypot(dx, dz);
+          if (l > 0.8) _d.set(dx / l, 0, dz / l);
+          break;
+        }
         const r = this.follow(_d); jump = r.jump; sprint = r.sprint; break;
       }
       case 'EVADE': {

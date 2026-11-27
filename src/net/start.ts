@@ -35,7 +35,7 @@ export function parseStart(m: Record<string, unknown>): NetStart | null {
     ents.push({ id, team: r.team === 'red' ? 'red' : 'blue', name: cleanName(String(r.name ?? '')) || 'Pemain',
       pid: typeof r.pid === 'string' ? r.pid : null, bot: !!r.bot, variant: cleanVariant(r.variant), ...cleanLoadout(r.weapon, r.scope, r.pistol, r.pscope, r.melee) });
   }
-  const opts: MatchOptions = { mode: o.mode === 'elim' ? 'elim' : 'tdm', scoreLimit: lim(o.scoreLimit, 50, 1, 999),
+  const opts: MatchOptions = { mode: o.mode === 'elim' ? 'elim' : o.mode === 'bomb' ? 'bomb' : 'tdm', scoreLimit: lim(o.scoreLimit, 50, 1, 999),
     timeLimit: lim(o.timeLimit, 600, 30, 7200), roundsToWin: lim(o.roundsToWin, 5, 1, 15) };
   const resume = m.resume === undefined || m.resume === null ? undefined : parseSave(m.resume) ?? undefined;
   return { seed: num(m.seed, 1) >>> 0, opts, ents, map: isKnownMap(m.map) ? m.map : BASE_MAP, ...(resume ? { resume } : {}) };

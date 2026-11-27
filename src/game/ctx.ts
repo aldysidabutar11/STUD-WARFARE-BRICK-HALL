@@ -51,6 +51,8 @@ export interface Ctx {
   drops: WeaponDrops;
   /** Panel kaca destruktibel map aktif (Boston). */
   breakables: Breakables;
+  /** Bomb Mission: C4 (pembawa, jatuh, tanam, jinak, ledak). */
+  bomb: import('../combat/C4Bomb').BombSystem;
   settings: Settings;
   time: number;          // waktu game (detik, ikut timeScale)
   fixedIndex: number;    // indeks fixed step

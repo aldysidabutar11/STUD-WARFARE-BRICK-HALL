@@ -1,5 +1,6 @@
 // src/entities/Viewmodel.ts — lengan + senjata FPS di scene terpisah (GDD §9.1, §7.4)
 import * as THREE from 'three';
+import { c4Model } from '../combat/C4Bomb';
 import { XCFG } from '../config/extraConfig';
 import { SCOPES, type ScopeId, type WeaponId } from '../config/weaponsData';
 import { MELEE_SHAPE, VM_SCALE, VM_WEAPON_MATERIAL, createOpticMesh, flashbangModel, grenadeModel, knifeModel, meleeModel, weaponModel,
@@ -116,6 +117,9 @@ export class Viewmodel {
     scene.add(this.root);
     this.root.add(this.pivot);
     this.pivot.add(this.rifle, this.knifeRig, this.nadeRig);
+    // Bomb Mission: C4 di tangan (tombol 6 / saat menanam) — senjata disimpan
+    const c4 = c4Model().group; c4.scale.setScalar(0.3); c4.position.set(-0.12, 0, 0);
+    this.bombRig.add(c4); this.bombRig.visible = false; this.pivot.add(this.bombRig);
     this.gun = new THREE.Mesh(new THREE.BufferGeometry(), VM_WEAPON_MATERIAL);
     this.gun.scale.setScalar(VM_SCALE);
     this.rifle.add(this.gun);
@@ -303,7 +307,13 @@ export class Viewmodel {
     const held = s.held;
     const nadeHeld = held === 'grenade' || held === 'flash', gunHeld = held === 'ar' || held === 'pistol';
     const pistol = gunHeld && !!this.model?.pistol;
-    this.rifle.visible = gunHeld; this.knifeRig.visible = held === 'knife'; this.nadeRig.visible = nadeHeld;
+    this.rifle.visible = gunHeld && !this.bombOn; this.knifeRig.visible = held === 'knife' && !this.bombOn; this.nadeRig.visible = nadeHeld && !this.bombOn;
+    this.bombRig.visible = this.bombOn;
+    if (this.bombOn) {                         // dipegang di depan kanan bawah; saat menanam turun ke lantai & miring
+      const k = this.bombPlant;
+      this.bombRig.position.set(0.08 - k * 0.05, -0.2 - k * 0.2, -0.4 - k * 0.06);
+      this.bombRig.rotation.set(0.35 + k * 0.55, -0.45 + k * 0.3, 0.1);
+    }
     if (nadeHeld && this.nadeMesh) { const g = held === 'flash' ? flashbangModel() : grenadeModel(); if (this.nadeMesh.geometry !== g) this.nadeMesh.geometry = g; }
     this.sprintT = damp(this.sprintT, s.sprint ? 1 : 0, 14, dt);
     // bob mengikuti irama langkah (fase PlayerController bila ada → sinkron suara langkah & ayunan kamera); memudar halus
@@ -453,4 +463,9 @@ export class Viewmodel {
   }
 
   setVisible(v: boolean) { this.root.visible = v; }
+  /** Bomb Mission: tampilkan C4 di tangan (plant = 0…1 progres menanam). */
+  setBomb(on: boolean, plant = 0) { this.bombOn = on; this.bombPlant = plant; }
+  private readonly bombRig = new THREE.Group();
+  private bombOn = false;
+  private bombPlant = 0;
 }

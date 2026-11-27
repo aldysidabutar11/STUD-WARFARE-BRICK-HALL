@@ -57,7 +57,10 @@ import { StatsOverlay } from '../debug/StatsOverlay';
 import { DebugPanel } from '../debug/DebugPanel';
 import { PerfLogger } from '../debug/PerfLogger';
 import { TeamManager } from './TeamManager';
-import { MatchManager, type GameMode, type MatchOptions } from './MatchManager';
+import { MatchManager, isRoundMode, type GameMode, type MatchOptions } from './MatchManager';
+import { BombSystem } from '../combat/C4Bomb';
+import { BombBots } from './BombBots';
+import { BOMB_CFG } from '../config/bombConfig';
 import { SpawnSystem } from './SpawnSystem';
 import { BotDirector } from './BotDirector';
 import { Killcam } from './Killcam';
@@ -200,6 +203,8 @@ export class Game {
   private rbAt = -1e9;
   private menuT = 0;
   private slowmoEnd = 0;
+  /** Bomb Mission: otak tim bot. */
+  private readonly bombBots = new BombBots();
   private stress: Stress | null = null;
   private dummies: Entity[] = [];
   private movers = new Map<Entity, number>();
@@ -261,6 +266,7 @@ export class Game {
     ctx.grenades.noticed = (bot, id) => bot.bot?.flashNoticed(id) ?? false;
     engine.scene.add(this.arc.group);
     ctx.drops = new WeaponDrops(engine.scene, engine.preset.shadowMap > 0);
+    ctx.bomb = new BombSystem(engine.scene);
     ctx.teams = new TeamManager();
     ctx.match = new MatchManager();
     ctx.spawns = new SpawnSystem();
@@ -423,7 +429,7 @@ export class Game {
     setTimeout(warmNext, 400);
     // ?autostart=1|tdm|elim|practice untuk uji otomatis (tanpa pointer lock)
     const auto = new URLSearchParams(location.search).get('autostart');
-    if (auto !== null) { this.autoTest = true; this.play(auto === 'elim' ? 'elim' : auto === 'practice' ? 'practice' : 'tdm'); }
+    if (auto !== null) { this.autoTest = true; this.play(auto === 'elim' ? 'elim' : auto === 'bomb' ? 'bomb' : auto === 'practice' ? 'practice' : 'tdm'); }
     // link room (…?room=KODE): buka Main Bareng dengan kode terisi → isi nama lalu Gabung
     const roomLink = new URLSearchParams(location.search).get('room');
     if (roomLink !== null && auto === null) this.menus.showLobbyHome(() => this.menus.showMain(), roomLink);
@@ -479,7 +485,7 @@ export class Game {
     const r = buildReport({ matchKey: st.seed, map: this.mapId ?? '', mode: ctx.match.mode, won: ctx.match.winner === p.team, mvp: mvp === p,
       humans: st.ents.filter(e => !e.bot).length, duration: ctx.match.playedT, score: s.score, kills: s.kills, deaths: s.deaths,
       assists: s.assists, hsKills: s.hsKills, knifeKills: this.mlog.knife, nadeKills: this.mlog.nade, flashAssists: this.mlog.flash,
-      bestStreak: s.bestStreak, longestKill: this.mlog.longest });
+      bestStreak: s.bestStreak, longestKill: this.mlog.longest, plants: s.plants, defuses: s.defuses });
     if (!r) { note('Match ini tidak masuk peringkat (perlu minimal 2 pemain manusia & 30 detik bermain).'); return; }
     this.lbSent = st.seed;
     note('Menyimpan hasil ke papan peringkat…');
@@ -672,7 +678,9 @@ export class Game {
    * Map berbeda: offline → layar "Memuat map…" lalu mulai; online → dimuat sinkron (urutan pesan host tetap terjaga).
    */
   play(mode: GameMode = this.settings.mode, roster: MatchRoster | null = null, net: NetStart | null = null, mapId?: MapId) {
-    const want = mapId ?? (net ? this.loadedId ?? currentMap().id : this.defaultMapId());
+    const want0 = mapId ?? (net ? this.loadedId ?? currentMap().id : this.defaultMapId());
+    // Bomb Mission hanya di map yang punya zona bom (Meridian Vault)
+    const want: MapId = mode === 'bomb' && !MAPS[want0].bombSites ? 'meridian' : want0;
     if (want !== this.loadedId) {
       if (!net) { this.playAfterLoad(mode, roster, want); return; }
       if (this.inMatch) this.endMatch();
@@ -712,7 +720,7 @@ export class Game {
     ctx.audio.unlock();
     this.menus.hide();
     ctx.hud.clearFeed(); ctx.hud.showBanner('', '#fff');
-    this.killcam.reset(); this.minimap.reset(); this.announcer.reset(true);
+    this.killcam.reset(); this.minimap.reset(); this.announcer.reset(true); this.bombBots.reset();
     if (!net?.resume) ctx.hud.killStars.reset();   // lanjut match (pindah host): bintang + pola headshot nyawa ini tetap
     this.botChat.reset(); this.chat.close(false); this.chat.closeQuick();
     this.stopSpectate();
@@ -804,7 +812,8 @@ export class Game {
     this.killcam.stop(); this.stopSpectate();
     this.endNet();
     this.disposeEntities();
-    ctx.grenades.clear(); ctx.drops.clear(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.props.reset();
+    ctx.grenades.clear(); ctx.drops.clear(); ctx.vfx.clear(); ctx.deathFx.clear(); ctx.props.reset(); ctx.bomb.reset();
+    ctx.spawns.groupOf = t => t;
     ctx.match.set('MENU');
     ctx.hud.setVisible(false);
     document.body.classList.remove('dead');
@@ -994,7 +1003,9 @@ export class Game {
     if (!chk.ok) { if (fromResults) this.menus.showRoom(chk.reason); return; }
     const L = r.settings;
     const cur = this.mapId;
-    const map = L.map === 'random' && fromResults && cur ? cur : pickMap(L.map, Math.random);
+    // Bomb Mission hanya di map berzona bom (Meridian Vault)
+    const map0 = L.map === 'random' && fromResults && cur ? cur : pickMap(L.map, Math.random);
+    const map: MapId = L.mode === 'bomb' && !MAPS[map0].bombSites ? 'meridian' : map0;
     Object.assign(this.settings, { mode: L.mode, scoreLimit: L.scoreLimit, timeLimit: L.timeLimit, roundsToWin: L.roundsToWin,
       difficulty: L.difficulty, map: L.map });
     saveSettings(this.settings);
@@ -1109,6 +1120,7 @@ export class Game {
     const name = currentMap().name;
     if (o.mode === 'practice') { ctx.hud.toast(`Latihan Menembak · ${name}`); return; }
     if (ctx.match.state !== 'COUNTDOWN') return;
+    if (o.mode === 'bomb') { this.bombRoundBanner(1, name.toUpperCase()); return; }
     ctx.hud.showBanner(name.toUpperCase(), '#f5cd30', o.mode === 'elim' ? 'ELIMINASI · RONDE 1' : `TEAM DEATHMATCH · ${o.scoreLimit} KILL`);
   }
 
@@ -1128,11 +1140,30 @@ export class Game {
       if (round > 1) ctx.hud.clearFeed();
       ctx.hud.showBanner(`RONDE ${round}`, '#f4efe6', `BIRU ${ctx.teams.scores.blue} — ${ctx.teams.scores.red} MERAH`);
     }
+    if (this.mode === 'bomb') {
+      if (ctx.player) ctx.player.c4Held = false;
+      if (round > 1) { ctx.hud.clearFeed(); this.bombRoundBanner(round); }
+    }
+  }
+
+  /** Bomb Mission: banner awal ronde — peran pemain (menyerang / bertahan) + tugasnya; ronde setelah tukar sisi ditandai. */
+  private bombRoundBanner(round: number, title = `RONDE ${round}`) {
+    const p = ctx.player, att = ctx.match.attackers, s = ctx.teams.scores;
+    const swapped = round === BOMB_CFG.match.halfTimeRound + 1 ? 'TUKAR SISI · ' : '';
+    const role = !p ? '' : p.team === att ? 'MENYERANG — tanam bom di A atau B' : 'BERTAHAN — jaga A & B, jinakkan bom';
+    ctx.hud.showBanner(title, '#f5cd30', `${swapped}${role}  ·  BIRU ${s.blue} — ${s.red} MERAH`);
   }
 
   private onRoundEnd() {
     const p = ctx.player, w = ctx.match.roundWinner, s = ctx.teams.scores;
     const win = !!p && w === p.team;
+    if (this.mode === 'bomb') {
+      const why = { detonated: 'BOM MELEDAK', defused: 'BOM DIJINAKKAN', time: 'WAKTU HABIS', elim: 'TIM LAWAN HABIS' }[ctx.match.roundReason ?? 'elim'];
+      const half = ctx.match.halftimeNow && s.blue < BOMB_CFG.match.winRounds && s.red < BOMB_CFG.match.winRounds ? '  ·  TUKAR SISI' : '';
+      ctx.hud.showBanner(win ? 'RONDE MENANG' : 'RONDE KALAH', win ? '#7dff9a' : '#ff6b5e', `${why}  ·  BIRU ${s.blue} — ${s.red} MERAH${half}`);
+      ctx.audio.playUi(R.stinger(win ? 'win' : 'lose'), 0.7);
+      return;
+    }
     ctx.hud.showBanner(w === 'draw' ? 'RONDE SERI' : win ? 'RONDE MENANG' : 'RONDE KALAH', w === 'draw' ? '#f5cd30' : win ? '#7dff9a' : '#ff6b5e',
       `BIRU ${s.blue} — ${s.red} MERAH`);
     ctx.audio.playUi(R.stinger(w === 'draw' ? 'draw' : win ? 'win' : 'lose'), 0.7);
@@ -1170,7 +1201,7 @@ export class Game {
     if (!p || !this.inMatch || ev.victimId !== p.id) return;
     const killer = ev.killerId !== p.id ? ctx.byId.get(ev.killerId) : undefined;
     if (killer && this.mode !== 'practice' && ctx.match.state === 'PLAYING')
-      this.killcam.begin(killer, p, ev.weaponId, ev.headshot, this.settings.killcam, this.mode !== 'elim');
+      this.killcam.begin(killer, p, ev.weaponId, ev.headshot, this.settings.killcam, !isRoundMode(this.mode));
   }
 
   private onPlayerSpawn() {
@@ -1904,8 +1935,11 @@ export class Game {
         const ctrlHold = inp.ctrlAllowed && inp.isDown('ControlLeft');
         it.crouch = (this.settings.crouchToggle ? this.crouchToggled : inp.actDown('crouch')) || ctrlHold;
         it.cooking = p.grenadeState === 'COOKING';
-        it.wantFire = p.weapon.holdingGun && inp.mouseDown[0] && p.meleeT < 0;
-      } else { it.ix = 0; it.iz = 0; it.jump = false; it.sprint = false; it.wantFire = false; }
+        it.wantFire = p.weapon.holdingGun && inp.mouseDown[0] && p.meleeT < 0 && !p.c4Held;
+        // Bomb Mission: tahan E (atau klik saat memegang C4) = tanam / jinakkan → gerak terkunci (sama persis di host: niat nol)
+        p.bombUse = ctx.match.mode === 'bomb' && (inp.actDown('pickup') || (p.c4Held && inp.mouseDown[0]));
+        if (ctx.bomb.lockFor(p, p.bombUse)) { it.ix = 0; it.iz = 0; it.jump = false; it.sprint = false; it.wantFire = false; }
+      } else { it.ix = 0; it.iz = 0; it.jump = false; it.sprint = false; it.wantFire = false; p.bombUse = false; }
       it.speedMult = p.moveMult; // pisau / SMG lebih cepat, sniper / LMG lebih lambat
       this.jumpLatch = false;
       it.yaw = p.yaw;
@@ -1921,6 +1955,8 @@ export class Game {
       this.movers.set(e, d);
       e.intent.ix = d; e.intent.iz = 0; e.intent.yaw = e.yaw; // Merah yaw 0: kanan = +X
     }
+    // Bomb Mission: otak tim bot (tujuan tanam / jaga / pungut / jinak) — host/offline, 4 Hz
+    if (role !== 'client' && this.inMatch && !ctx.match.locked) this.bombBots.update(dt);
     // 2. gerak bot (+ think 10 Hz bergiliran: bot ke-i pada indeks fixed step (i mod 6))
     for (const e of ctx.entities) {
       if (e.bot) {
@@ -1928,13 +1964,21 @@ export class Game {
         e.bot.fixedUpdate(dt);
       }
       if (!e.alive || e.puppet) continue;                // boneka (klien): posisi dari snapshot host
+      if (e.bot && ctx.bomb.lockFor(e, e.bombUse)) {   // bot sedang menanam / menjinakkan: diam
+        const bi = e.intent; bi.ix = 0; bi.iz = 0; bi.jump = false; bi.sprint = false; bi.wantFire = false;
+      }
       if (e.remote?.frozen && !e.bot) e.ctrl.hold();     // host: perintah remote belum tiba → ditahan (AFK/terputus: bot yang menggerakkan)
       else e.ctrl.fixedUpdate(dt, e.intent, e.weapon.adsActive);
+    }
+    // Bomb Mission (host/offline): masukan "pakai" tiap entitas → tanam / jinakkan; C4 jatuh/dipungut, sumbu, ledakan
+    if (role !== 'client' && ctx.match.mode === 'bomb') {
+      for (const e of ctx.entities) ctx.bomb.use(e, e.alive && e.bombUse, dt);
+      ctx.bomb.fixedUpdate(dt);
     }
     // 3. timer sumbu granat → world.step() → props, mayat
     ctx.grenades.fixedUpdate(dt);
     physics.world.step();
-    ctx.grenades.postStep(); ctx.drops.postStep();
+    ctx.grenades.postStep(); ctx.drops.postStep(); ctx.bomb.postStep();
     this.hostRep?.afterStep();                                              // senjata remote + snapshot 20 Hz
     if (this.clientRep && this.cmd && p) this.clientRep.afterStep(this.cmd, p);   // simpan prediksi + kirim perintah
     ctx.props.fixedUpdate(dt);
@@ -1942,7 +1986,7 @@ export class Game {
     if (this.inMatch) {
       const st = ctx.match.state;
       if (role === 'client') { for (const e of ctx.entities) if (!e.alive && e.respawnT > 0) e.respawnT -= dt; }   // tampilan saja: spawn dari host
-      else ctx.spawns.update(dt, (st === 'PLAYING' || st === 'COUNTDOWN') && ctx.match.mode !== 'elim'); // Eliminasi: tanpa respawn dalam ronde
+      else ctx.spawns.update(dt, (st === 'PLAYING' || st === 'COUNTDOWN') && !isRoundMode(ctx.match.mode)); // Eliminasi/Bomb: tanpa respawn dalam ronde
       this.killcam.record();
     }
     // regenerasi HP (opsi config, default mati)
@@ -2007,7 +2051,7 @@ export class Game {
       kcCam = !p.alive && this.killcam.controlsCamera && !ctx.debug.noclip;
       if (ctx.debug.noclip) { this.noclip(rawDt); rig.update(dt, this.noclipPos, 0, 0, 1, cam); }
       else if (kcCam) { /* kamera diatur killcam setelah animasi */ }
-      else if (!p.alive && this.mode === 'elim' && this.spectate(dt, cam)) { /* menonton rekan */ }
+      else if (!p.alive && isRoundMode(this.mode) && this.spectate(dt, cam)) { /* menonton rekan */ }
       else rig.update(dt, p.alive ? p.renderPos : this.deathCamFeet(p), p.ctrl.eyeHeight, p.ctrl.crouchT, ctx.scope.armScale(p), cam);
       cam.layers.enable(0);
       if (rig.isFpsView && !ctx.debug.noclip && !kcCam && !this.specTarget) cam.layers.disable(1); else cam.layers.enable(1);
@@ -2083,6 +2127,7 @@ export class Game {
     ctx.grenades.update(alpha);
     this.updateThrowArc(p, replay);
     ctx.drops.update(dt, alpha);
+    ctx.bomb.update(dt, alpha);
     ctx.props.update(alpha);
     ctx.deathFx.update(alpha);
     ctx.audio.updateListener(cam);
@@ -2167,7 +2212,15 @@ export class Game {
    *  Klien online: tombol yang sama dikemas ke perintah tick berikutnya (impuls dikumpulkan sampai terkirim). */
   private playerWeapon(dt: number, looking: boolean) {
     const p = ctx.player!, inp = this.input, w = p.weapon, f = this.frame;
-    const active = looking && p.alive && !ctx.match.locked && !ctx.debug.noclip;
+    // Bomb Mission: tombol 6 = pegang/simpan C4 (hanya pembawa); ganti senjata menyimpan C4; tanam/jinak mengunci senjata
+    const bombMode = ctx.match.mode === 'bomb', carrier = bombMode && ctx.bomb.state === 'carried' && ctx.bomb.carrier === p.id;
+    if (!carrier) p.c4Held = false;
+    else if (looking && p.alive && inp.actPressed('bomb')) { p.c4Held = !p.c4Held; p.adsWanted = false; }
+    if (p.c4Held && (inp.actPressed('primary') || inp.actPressed('pistol') || inp.actPressed('knife') || inp.actPressed('grenade')
+      || inp.actPressed('flash') || inp.actPressed('lastWeapon') || inp.wheel !== 0)) p.c4Held = false;
+    const bombBusy = bombMode && ctx.bomb.lockFor(p, looking && p.alive && (inp.actDown('pickup') || (p.c4Held && inp.mouseDown[0])));
+    ctx.viewmodel.setBomb(bombMode && p.alive && (p.c4Held || bombBusy && carrier), ctx.bomb.planter === p.id ? ctx.bomb.plantT / BOMB_CFG.c4.plantTime : 0);
+    const active = looking && p.alive && !ctx.match.locked && !ctx.debug.noclip && !p.c4Held && !bombBusy;
     const online = ctx.net.role !== 'offline';
     // senjata tim sendiri di dekat kaki → prompt ambil/tukar (E; gamepad X mengambil alih fungsi reload saat itu) — offline saja
     const near = !online && p.alive && p.grenadeState === 'NONE' ? ctx.drops.nearestFor(p) : null;
@@ -2191,7 +2244,8 @@ export class Game {
     ctx.hud.pickup = near;
     const cr = this.clientRep;
     if (cr) {
-      cr.held = (active && f.lH ? H.FIRE : 0) | (active && f.rH ? H.ALT : 0) | (p.adsWanted ? H.AIM : 0);
+      cr.held = (active && f.lH ? H.FIRE : 0) | (active && f.rH ? H.ALT : 0) | (p.adsWanted ? H.AIM : 0)
+        | (bombMode && looking && p.alive && (inp.actDown('pickup') || (p.c4Held && f.lH)) ? H.USE : 0);
       let imp = (f.lR ? I.FIRE_R : 0) | (f.rR ? I.ALT_R : 0);
       if (active) {
         imp |= (f.lP ? I.FIRE_P : 0) | (f.rP ? I.ALT_P : 0) | (f.reload ? I.RELOAD : 0) | (f.fireMode ? I.FIREMODE : 0) | (f.melee ? I.MELEE : 0)
@@ -2208,7 +2262,7 @@ export class Game {
       else if (res.gun && !res.meleeing) { if (ctx.drops.drop(p)) p.adsWanted = false; }
       else if (w.slot !== 'ar') ctx.hud.toast('Hanya senjata utama yang bisa dibuang');
     }
-    if (near && !res.meleeing && (padPick || (active && inp.actPressed('pickup')))) { ctx.drops.pickup(p, near); p.adsWanted = false; }
+    if (near && !res.meleeing && !bombBusy && (padPick || (active && inp.actPressed('pickup')))) { ctx.drops.pickup(p, near); p.adsWanted = false; }
     // senjata api yang dipegang (utama / pistol); no-op bila tidak berubah
     if (w.slot === 'pistol') ctx.viewmodel.setWeapon(p.loadout.pistol, p.loadout.pscope);
     else ctx.viewmodel.setWeapon(p.loadout.weapon, p.loadout.scope);

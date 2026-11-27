@@ -37,11 +37,13 @@ const count = async (q: string) => Number((await db.query<{ n: number }>(q)).row
 const backdate = (uid: string, min = 10) => sql(`update public.match_results set created_at = created_at - interval '${min} minutes' where user_id = '${uid}'`);
 
 const SUBMIT = 'select public.submit_match($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) as r';
+const SUBMIT_BOMB = 'select public.submit_match($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) as r';
 const args = (r: MatchReport) => Object.values(submitArgs(r));
 const report = (key: number, o: Partial<MatchReport> = {}): MatchReport => ({ match_key: key, map: 'boston', mode: 'tdm', won: true, mvp: false,
   humans: 2, duration: 600, score: 1500, kills: 12, deaths: 5, assists: 4, hs_kills: 3, knife_kills: 1, nade_kills: 1, flash_assists: 1,
-  best_streak: 4, longest_kill: 42.5, ...o });
-const submit = (uid: string | null, r: MatchReport, role: 'anon' | 'authenticated' = 'authenticated') => as(role, uid, SUBMIT, args(r));
+  best_streak: 4, longest_kill: 42.5, plants: 0, defuses: 0, ...o });
+const submit = (uid: string | null, r: MatchReport, role: 'anon' | 'authenticated' = 'authenticated') =>
+  as(role, uid, r.mode === 'bomb' ? SUBMIT_BOMB : SUBMIT, args(r));
 const board = (b: string, p: string, uid: string | null = null, lim?: number) =>
   as(uid ? 'authenticated' : 'anon', uid, lim ? 'select * from public.get_leaderboard($1, $2, $3)' : 'select * from public.get_leaderboard($1, $2)',
     lim ? [b, p, lim] : [b, p]);
@@ -136,7 +138,8 @@ describe('leaderboard', () => {
     expect((await board('wins', 'week', B)).rows?.map(r => r.username)).toEqual(['Aldy']);
     const lim = await board('points', 'week', B, 1);
     expect(lim.rows?.map(r => [r.rank, r.is_me])).toEqual([[1, false], [2, true]]);
-    for (const b of ['kills', 'kd', 'mvp', 'knife', 'nade', 'flash', 'streak', 'longest', 'wins_boston', 'wins_steelyard', 'wins_brickhall'])
+    for (const b of ['kills', 'kd', 'mvp', 'knife', 'nade', 'flash', 'streak', 'longest', 'wins_boston', 'wins_steelyard', 'wins_brickhall',
+      'wins_meridian'])
       expect((await board(b, 'all')).err, b).toBeUndefined();
     expect(errIs(await board("points'; drop table public.profiles;--", 'all'), 'bad_board')).toBe(true);
     expect(errIs(await board('points', 'year'), 'bad_period')).toBe(true);
@@ -160,9 +163,11 @@ describe('laporan buatan game diterima database', () => {
     let seed = 7, made = 0;
     const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed / 4294967296) * n; };
     for (let i = 0; made < 300 && i < 5000; i++) {
-      const r = buildReport({ matchKey: 10_000 + i, map: MAP_IDS[Math.floor(rnd(3))], mode: rnd(1) < 0.5 ? 'tdm' : 'elim', won: rnd(1) < 0.5,
+      const mode = (['tdm', 'elim', 'bomb'] as const)[Math.floor(rnd(3))];
+      const r = buildReport({ matchKey: 10_000 + i, map: MAP_IDS[Math.floor(rnd(MAP_IDS.length))], mode, won: rnd(1) < 0.5,
         mvp: rnd(1) < 0.2, humans: 2 + Math.floor(rnd(9)), duration: 30 + rnd(1800), score: rnd(9000), kills: rnd(80), deaths: rnd(80),
-        assists: rnd(60), hsKills: rnd(40), knifeKills: rnd(10), nadeKills: rnd(10), flashAssists: rnd(10), bestStreak: rnd(30), longestKill: rnd(200) });
+        assists: rnd(60), hsKills: rnd(40), knifeKills: rnd(10), nadeKills: rnd(10), flashAssists: rnd(10), bestStreak: rnd(30), longestKill: rnd(200),
+        plants: rnd(12), defuses: rnd(12) });
       if (!r) continue;
       await sql(`update public.match_results set created_at = now() - interval '4 hours' where user_id = '${C}'`);
       await sql(`delete from public.match_results where user_id = '${C}' and created_at < now() - interval '3 hours'`);
@@ -172,6 +177,23 @@ describe('laporan buatan game diterima database', () => {
     }
     expect(made).toBe(300);
   }, 120_000);
+});
+
+describe('Bomb Mission & Meridian Vault', () => {
+  it('tanam/jinak hanya di mode bomb, maks 9, skor + 200 per objektif; mode/map baru diterima', async () => {
+    const B4 = 'select public.submit_match($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) as r';
+    const base = (key: number, mode: string, plants: number, defuses: number, score: number) =>
+      [key, 'meridian', mode, true, false, 2, 600, score, 3, 2, 0, 0, 0, 0, 0, 1, 12.5, plants, defuses];
+    await sql(`delete from public.match_results where user_id = '${D}'`);
+    expect(errIs(await as('authenticated', D, B4, base(7001, 'tdm', 2, 0, 375)), 'bad_result')).toBe(true);     // tanam di TDM
+    expect(errIs(await as('authenticated', D, B4, base(7002, 'bomb', 10, 0, 375)), 'bad_result')).toBe(true);   // > 9 ronde
+    expect(errIs(await as('authenticated', D, B4, base(7003, 'bomb', 1, 1, 375 + 401)), 'bad_result')).toBe(true); // skor kebesaran
+    expect((await as('authenticated', D, B4, base(7004, 'bomb', 1, 1, 375 + 400))).rows?.[0].r).toBe('ok');
+    expect(await count(`select count(*)::int n from public.match_results where user_id = '${D}' and mode = 'bomb' and plants = 1 and defuses = 1`)).toBe(1);
+    await backdate(D, 20);
+    expect((await submit(D, report(7005, { map: 'meridian', duration: 300 }))).rows?.[0].r).toBe('ok');      // TDM 17 argumen (klien lama)
+    await sql(`delete from public.match_results where user_id = '${D}'`);
+  });
 });
 
 describe('hapus akun', () => {

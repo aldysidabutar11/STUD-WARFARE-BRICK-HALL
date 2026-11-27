@@ -7,7 +7,7 @@ export type HitPart = 'head' | 'upper' | 'lower' | 'limb';
 /** Material permukaan (langkah kaki, tumbukan peluru, pantulan granat). sand/metal: map luar ruang (Steel Yard); glass: Boston. */
 export type SurfaceMaterial = 'wood' | 'tile' | 'carpet' | 'sand' | 'metal' | 'glass';
 export type MatchStateName = 'MENU' | 'LOADOUT' | 'COUNTDOWN' | 'PLAYING' | 'ROUND_END' | 'ENDED' | 'RESULTS';
-export type KillWeapon = WeaponId | 'k400' | 'fall' | 'melee' | MeleeId;
+export type KillWeapon = WeaponId | 'k400' | 'fall' | 'melee' | MeleeId | 'c4';
 /** Jenis serangan jarak dekat: pukul popor (F) atau pisau (tebas/tusuk). */
 export type MeleeKind = 'butt' | 'slash' | 'stab';
 
@@ -26,6 +26,9 @@ export interface GameEvents {
   'weapon:drop': { entityId: number; position: THREE.Vector3 };
   'weapon:pickup': { entityId: number; weaponId: WeaponId };
   'grenade:explode': { position: THREE.Vector3; ownerId: number };
+  /** Bomb Mission: perubahan keadaan C4 (host & klien; audio, HUD, bot, jaringan). id = entitas pelaku (−1 bila tidak ada). */
+  bomb: { kind: 'carry' | 'drop' | 'plantStart' | 'plantStop' | 'planted' | 'defuseStart' | 'defuseStop' | 'defused' | 'detonated';
+    id: number; site: 'A' | 'B' | null; position: THREE.Vector3 };
   'flash:explode': { position: THREE.Vector3; ownerId: number; inHand?: boolean };
   /** Panel kaca destruktibel pecah (Boston). index = urutan MapDef.breakables. */
   'glass:break': { index: number; position: THREE.Vector3 };

@@ -3,7 +3,7 @@
 
 export type Action = 'forward' | 'back' | 'left' | 'right' | 'jump' | 'sprint' | 'crouch' | 'reload' | 'fireMode' | 'melee'
   | 'primary' | 'pistol' | 'knife' | 'grenade' | 'flash' | 'lastWeapon' | 'drop' | 'pickup' | 'view' | 'shoulder' | 'scoreboard' | 'loadout'
-  | 'chatAll' | 'chatTeam' | 'quickChat' | 'voiceTeam' | 'voiceAll';
+  | 'chatAll' | 'chatTeam' | 'quickChat' | 'voiceTeam' | 'voiceAll' | 'bomb';
 export type Binds = Record<Action, string>;
 
 export const ACTIONS: readonly { id: Action; label: string }[] = [
@@ -17,6 +17,7 @@ export const ACTIONS: readonly { id: Action; label: string }[] = [
   { id: 'shoulder', label: 'Tukar bahu (TPS)' }, { id: 'scoreboard', label: 'Papan skor (tahan)' }, { id: 'loadout', label: 'Loadout' },
   { id: 'chatAll', label: 'Chat ke semua' }, { id: 'chatTeam', label: 'Chat ke tim' }, { id: 'quickChat', label: 'Pesan cepat ke tim (lalu 1–6)' },
   { id: 'voiceTeam', label: 'Voice ke tim (tahan)' }, { id: 'voiceAll', label: 'Voice ke semua (tahan)' },
+  { id: 'bomb', label: 'Pegang C4 (Bomb Mission, slot 6 — tahan E di zona juga menanam)' },
 ];
 
 export const DEFAULT_BINDS: Binds = {
@@ -24,7 +25,7 @@ export const DEFAULT_BINDS: Binds = {
   reload: 'KeyR', fireMode: 'KeyB', melee: 'KeyF', primary: 'Digit1', pistol: 'Digit2', knife: 'Digit3', grenade: 'Digit4', flash: 'Digit5',
   lastWeapon: 'KeyQ',
   drop: 'KeyG', pickup: 'KeyE', view: 'KeyV', shoulder: 'KeyX', scoreboard: 'Tab', loadout: 'KeyL',
-  chatAll: 'KeyY', chatTeam: 'KeyU', quickChat: 'KeyH', voiceTeam: 'KeyT', voiceAll: 'KeyZ',
+  chatAll: 'KeyY', chatTeam: 'KeyU', quickChat: 'KeyH', voiceTeam: 'KeyT', voiceAll: 'KeyZ', bomb: 'Digit6',
 };
 
 /** Versi skema tombol tersimpan. v2: slot 1/2/3 + Q senjata sebelumnya, tukar bahu Q → X, granat G → 3, G = buang senjata.

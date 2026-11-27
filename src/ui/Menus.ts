@@ -86,7 +86,7 @@ const listNames = (n: string[]) => n.length < 2 ? n.join('') : `${n.slice(0, -1)
 /** Urutan kartu pilihan map: semua map lalu "Acak". */
 const MAP_CHOICES: readonly MapChoice[] = [...MAP_IDS, 'random'];
 const choiceName = (c: MapChoice) => (c === 'random' ? 'Acak' : MAPS[c].name);
-const MODE_NAME: Record<string, string> = { tdm: 'Team Deathmatch', elim: 'Eliminasi', practice: 'Latihan' };
+const MODE_NAME: Record<string, string> = { tdm: 'Team Deathmatch', elim: 'Eliminasi', bomb: 'Bomb Mission', practice: 'Latihan' };
 
 /** Escape teks bebas untuk innerHTML (nama sudah dibersihkan cleanName, ini lapisan kedua). */
 const esc = (t: string) => t.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -404,7 +404,9 @@ export class Menus {
       <div class="modes">
         <div class="mode" data-m="tdm" tabindex="0"><b>Team Deathmatch</b><span>Respawn 4 s. Tim pertama mencapai target kill, atau skor tertinggi saat waktu habis, menang.</span></div>
         <div class="mode" data-m="elim" tabindex="0"><b>Eliminasi</b><span>Tanpa respawn dalam ronde (2:00). Habisi tim lawan; yang mati menonton rekan. Menang ronde terbanyak.</span></div>
+        <div class="mode" data-m="bomb" tabindex="0"><b>Bomb Mission</b><span>Meridian Vault, 1 nyawa per ronde. Penyerang menanam C4 di zona A/B (tahan E), bertahan menjinakkan. First to 5, tukar sisi setelah ronde 4.</span></div>
       </div>
+      <div class="set-row bomb-only"><span>Aturan</span><span class="bsub">Ronde 2:00 · sumbu C4 0:40 · tanam 4 s · jinak 5 s · tombol 6 pegang C4</span><span></span></div>
       <div class="set-row tdm-only"><span>Target kill</span>${opt('scoreLimit', SCORE_LIMITS, v => `${v} kill`)}<span></span></div>
       <div class="set-row tdm-only"><span>Batas waktu</span>${opt('timeLimit', TIME_LIMITS, v => `${v} menit`)}<span></span></div>
       <div class="set-row elim-only"><span>Ronde untuk menang</span>${opt('roundsToWin', ROUNDS_TO_WIN, v => `${v} ronde`)}<span></span></div>
@@ -413,13 +415,20 @@ export class Menus {
       <div class="set-row"><span>Bot sekutu</span><input type="range" data-k="allies" min="0" max="4" step="1" value="${s.allies}"><span data-v="allies">${s.allies}</span></div>
       <div class="set-row"><span>Bot musuh</span><input type="range" data-k="enemies" min="1" max="5" step="1" value="${s.enemies}"><span data-v="enemies">${s.enemies}</span></div>
       <div class="row"><button class="primary" data-a="start">▶ Mulai</button><button data-a="back">Kembali</button></div></div>`);
-    const setMode = (mode: 'tdm' | 'elim') => {
+    const setMode = (mode: 'tdm' | 'elim' | 'bomb') => {
       s.mode = mode;
       m.querySelectorAll<HTMLElement>('.mode').forEach(x => x.classList.toggle('sel', x.dataset.m === mode));
       m.querySelectorAll<HTMLElement>('.tdm-only').forEach(x => (x.style.display = mode === 'tdm' ? '' : 'none'));
       m.querySelectorAll<HTMLElement>('.elim-only').forEach(x => (x.style.display = mode === 'elim' ? '' : 'none'));
+      m.querySelectorAll<HTMLElement>('.bomb-only').forEach(x => (x.style.display = mode === 'bomb' ? '' : 'none'));
+      // Bomb Mission hanya di Meridian Vault → map otomatis dipilih
+      if (mode === 'bomb' && s.map !== 'meridian') {
+        s.map = 'meridian';
+        m.querySelectorAll<HTMLElement>('[data-map]').forEach(x => x.classList.toggle('sel', x.dataset.map === 'meridian'));
+        this.api.selectMap('meridian');
+      }
     };
-    m.querySelectorAll<HTMLElement>('.mode').forEach(x => x.addEventListener('click', () => { this.api.click(); setMode(x.dataset.m as 'tdm' | 'elim'); }));
+    m.querySelectorAll<HTMLElement>('.mode').forEach(x => x.addEventListener('click', () => { this.api.click(); setMode(x.dataset.m as 'tdm' | 'elim' | 'bomb'); }));
     setMode(s.mode);
     // map: langsung disimpan & dimuat di menu (latar menu = pratinjau map); "Acak" diundi saat Mulai
     paintThumbs(m);
@@ -428,6 +437,7 @@ export class Menus {
       s.map = c;
       m.querySelectorAll<HTMLElement>('[data-map]').forEach(x => x.classList.toggle('sel', x.dataset.map === c));
       this.api.selectMap(c);
+      if (s.mode === 'bomb' && c !== 'meridian') setMode('tdm');      // map lain tidak punya zona bom
     }));
     this.bindInputs(m, s);
     this.on(m, 'start', () => { this.api.applySettings(s); this.api.play(false); });
@@ -535,10 +545,12 @@ export class Menus {
         <div class="modes">
           <div class="mode ${st.mode === 'tdm' ? 'sel' : ''}" data-m="tdm" tabindex="0"><b>Team Deathmatch</b><span>Respawn 4 s, target kill / skor tertinggi.</span></div>
           <div class="mode ${st.mode === 'elim' ? 'sel' : ''}" data-m="elim" tabindex="0"><b>Eliminasi</b><span>Tanpa respawn dalam ronde, menang ronde terbanyak.</span></div>
+          <div class="mode ${st.mode === 'bomb' ? 'sel' : ''}" data-m="bomb" tabindex="0"><b>Bomb Mission</b><span>Meridian Vault: tanam / jinakkan C4, first to 5.</span></div>
         </div>
         <div class="hs-grid">
           ${st.mode === 'tdm'
             ? `<label>Target kill ${opt('scoreLimit', SCORE_LIMITS, v => `${v} kill`)}</label><label>Batas waktu ${opt('timeLimit', TIME_LIMITS, v => `${v} menit`)}</label>`
+            : st.mode === 'bomb' ? `<label>Aturan <span class="bsub">First to 5 · tukar sisi setelah ronde 4 · tanam 4 s · jinak 5 s</span></label>`
             : `<label>Ronde untuk menang ${opt('roundsToWin', ROUNDS_TO_WIN, v => `${v} ronde`)}</label>`}
           <label>Kesulitan bot <select data-rk="difficulty" ${host ? '' : 'disabled'}>${[['easy', 'Mudah'], ['normal', 'Normal'], ['hard', 'Sulit']]
             .map(([v, t]) => `<option value="${v}" ${st.difficulty === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
@@ -561,11 +573,13 @@ export class Menus {
     m.querySelectorAll<HTMLElement>('[data-kick]').forEach(b => b.addEventListener('click', () => act({ type: 'kick', id: b.dataset.kick! })));
     m.querySelectorAll<HTMLElement>('.mode').forEach(x => x.addEventListener('click', () => {
       if (!host) return;
-      this.api.click(); act({ type: 'settings', patch: { mode: x.dataset.m as RoomSettings['mode'] } });
+      const mode = x.dataset.m as RoomSettings['mode'];
+      this.api.click(); act({ type: 'settings', patch: mode === 'bomb' ? { mode, map: 'meridian' } : { mode } });
     }));
     paintThumbs(m);
     m.querySelectorAll<HTMLButtonElement>('[data-rmap]').forEach(b => b.addEventListener('click', () => {
-      if (host && b.dataset.rmap !== st.map) act({ type: 'settings', patch: { map: b.dataset.rmap as MapChoice } });
+      const c = b.dataset.rmap as MapChoice;
+      if (host && c !== st.map) act({ type: 'settings', patch: st.mode === 'bomb' && c !== 'meridian' ? { map: c, mode: 'tdm' } : { map: c } });
     }));
     m.querySelectorAll<HTMLSelectElement>('select[data-rk]').forEach(se => se.addEventListener('change', () => {
       const k = se.dataset.rk as keyof RoomSettings, v = se.value;
@@ -978,17 +992,19 @@ export class Menus {
   showResults(winner: 'blue' | 'red' | 'draw', playerTeam: 'blue' | 'red', fromRoom = false, online: 'host' | 'client' | null = null) {
     const title = winner === 'draw' ? 'SERI' : winner === playerTeam ? 'MENANG' : 'KALAH';
     const color = winner === 'draw' ? '#f5cd30' : winner === playerTeam ? '#7dff9a' : '#ff6b5e';
-    const all = ctx.entities.filter(e => !e.dummyAt);
+    const all = ctx.entities.filter(e => !e.dummyAt), bomb = ctx.match.mode === 'bomb';
     const mvp = all.reduce<typeof all[number] | null>((b, e) => (!b || e.stats.score > b.stats.score ? e : b), null);
     const rows = (team: 'blue' | 'red') => all.filter(e => e.team === team).sort((a, b) => b.stats.score - a.stats.score).map(e => {
       const kd = e.stats.deaths ? (e.stats.kills / e.stats.deaths).toFixed(2) : e.stats.kills.toFixed(2);
       const acc = e.stats.shots ? Math.round(100 * e.stats.hits / e.stats.shots) : 0;
       const hs = e.stats.hits ? Math.round(100 * e.stats.hsHits / e.stats.hits) : 0;
       return `<tr class="${e.isPlayer ? 'me' : ''}"><td>${e === mvp ? '★ ' : ''}${esc(e.name)}</td><td>${e.stats.kills}</td><td>${e.stats.deaths}</td><td>${e.stats.assists}</td>` +
-        `<td>${kd}</td><td>${e.stats.score}</td><td>${acc}%</td><td>${hs}%</td><td>${e.stats.damage}</td><td>${e.stats.bestStreak}</td></tr>`;
+        `<td>${kd}</td><td>${e.stats.score}</td><td>${acc}%</td><td>${hs}%</td><td>${e.stats.damage}</td><td>${e.stats.bestStreak}</td>` +
+        (bomb ? `<td>${e.stats.plants}</td><td>${e.stats.defuses}</td>` : '') + '</tr>';
     }).join('');
-    const head = '<tr><th>Nama</th><th>K</th><th>D</th><th>A</th><th>K/D</th><th>Skor</th><th>Akurasi</th><th>% HS</th><th>Damage</th><th>Streak</th></tr>';
-    const unit = ctx.match.mode === 'elim' ? ' (ronde)' : '';
+    const head = '<tr><th>Nama</th><th>K</th><th>D</th><th>A</th><th>K/D</th><th>Skor</th><th>Akurasi</th><th>% HS</th><th>Damage</th><th>Streak</th>'
+      + (bomb ? '<th>Tanam</th><th>Jinak</th>' : '') + '</tr>';
+    const unit = ctx.match.mode === 'elim' || bomb ? ' (ronde)' : '';
     const m = this.mount('results', `<div class="card"><h1 style="color:${color}">${title}</h1>
       <div class="res-map">${esc(MAPS[this.api.mapId()].name)} · ${MODE_NAME[ctx.match.mode] ?? ''}</div>
       <div class="sub">BIRU ${ctx.teams.scores.blue} — ${ctx.teams.scores.red} MERAH${unit}</div>

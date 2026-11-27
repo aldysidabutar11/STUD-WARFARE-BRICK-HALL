@@ -1,5 +1,6 @@
 // src/game/TeamManager.ts — damage, kill, skor tim & individu (GDD §3.8, §12)
 // + assist, kredit kill untuk korban yang jatuh/bunuh diri setelah ditembak, streak (pasca-MVP).
+import { isRoundMode } from './MatchManager';
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
@@ -63,7 +64,7 @@ export class TeamManager {
     victim.ctrl.setEnabled(false);
     // jatuh / granat sendiri setelah ditembak musuh (≤ 5 s): kill dikreditkan ke penyerang musuh terakhir
     let killer = attacker;
-    if (!killer || killer === victim) {
+    if ((!killer || killer === victim) && weapon !== 'c4') {   // ledakan C4 (Bomb Mission): tanpa kredit kill (keputusan pengguna)
       let best: Entity | null = null, bestT = -Infinity;
       for (const [id, r] of victim.dmgBy) {
         const a = ctx.byId.get(id);
@@ -78,7 +79,7 @@ export class TeamManager {
       if (headshot) killer.stats.hsKills++;
       killer.streak++;
       killer.stats.bestStreak = Math.max(killer.stats.bestStreak, killer.streak);
-      if (ctx.match.mode !== 'elim') this.scores[killer.team]++;   // Eliminasi: skor tim = ronde yang dimenangkan
+      if (!isRoundMode(ctx.match.mode)) this.scores[killer.team]++;   // Eliminasi / Bomb Mission: skor tim = ronde yang dimenangkan
     }
     // bunuh diri / jatuh tanpa penyerang: tercatat sebagai kematian tanpa poin
     bus.emit('death', { entityId: victim.id, impulse, grenade });

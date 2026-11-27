@@ -364,3 +364,33 @@ export const weaponPickup: Recipe = (s, out, t0) => {
   }
   return 0.14;
 };
+
+// ───────────────────────── Bomb Mission (dokumen pengguna §8.2)
+/** Keypad saat menanam: dual-tone sine 1209 + 697 Hz 40 ms. */
+export const c4Keypad: Recipe = (s, out, t0) => {
+  for (const f of [1209, 697]) osc(s, 'sine', f, f, t0, 0.04).connect(env(s, out, t0, 0.35, 0.002, 0.04));
+  return 0.06;
+};
+/** Beep C4 tertanam: sine 2800 Hz 55 ms (attack 2 ms, decay 50 ms). */
+export const c4Beep: Recipe = (s, out, t0) => {
+  osc(s, 'sine', 2800, 2800, t0, 0.055).connect(env(s, out, t0, 0.6, 0.002, 0.05));
+  return 0.06;
+};
+/** Klik mulai menjinakkan: square 1800 Hz 20 ms + noise bandpass 3000 Hz 30 ms. */
+export const c4DefuseClick: Recipe = (s, out, t0) => {
+  osc(s, 'square', 1800, 1800, t0, 0.02).connect(env(s, out, t0, 0.45, 0.001, 0.02));
+  noiseSrc(s, t0, 0.03).connect(filt(s, 'bandpass', 3000, 2)).connect(env(s, out, t0, 0.45, 0.001, 0.03));
+  return 0.05;
+};
+/** Ledakan C4: sub sine 45 → 18 Hz 1.4 s + noise lowpass 1800 → 100 Hz 2.2 s + 8 derak highpass 2.5 kHz. */
+export const c4Explosion: Recipe = (s, out, t0) => {
+  osc(s, 'sine', 45, 18, t0, 1.4).connect(env(s, out, t0, 1.0, 0.005, 1.4));
+  const n = noiseSrc(s, t0, 2.3), lp = filt(s, 'lowpass', 1800);
+  lp.frequency.setValueAtTime(1800, t0); lp.frequency.exponentialRampToValueAtTime(100, t0 + 2.2);
+  n.connect(lp).connect(env(s, out, t0, 1.0, 0.004, 2.2));
+  for (let i = 0; i < 8; i++) {
+    const t = t0 + 0.08 + Math.random() * 0.9;
+    noiseSrc(s, t, 0.06).connect(filt(s, 'highpass', 2500)).connect(env(s, out, t, 0.4, 0.002, 0.06));
+  }
+  return 2.4;
+};

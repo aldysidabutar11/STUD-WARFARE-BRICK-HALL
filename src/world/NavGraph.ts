@@ -21,10 +21,13 @@ export class NavGraph {
   readonly dropInfo = new Map<NavEdge, string>();
   /** Gerbang yang sedang terbuka (edge bergerbang hanya dilalui bila gerbangnya ada di sini). */
   private readonly openGates = new Set<string>();
+  /** Toleransi lantai `nearest` (NavTemplate.levelTol); undefined = aturan lama lantai 0 / 10. */
+  private readonly levelTol: number | undefined;
 
   /** {H} = S (Biru, Z negatif) / N (Merah); {X} = W (X negatif) / E; C_ = garis tengah Z = 0. Koordinat template untuk H=S, X=W. */
   constructor(tpl: NavTemplate) {
     const { nodes: NODE_T, edges: EDGE_T, drops: DROP_T = [], cover: COVER_T } = tpl;
+    this.levelTol = tpl.levelTol;
     if (tpl.asym) { this.buildAsym(tpl); return; }
     for (const [t, x0, z0, lvl] of NODE_T) {
       const hs: ('S' | 'N')[] = t.includes('{H}') ? ['S', 'N'] : ['S'];
@@ -106,10 +109,11 @@ export class NavGraph {
     // jarak kuadrat (tanpa Math.hypot — terukur ±1.3 MB/s sampah dari panggilan bot); penalti lantai lain 1e6 > (diagonal map)²
     // sehingga urutan hasil identik dengan jarak + 1000
     let best = 0, bd = Infinity;
-    const lvl = y > 5 ? 10 : 0;
+    const lvl = y > 5 ? 10 : 0, tol = this.levelTol;
     for (let i = 0; i < this.nodes.length; i++) {
       const n = this.nodes[i], dx = n.x - x, dz = n.z - z;
-      const d = dx * dx + dz * dz + (n.level === lvl ? 0 : 1e6);
+      const same = tol === undefined ? n.level === lvl : Math.abs(n.level - y) <= tol;
+      const d = dx * dx + dz * dz + (same ? 0 : 1e6);
       if (d < bd) { bd = d; best = i; }
     }
     return best;

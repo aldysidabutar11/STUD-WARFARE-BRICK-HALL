@@ -41,15 +41,32 @@ create table if not exists public.match_results (
   flash_assists int not null,
   best_streak   int not null,
   longest_kill  real not null,
+  plants        int not null default 0,
+  defuses       int not null default 0,
   constraint match_results_once unique (user_id, match_key),
-  constraint mr_map   check (map in ('brickhall', 'steelyard', 'boston')),
-  constraint mr_mode  check (mode in ('tdm', 'elim')),
+  constraint mr_map   check (map in ('brickhall', 'steelyard', 'boston', 'meridian')),
+  constraint mr_mode  check (mode in ('tdm', 'elim', 'bomb')),
   constraint mr_range check (match_key between 0 and 2147483647 and humans between 2 and 10 and duration between 30 and 7200
     and kills between 0 and 300 and deaths between 0 and 300 and assists between 0 and 300 and longest_kill between 0 and 500),
   constraint mr_consistent check (hs_kills between 0 and kills and knife_kills >= 0 and nade_kills >= 0
     and knife_kills + nade_kills <= kills and best_streak between 0 and kills and flash_assists between 0 and assists
-    and score between 0 and 125 * kills + 50 * assists and kills * 2 <= duration and deaths * 2 <= duration)
+    and score between 0 and 125 * kills + 50 * assists + 200 * (plants + defuses) and kills * 2 <= duration and deaths * 2 <= duration),
+  constraint mr_bomb  check (plants between 0 and 9 and defuses between 0 and 9 and (mode = 'bomb' or (plants = 0 and defuses = 0)))
 );
+-- migrasi tabel lama (aman diulang): map Meridian Vault, mode Bomb Mission, kolom tanam/jinak bom & aturan skornya
+alter table public.match_results add column if not exists plants int not null default 0;
+alter table public.match_results add column if not exists defuses int not null default 0;
+alter table public.match_results drop constraint if exists mr_map;
+alter table public.match_results add constraint mr_map check (map in ('brickhall', 'steelyard', 'boston', 'meridian'));
+alter table public.match_results drop constraint if exists mr_mode;
+alter table public.match_results add constraint mr_mode check (mode in ('tdm', 'elim', 'bomb'));
+alter table public.match_results drop constraint if exists mr_consistent;
+alter table public.match_results add constraint mr_consistent check (hs_kills between 0 and kills and knife_kills >= 0 and nade_kills >= 0
+  and knife_kills + nade_kills <= kills and best_streak between 0 and kills and flash_assists between 0 and assists
+  and score between 0 and 125 * kills + 50 * assists + 200 * (plants + defuses) and kills * 2 <= duration and deaths * 2 <= duration);
+alter table public.match_results drop constraint if exists mr_bomb;
+alter table public.match_results add constraint mr_bomb check (plants between 0 and 9 and defuses between 0 and 9
+  and (mode = 'bomb' or (plants = 0 and defuses = 0)));
 create index if not exists match_results_key on public.match_results (match_key);
 create index if not exists match_results_user_time on public.match_results (user_id, created_at);
 create index if not exists match_results_time on public.match_results (created_at);
@@ -114,10 +131,12 @@ begin
 end $$;
 
 -- ───────────────────────── kirim hasil match (pemain hanya bisa mengirim hasilnya SENDIRI)
+-- versi lama tanpa p_plants/p_defuses dibuang (bila tidak, panggilan tanpa keduanya ambigu antara dua fungsi)
+drop function if exists public.submit_match(bigint, text, text, boolean, boolean, int, int, int, int, int, int, int, int, int, int, int, real);
 create or replace function public.submit_match(
   p_match_key bigint, p_map text, p_mode text, p_won boolean, p_mvp boolean, p_humans int, p_duration int,
   p_score int, p_kills int, p_deaths int, p_assists int, p_hs_kills int, p_knife_kills int, p_nade_kills int,
-  p_flash_assists int, p_best_streak int, p_longest_kill real
+  p_flash_assists int, p_best_streak int, p_longest_kill real, p_plants int default 0, p_defuses int default 0
 ) returns text
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -141,9 +160,10 @@ begin
   if today >= 60 then raise exception 'daily_limit' using errcode = '54000'; end if;
   -- isi divalidasi oleh constraint tabel (rentang & konsistensi); duplikat match yang sama diabaikan
   insert into public.match_results (user_id, match_key, map, mode, won, mvp, humans, duration, score, kills, deaths, assists,
-    hs_kills, knife_kills, nade_kills, flash_assists, best_streak, longest_kill)
+    hs_kills, knife_kills, nade_kills, flash_assists, best_streak, longest_kill, plants, defuses)
   values (uid, p_match_key, p_map, p_mode, coalesce(p_won, false), coalesce(p_mvp, false), p_humans, p_duration, p_score, p_kills,
-    p_deaths, p_assists, p_hs_kills, p_knife_kills, p_nade_kills, p_flash_assists, p_best_streak, p_longest_kill)
+    p_deaths, p_assists, p_hs_kills, p_knife_kills, p_nade_kills, p_flash_assists, p_best_streak, p_longest_kill,
+    coalesce(p_plants, 0), coalesce(p_defuses, 0))
   on conflict (user_id, match_key) do nothing;
   return 'ok';
 exception
@@ -162,7 +182,7 @@ declare
   min_matches int;
 begin
   if p_board is null or p_board not in ('points', 'kills', 'kd', 'wins', 'mvp', 'knife', 'nade', 'flash', 'streak', 'longest',
-      'wins_brickhall', 'wins_steelyard', 'wins_boston') then
+      'wins_brickhall', 'wins_steelyard', 'wins_boston', 'wins_meridian') then
     raise exception 'bad_board' using errcode = '22023';
   end if;
   if p_period = 'week' then since := date_trunc('week', now() at time zone 'Asia/Jakarta') at time zone 'Asia/Jakarta';
@@ -194,7 +214,8 @@ begin
         when 'longest' then max(c.longest_kill)::real
         when 'wins_brickhall' then count(*) filter (where c.won and c.map = 'brickhall')::real
         when 'wins_steelyard' then count(*) filter (where c.won and c.map = 'steelyard')::real
-        else count(*) filter (where c.won and c.map = 'boston')::real
+        when 'wins_boston' then count(*) filter (where c.won and c.map = 'boston')::real
+        else count(*) filter (where c.won and c.map = 'meridian')::real
       end)::real as v
     from conf c group by c.user_id
   ), ranked as (
@@ -213,13 +234,13 @@ revoke all on function public.sw_reserved(text) from public, anon, authenticated
 revoke all on function public.get_my_profile() from public, anon, authenticated;
 revoke all on function public.set_username(text) from public, anon, authenticated;
 revoke all on function public.delete_my_account() from public, anon, authenticated;
-revoke all on function public.submit_match(bigint, text, text, boolean, boolean, int, int, int, int, int, int, int, int, int, int, int, real)
+revoke all on function public.submit_match(bigint, text, text, boolean, boolean, int, int, int, int, int, int, int, int, int, int, int, real, int, int)
   from public, anon, authenticated;
 revoke all on function public.get_leaderboard(text, text, int) from public, anon, authenticated;
 
 grant execute on function public.get_my_profile() to authenticated;
 grant execute on function public.set_username(text) to authenticated;
 grant execute on function public.delete_my_account() to authenticated;
-grant execute on function public.submit_match(bigint, text, text, boolean, boolean, int, int, int, int, int, int, int, int, int, int, int, real)
+grant execute on function public.submit_match(bigint, text, text, boolean, boolean, int, int, int, int, int, int, int, int, int, int, int, real, int, int)
   to authenticated;
 grant execute on function public.get_leaderboard(text, text, int) to anon, authenticated;

@@ -9,7 +9,7 @@ import { SAVE_V, type MatchSave, type SaveEnt } from './Migration';
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const statsOf = (e: Entity) => {
   const s = e.stats;
-  return [s.kills, s.deaths, s.assists, s.score, s.shots, s.hits, s.hsHits, s.hsKills, s.damage, s.bestStreak];
+  return [s.kills, s.deaths, s.assists, s.score, s.shots, s.hits, s.hsHits, s.hsKills, s.damage, s.bestStreak, s.plants, s.defuses];
 };
 
 export function saveEnt(e: Entity): SaveEnt {
@@ -26,7 +26,8 @@ export function captureSave(): MatchSave {
   const m = ctx.match;
   return { v: SAVE_V, state: m.state, round: m.round, timeLeft: r2(m.timeLeft), countdown: r2(m.countdown),
     sb: ctx.teams.scores.blue, sr: ctx.teams.scores.red, winner: m.winner, roundWinner: m.roundWinner, ents: ctx.entities.map(saveEnt),
-    glass: ctx.breakables.brokenList(), played: ctx.match.playedT };
+    glass: ctx.breakables.brokenList(), played: ctx.match.playedT,
+    ...(m.mode === 'bomb' ? { bomb: ctx.bomb.netState(), carried: [...ctx.bomb.carried] } : {}) };
 }
 
 /** Terapkan cadangan ke entitas yang baru dibuat (setelah MatchManager.resume): loadout, statistik, lalu hidup di posisinya
@@ -41,6 +42,7 @@ export function applySaveEntities(save: MatchSave) {
     if (e.char.variant !== s.variant) e.char.setVariant(s.variant);
     const st = e.stats;
     [st.kills, st.deaths, st.assists, st.score, st.shots, st.hits, st.hsHits, st.hsKills, st.damage, st.bestStreak] = s.stats;
+    st.plants = s.stats[10] ?? 0; st.defuses = s.stats[11] ?? 0;
     if (s.alive && s.hp > 0) {
       ctx.spawns.restore(e, s.x, s.y, s.z, s.yaw);
       e.pitch = s.pitch; e.hp = s.hp; e.protectT = s.protectT; e.char.protectT = s.protectT;
@@ -57,4 +59,6 @@ export function applySaveEntities(save: MatchSave) {
     }
     e.streak = s.streak;
   }
+  // Bomb Mission: C4 & giliran pembawa (host baru: body C4 jatuh dibuat ulang; klien: keadaan juga datang dari host)
+  if (save.bomb && ctx.match.mode === 'bomb') ctx.bomb.restore(save.bomb, save.carried ?? []);
 }

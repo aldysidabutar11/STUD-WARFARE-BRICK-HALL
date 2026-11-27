@@ -6,6 +6,7 @@
 //             bergabung ulang): keadaan match + tiap entitas (posisi, HP, amunisi, granat, statistik).
 //  • migrationTimes — kapan tiap peserta mengambil alih: semua mencoba host lama dulu (rejoinWait, kecuali serah-terima), lalu
 //             pengganti ke-k menunggu host baru k × migrateStep detik; tak ada yang menjawab → dia sendiri yang jadi host.
+import { parseBombNet, type BombNet } from '../combat/C4Bomb';
 import { cleanVariant, type Variant } from '../entities/variants';
 import { XCFG } from '../config/extraConfig';
 import { CFG } from '../config/gameConfig';
@@ -46,7 +47,7 @@ export interface SaveEnt {
   id: number; alive: boolean; hp: number; respawnT: number; protectT: number;
   x: number; y: number; z: number; yaw: number; pitch: number;
   weapon: string; scope: string; ammo: number; reserve: number; modeIdx: number; grenades: number;
-  /** kills, deaths, assists, score, shots, hits, hsHits, hsKills, damage, bestStreak */
+  /** kills, deaths, assists, score, shots, hits, hsHits, hsKills, damage, bestStreak (+ plants, defuses — Bomb Mission; cadangan lama 10) */
   stats: number[]; streak: number; variant: Variant;
   /** Flashbang tersisa (tidak ada di cadangan host versi lama → 1). */
   flashes: number;
@@ -62,6 +63,9 @@ export interface MatchSave {
   glass?: number[];
   /** Detik match sudah dimainkan (state PLAYING, semua ronde) — durasi kiriman hasil ke leaderboard tetap benar setelah pindah host. */
   played?: number;
+  /** Bomb Mission: keadaan C4 + giliran pembawa [id entitas, berapa kali membawa]. */
+  bomb?: BombNet;
+  carried?: [number, number][];
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -83,7 +87,7 @@ export function parseSave(raw: unknown): MatchSave | null {
     if (!fin(e.id) || !Number.isInteger(e.id) || e.id < 1 || e.id > 255 || ids.has(e.id)) return null;
     const nums = ['hp', 'respawnT', 'protectT', 'x', 'y', 'z', 'yaw', 'pitch', 'ammo', 'reserve', 'modeIdx', 'grenades', 'streak'] as const;
     if (!nums.every(k => fin(e[k]))) return null;
-    if (!Array.isArray(e.stats) || e.stats.length !== 10 || !e.stats.every(fin)) return null;
+    if (!Array.isArray(e.stats) || (e.stats.length !== 10 && e.stats.length !== 12) || !e.stats.every(fin)) return null;
     ids.add(e.id);
     const n = (k: typeof nums[number]) => e[k] as number;
     ents.push({ id: e.id, alive: !!e.alive, hp: clamp(Math.round(n('hp')), 0, maxHp), respawnT: clamp(n('respawnT'), 0, 30),
@@ -101,5 +105,8 @@ export function parseSave(raw: unknown): MatchSave | null {
     countdown: clamp(r.countdown, 0, 10), sb: clamp(Math.round(r.sb), 0, 999), sr: clamp(Math.round(r.sr), 0, 999),
     winner: isWin(r.winner) ? r.winner : 'draw', roundWinner: isWin(r.roundWinner) ? r.roundWinner : null, ents,
     ...(Array.isArray(r.glass) ? { glass: [...new Set(r.glass.filter((i): i is number => Number.isInteger(i) && (i as number) >= 0 && (i as number) < 32))].slice(0, 32) } : {}),
-    ...(fin(r.played) ? { played: clamp(r.played, 0, 7200) } : {}) };
+    ...(fin(r.played) ? { played: clamp(r.played, 0, 7200) } : {}),
+    ...(parseBombNet(r.bomb) ? { bomb: parseBombNet(r.bomb)! } : {}),
+    ...(Array.isArray(r.carried) ? { carried: (r.carried as unknown[]).filter((q): q is [number, number] => Array.isArray(q) && q.length === 2
+      && Number.isInteger(q[0]) && Number.isInteger(q[1])).slice(0, 20).map(([a, b]) => [clamp(a, 0, 999), clamp(b, 0, 99)] as [number, number]) } : {}) };
 }

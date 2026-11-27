@@ -5,6 +5,7 @@
 // KLIEN: gerak sendiri diprediksi (KCC lokal) lalu dikoreksi dengan memutar ulang perintah yang belum dikonfirmasi; pemain lain &
 //        granat diinterpolasi dengan jeda ADAPTIF (±50 ms jaringan bagus … 200 ms buruk); damage/kill/spawn/skor hanya dari host,
 //        tapi hitmarker & suara kena serangan sendiri tampil instan (prediksi, dikonfirmasi host tanpa ganda).
+import { parseBombNet } from '../combat/C4Bomb';
 import { isVariant } from '../entities/variants';
 import * as THREE from 'three';
 import { ctx } from '../game/ctx';
@@ -139,6 +140,7 @@ export class HostRep {
   private readonly byPid = new Map<string, Entity>();
   private tickN = 0;
   private statsT = 0;
+  private bombT = 0;
   private saveT = 0;
   private nowTick = 0;
   private shots: ShotFx[] = [];
@@ -186,8 +188,8 @@ export class HostRep {
       if (a) this.net.sendTo(a, msg);
       if (v && v !== a) this.net.sendTo(v, msg);
     });
-    on('match:state', (p) => all({ e: 'mstate', s: p.state, w: ctx.match.winner, rw: ctx.match.roundWinner, r: ctx.match.round,
-      sb: p.scores[0], sr: p.scores[1], tl: p.timeLeft }));
+    on('match:state', (p) => all({ e: 'mstate', s: p.state, w: ctx.match.winner, rw: ctx.match.roundWinner, rr: ctx.match.roundReason,
+      r: ctx.match.round, sb: p.scores[0], sr: p.scores[1], tl: p.timeLeft }));
     on('grenade:explode', (p) => all({ e: 'boom', x: p.position.x, y: p.position.y, z: p.position.z, o: p.ownerId }));
     // flashbang: tiap klien menghitung silau layarnya sendiri dari kameranya (arah pandang, jarak, dinding)
     on('flash:explode', (p) => all({ e: 'flashbang', x: p.position.x, y: p.position.y, z: p.position.z, o: p.ownerId, h: p.inHand ? 1 : 0 }));
@@ -284,13 +286,16 @@ export class HostRep {
     it.cooking = e.grenadeState === 'COOKING';
     it.wantFire = e.weapon.holdingGun && !!(c.held & H.FIRE) && e.meleeT < 0;
     it.speedMult = e.moveMult;
+    e.bombUse = ctx.match.mode === 'bomb' && control && !!(c.held & H.USE);
+    if (ctx.bomb.lockFor(e, e.bombUse)) { it.ix = 0; it.iz = 0; it.jump = false; it.sprint = false; it.wantFire = false; }
     frameFromCommand(c, n.prevHeld, r.frame);
     return true;
   }
 
   /** Senjata/granat/pisau pemain remote dengan aturan yang sama persis dengan pemain lokal (PlayerActions). */
   private drive(e: Entity, r: RemoteHuman, dt: number) {
-    driveWeapons(e, r.frame, dt, { active: e.alive && !ctx.match.locked, adsMode: 'hold', practice: false }, r.trig, r.gIn);
+    driveWeapons(e, r.frame, dt, { active: e.alive && !ctx.match.locked && !ctx.bomb.lockFor(e, e.bombUse), adsMode: 'hold', practice: false },
+      r.trig, r.gIn);
   }
 
   /** Klien mengganti loadout di tengah match: berlaku pada spawn berikutnya (sama dengan pemain lokal); tampilan langsung. */
@@ -307,6 +312,10 @@ export class HostRep {
     for (const e of this.byPid.values()) { const r = e.remote; if (r?.has && !r.afk) this.drive(e, r, STEP); }
     this.statsT += STEP;
     if (this.statsT >= NET.statsEvery) { this.statsT = 0; this.sendStats(); }
+    if (ctx.match.mode === 'bomb') {
+      this.bombT += STEP;
+      if (ctx.bomb.dirty || this.bombT >= 0.5) { this.bombT = 0; ctx.bomb.dirty = false; this.net.sendAll({ t: 'ev', e: 'bomb', b: ctx.bomb.netState() }); }
+    }
     // cadangan lengkap pertandingan → teman mana pun bisa melanjutkan sebagai host bila host ini hilang (pindah host)
     this.saveT += STEP;
     if (this.saveT >= NET.saveEvery && this.net.connected > 0) { this.saveT = 0; this.net.sendAll({ t: 'save', s: captureSave() }); }
@@ -346,7 +355,7 @@ export class HostRep {
   private sendStats() {
     for (const e of ctx.entities) e.ping = e === ctx.player ? -2 : e.remote && !e.remote.afk ? (this.net.ping(e.remote.pid) ?? -3) : -1;
     const s = ctx.entities.map(e => [e.id, e.stats.kills, e.stats.deaths, e.stats.assists, e.stats.score, e.stats.shots, e.stats.hits,
-      e.stats.hsHits, e.stats.hsKills, e.stats.damage, e.stats.bestStreak, e.ping]);
+      e.stats.hsHits, e.stats.hsKills, e.stats.damage, e.stats.bestStreak, e.ping, e.stats.plants, e.stats.defuses]);
     this.net.sendAll({ t: 'ev', e: 'stats', s });
   }
 
@@ -357,6 +366,7 @@ export class HostRep {
     if (!e) return;
     this.slowUntil.delete(pid); this.carry.delete(pid);
     e.ping = -1;
+    ctx.bomb.dropIfCarrier(e.id);          // Bomb Mission: pembawa keluar → C4 jatuh di posisinya
     this.setAfk(e, 'gone');
   }
 
@@ -615,6 +625,7 @@ export class ClientRep {
       case 'glass': ctx.breakables.breakPanel(num('i')); break;
       case 'mstate':
         ctx.match.winner = (m.w as never) ?? 'draw'; ctx.match.roundWinner = (m.rw as never) ?? null;
+        ctx.match.roundReason = m.rr === 'elim' || m.rr === 'detonated' || m.rr === 'defused' || m.rr === 'time' ? m.rr : null;
         ctx.match.applyNet(m.s as MatchStateName, num('sb'), num('sr'), num('tl'), ctx.match.countdown, num('r'));
         break;
       case 'stats':
@@ -624,9 +635,11 @@ export class ClientRep {
           const st = e.stats;
           [st.kills, st.deaths, st.assists, st.score, st.shots, st.hits, st.hsHits, st.hsKills, st.damage, st.bestStreak] = row.slice(1, 11);
           e.ping = typeof row[11] === 'number' ? row[11] : -1;
+          st.plants = typeof row[12] === 'number' ? row[12] : 0; st.defuses = typeof row[13] === 'number' ? row[13] : 0;
         }
         break;
       case 'notice': ctx.hud.toast(String(m.text ?? '')); break;
+      case 'bomb': { const b = parseBombNet(m.b); if (b) ctx.bomb.applyNet(b); break; }
     }
   }
 

@@ -65,7 +65,8 @@ export function endSummary(s: BBSession): string | null {
   return `Halaman berhenti mendadak tanpa sempat menutup ${where} — kemungkinan tab crash atau kehabisan memori`;
 }
 
-const modeName = (m: string) => (m === 'elim' ? 'Eliminasi' : m === 'tdm' ? 'Team Deathmatch' : m === 'practice' ? 'Latihan' : m);
+const modeName = (m: string) => (m === 'elim' ? 'Eliminasi' : m === 'tdm' ? 'Team Deathmatch' : m === 'bomb' ? 'Bomb Mission'
+  : m === 'practice' ? 'Latihan' : m);
 
 /** Laporan teks polos untuk dikirim ke pengembang (murni, diuji). */
 export function reportText(prev: BBSession | null, cur: BBSession): string {
