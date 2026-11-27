@@ -26,6 +26,7 @@ import { Entity } from '../entities/Entity';
 import { TacticalBot } from '../entities/TacticalBot';
 import type { AnimState } from '../entities/BlockyCharacter';
 import { mapTempo, moveFeel } from '../entities/moveFeel';
+import { newSpecCam, resetSpecCam, stepSpecCam } from '../entities/specCam';
 import { botVariant, characterArt, type Variant } from '../entities/CharacterArt';
 import { vennyTemplate } from '../entities/venny/rig';
 import type { Team } from '../entities/BlockyCharacter';
@@ -210,6 +211,15 @@ export class Game {
   private movers = new Map<Entity, number>();
   private specTarget: Entity | null = null;
   private specSavedMode: 'fps' | 'tps' | null = null;
+  /** Menonton: sudut kamera di sekeliling rekan (specCam), sudut yang sedang diterapkan (diperhalus), rekan yang badannya
+   *  disembunyikan (kamera di matanya / menempel badannya) + data untuk fungsi `specFree` (tanpa closure per frame). */
+  private readonly spec = newSpecCam();
+  private specOffNow = 0;
+  private specHidden: Entity | null = null;
+  private readonly specFeet = new THREE.Vector3();
+  private specCrouch = 0;
+  private specYaw = 0;
+  private readonly specFree = (off: number) => ctx.camRig.armFree(this.specFeet, this.specCrouch, this.specYaw + off, ctx.camRig.pitch);
   private heartT = 0;
   private lastCount = -1;
   private baseLight = { sun: 1, hemi: 1 };
@@ -1214,7 +1224,17 @@ export class Game {
   private stopSpectate() {
     if (this.specSavedMode) { ctx.camRig.mode = this.specSavedMode; this.specSavedMode = null; }
     this.specTarget = null;
+    this.specHide(null);
+    resetSpecCam(this.spec); this.specOffNow = 0;
     if (ctx.hud) ctx.hud.spectating = null;
+  }
+
+  /** Badan rekan yang ditonton disembunyikan selama kamera di matanya / menempel badannya; rekan lain dipulihkan. */
+  private specHide(e: Entity | null) {
+    const h = this.specHidden;
+    if (h && h !== e) h.char.setVisible(h.alive);
+    this.specHidden = e;
+    if (e) e.char.setVisible(false);
   }
 
   private applySettings(s: Settings) {
@@ -2054,7 +2074,10 @@ export class Game {
       else if (!p.alive && isRoundMode(this.mode) && this.spectate(dt, cam)) { /* menonton rekan */ }
       else rig.update(dt, p.alive ? p.renderPos : this.deathCamFeet(p), p.ctrl.eyeHeight, p.ctrl.crouchT, ctx.scope.armScale(p), cam);
       cam.layers.enable(0);
-      if (rig.isFpsView && !ctx.debug.noclip && !kcCam && !this.specTarget) cam.layers.disable(1); else cam.layers.enable(1);
+      // badan sendiri (layer 1) tidak dirender di FPS — juga di TPS saat lengan kamera terlalu pendek (mundur menempel dinding:
+      // spring arm 0.6 u = kamera di dalam badan)
+      const ownHidden = rig.isFpsView || (p.alive && rig.nearBody);
+      if (ownHidden && !ctx.debug.noclip && !kcCam && !this.specTarget) cam.layers.disable(1); else cam.layers.enable(1);
     } else this.menuCamera(dt, cam);
 
     // chat: Y semua / U tim / H pesan cepat lalu 1–6 (sebelum senjata: angka di menu pesan cepat tidak mengganti senjata)
@@ -2174,24 +2197,31 @@ export class Game {
     m.stepPhase = THREE.MathUtils.lerp(c.prevStepPhase, c.stepPhase, alpha);
   }
 
-  /** Eliminasi: setelah mati (dan killcam selesai) kamera TPS mengikuti rekan hidup; klik kiri / Spasi = ganti rekan. */
+  /** Mode ronde: setelah mati (dan killcam selesai) kamera TPS mengikuti rekan hidup; klik kiri / Spasi = ganti rekan.
+   *  Rekan membelakangi dinding/pilar/peti → kamera mengitari rekan ke sudut bebas (specCam); pojok sempit → tampilan mata. */
   private spectate(dt: number, cam: THREE.PerspectiveCamera): boolean {
     const p = ctx.player!, rig = ctx.camRig, inp = this.input;
     const mates = ctx.entities.filter(e => e.alive && e.team === p.team && e !== p);
-    if (!mates.length) { this.specTarget = null; return false; }
+    if (!mates.length) { this.specTarget = null; this.specHide(null); return false; }
     if (this.specTarget && !mates.includes(this.specTarget)) this.specTarget = null;
     const cycle = !this.paused && inp.captured && (inp.mousePressed[0] || inp.actPressed('jump'));
     if (!this.specTarget || cycle) {
       const i = this.specTarget ? mates.indexOf(this.specTarget) : -1;
       this.specTarget = mates[(i + 1) % mates.length];
-      if (this.specSavedMode === null) { this.specSavedMode = rig.mode; rig.mode = 'tps'; }
+      if (this.specSavedMode === null) this.specSavedMode = rig.mode;
       rig.yaw = this.specTarget.yaw; rig.pitch = this.specTarget.pitch;
+      resetSpecCam(this.spec); this.specOffNow = 0;
     }
-    const t = this.specTarget, k = 1 - Math.exp(-10 * dt);
-    rig.yaw += wrapA(t.yaw - rig.yaw) * k;
+    const t = this.specTarget, k = 1 - Math.exp(-10 * dt), S = XCFG.camera.spectate;
+    this.specFeet.copy(t.renderPos); this.specCrouch = t.ctrl.crouchT; this.specYaw = t.yaw;
+    stepSpecCam(this.spec, this.specFree, dt, S);
+    this.specOffNow += wrapA(this.spec.off - this.specOffNow) * (1 - Math.exp(-S.turn * dt));
+    rig.mode = this.spec.eye ? 'fps' : 'tps';
+    rig.yaw += wrapA(t.yaw + (this.spec.eye ? 0 : this.specOffNow) - rig.yaw) * k;
     rig.pitch += (t.pitch - rig.pitch) * k;
     rig.clampPitch();
     rig.update(dt, t.renderPos, t.ctrl.eyeHeight, t.ctrl.crouchT, 1, cam);
+    this.specHide(this.spec.eye || rig.isFpsView || rig.nearBody ? t : null);
     return true;
   }
 

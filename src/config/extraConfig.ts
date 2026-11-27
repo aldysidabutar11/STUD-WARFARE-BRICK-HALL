@@ -271,6 +271,16 @@ export const XCFG = {
   elim: { roundTime: 120, roundEnd: 3.5, roundsToWin: 5 },
   practice: { dummyRespawn: 2.0, moverRange: 5.0 },
   killcam: { hz: 30, history: 6, deathCam: 0.9, preDeath: 2.8, postDeath: 0.3, noReplayHold: 2.2, unitToMeter: 0.36 },
+  // Kamera TPS (bukan GDD; disetujui pengguna 2026-11-27). Spring arm §9.2 memendek sampai 0.6 u — di DALAM kapsul berjari-jari 0.8 —
+  // saat ada dinding/pilar di belakang: badan yang diikuti disembunyikan bila lengan < hideBodyDist (pemain sendiri di TPS & rekan
+  // yang ditonton). Menonton rekan (mode ronde): kamera mengitari rekan mencari sudut bebas (src/entities/specCam.ts): sudut sekarang
+  // dipertahankan selama lengan ≥ keep; terhalang → sudut pertama offsetsDeg (terkecil dulu) dengan lengan ≥ want; semua < eye →
+  // tampilan dari mata rekan (badannya disembunyikan); kembali ke belakang rekan setelah arah 0 bebas backAfter s; putar `turn` /s.
+  camera: {
+    hideBodyDist: 1.4,
+    spectate: { want: 2.6, keep: 1.9, eye: 1.2, offsetsDeg: [0, 35, -35, 70, -70, 110, -110, 150, -150, 180] as readonly number[],
+      turn: 6, backAfter: 0.6, stayBonus: 0.25 },
+  },
   radar: { size: 184, range: 42, pxPerUnit: 5, shotReveal: 1.6, spotReveal: 1.2, levelDiff: 5 },
   nameplate: { allyRange: 90, enemyLinger: 0.45, height: 6.2, heightCrouch: 4.9 },
   announce: { multiWindow: 4.0, assistWindow: 10, assistScore: 50, killCreditWindow: 5, medalTime: 1.8, popupTime: 1.5 },

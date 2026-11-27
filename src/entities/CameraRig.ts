@@ -10,6 +10,8 @@ const C = CFG.camera, F = XCFG.feel;
 const D2R = THREE.MathUtils.degToRad;
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 const _rollQ = new THREE.Quaternion(), _zAxis = new THREE.Vector3(0, 0, 1);
+// armFree (tanpa mengubah keadaan kamera)
+const _fe = new THREE.Euler(0, 0, 0, 'YXZ'), _fq = new THREE.Quaternion(), _fp = new THREE.Vector3(), _fa = new THREE.Vector3();
 
 export type ViewMode = 'fps' | 'tps';
 
@@ -70,6 +72,23 @@ export class CameraRig {
   swapShoulder() { this.sideTarget = -this.sideTarget; }
   get isFpsView() { return this.blend < 0.5 || this.lensForced; }
   get shoulder() { return this.sideTarget; }
+  /** Tampilan TPS dengan lengan spring arm lebih pendek dari XCFG.camera.hideBodyDist: kamera di/menempel badan yang diikuti
+   *  (jarak minimal GDD 0.6 < jari-jari kapsul 0.8) → badan itu disembunyikan pemanggil. */
+  get nearBody() { return !this.isFpsView && this.camDist < XCFG.camera.hideBodyDist; }
+
+  /**
+   * Panjang lengan TPS yang akan dipakai spring arm (§9.2: max(t − 0.3, 0.6), atau penuh 4.774 bila bebas) bila kamera menghadap
+   * (yaw, pitch) dengan kaki di `feet` — tanpa mengubah keadaan kamera. Dipakai mode menonton untuk mencari sudut bebas.
+   */
+  armFree(feet: THREE.Vector3, crouchT: number, yaw: number, pitch: number): number {
+    _fq.setFromEuler(_fe.set(pitch, yaw, 0, 'YXZ'));
+    _fp.set(feet.x, feet.y + THREE.MathUtils.lerp(C.tpsPivotY, C.tpsPivotYCrouch, crouchT), feet.z);
+    _fa.set(this.sideTarget * C.tpsArm[0], C.tpsArm[1], C.tpsArm[2]).applyQuaternion(_fq);
+    const len = _fa.length();
+    _fa.divideScalar(len);
+    const hit = physics.sphereCast(_fp, _fa, C.springRadius, len, QUERY.CAMERA);
+    return hit >= 0 ? Math.max(hit - C.springMargin, C.springMinDist) : len;
+  }
 
   /** Mulai transisi FOV (easeOutCubic selama `dur`). */
   setFovTarget(fov: number, dur: number) {

@@ -294,7 +294,7 @@ export class BombSystem {
     const m = this.mesh;
     if (this.state === 'carried') {
       const e = ctx.byId.get(this.carrier);
-      const show = !!e && e.alive && e.char.root.visible && !(e === ctx.player && ctx.camRig.isFpsView);
+      const show = !!e && e.alive && e.char.root.visible && !(e === ctx.player && (ctx.camRig.isFpsView || ctx.camRig.nearBody));
       m.visible = show;
       if (show && e) {                                       // di punggung (ransel taktis): belakang dada, setinggi punggung atas
         const yaw = e.char.root.rotation.y, back = e.ctrl.crouched ? 2.2 : 2.95;

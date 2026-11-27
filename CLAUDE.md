@@ -59,6 +59,10 @@
 - Rapier: world.step() dijalankan sekali setelah membangun map sebelum raycast/validator; setelah teleport/respawn
   panggil world.propagateModifiedBodyPositionsToColliders().
 - PCFSoftShadowMap deprecated sejak three r186 → HIGH memakai PCFShadowMap + shadow.radius.
+- Kamera TPS: badan yang diikuti disembunyikan bila lengan spring arm < `XCFG.camera.hideBodyDist` 1.4 u (disetujui pengguna 2026-11-27;
+  GDD §9 menyebut seluruh balok terlihat di TPS, tetapi jarak minimal spring arm 0.6 < jari-jari kapsul 0.8 → kamera berada DI DALAM
+  badan saat mundur menempel dinding). `CameraRig.nearBody`; pemain sendiri = layer 1 dimatikan (C4 di punggung ikut disembunyikan),
+  rekan yang ditonton = `char.setVisible(false)`. Angka spring arm GDD (0.25 / 0.3 / 0.6 / 8 u/s) tidak diubah. Lihat "Menonton rekan".
 - Resolusi dinamis §2.3 sadar refresh layar (disetujui pengguna): ambang GDD 17.5/13 ms mengasumsikan layar 60 Hz (di 90 Hz game diam
   di 60–80 FPS dengan judder). Target = vsync × batas FPS; min/max/langkah/jeda 2 s/waktu baik 4 s tetap nilai GDD (lihat "Kehalusan frame").
 - Preset ULTRA di luar §15 (CFG.render.presets tetap verbatim): `presetOf()` di src/config/presets.ts; tipe `Preset` dilebarkan jadi interface.
@@ -798,6 +802,19 @@
   bolong di layar teman, kill host hanya di layar host), 1920…800 px tanpa tabrakan amunisi/bar/chat, 0 error konsol. Skrip lokal
   (scratchpad, bisa hilang): pw/kstars.js, kstars_online.js, kstars_menu.js. Dijaga tests/killStars.test.ts.
 
+- Menonton rekan tanpa "kamera di dalam kepala" (laporan pengguna 2026-11-27 + 2 tangkapan layar: setelah mati, layar MENONTON hanya
+  menampilkan pilar/pojok tanpa badan rekan; disetujui "gas kerjakan semua"): sebabnya rekan membelakangi pilar/dinding/peti → spring
+  arm §9.2 memendek ke 0.6 u = di dalam kapsul 0.8 (terukur: rekan menempel pilar Atrium B / dinding Barat / pilar West Long → kamera
+  0.6 u dari leher, normal 4.77). Kini `src/entities/specCam.ts` (murni, tanpa alokasi): tiap frame `CameraRig.armFree` (sphere cast
+  spring arm yang sama, tanpa mengubah kamera) mengukur lengan; sudut sekarang dipertahankan selama ≥ keep 1.9 u; terhalang → sudut
+  pertama 0/±35/±70/±110/±150/180° dengan lengan ≥ want 2.6 u (sudut sekarang dapat bonus 0.25 agar tidak berkedip); semua < eye
+  1.2 u → tampilan dari mata rekan (rig 'fps', badannya disembunyikan) sampai ada arah ≥ want; kembali ke belakang rekan setelah arah 0
+  bebas 0.6 s; sudut diperhalus 6/s (angka `XCFG.camera.spectate`). `Game.spectate / specHide / stopSpectate` memulihkan visibilitas.
+  Terukur (browser): 3 pose menempel → sudut 70°, lengan 4.77 u, badan rekan terlihat; menonton bot alami 150 s (123 sampel): lengan
+  median 4.77 / p10 3.68, sudut ≠ 0 12×, mata 0×, < 1.4 u hanya 2 sampel singkat saat lewat celah spawn Biru (badan disembunyikan);
+  TPS sendiri menempel pilar → lengan 0.6 → badan disembunyikan, menjauh → tampil lagi; 0 error konsol. Skrip lokal (scratchpad):
+  pw/spec_wall3.js, spec_nat.js, tps_wall.js. Dijaga tests/specCam.test.ts.
+
 - Map Meridian Vault + mode Bomb Mission (permintaan pengguna 2026-11-27; dokumen pengguna "IDE MAP BARU (BOMB MISSION)/Stud Warfare —
   Blueprint Map Meridian Vault & Mode Bomb Mission.pdf" + 4 gambar Gemini, lokal saja, jangan di-commit; layout orisinal bank sentral,
   nama mode generik; review dilaporkan dulu → pengguna "gas", setuju semua saran):
@@ -900,7 +917,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 546 test Vitest / 35 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 556 test Vitest / 36 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -922,7 +939,8 @@
   maks 10 + "+N", bentuk bintang, setelan (tests/killStars.test.ts), Meridian Vault: balok tanpa tumpang-tindih, pita cover, tangga,
   lubang tertutup, spawn & zona bom, nav (node bebas, pijakan, edge, validate, nearest per lantai, lane), garis pandang spawn = 0
   (tests/meridian.test.ts), Bomb Mission: test vector dokumen §8.3, matriks menang, giliran pembawa, syarat jinak, BombNet, cadangan,
-  mode/setelan/tombol 6 (tests/bombMission.test.ts)) hijau;
+  mode/setelan/tombol 6 (tests/bombMission.test.ts), kamera menonton mengitari rekan / tampilan mata / badan disembunyikan saat
+  lengan TPS pendek, collider Rapier Meridian (tests/specCam.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;
