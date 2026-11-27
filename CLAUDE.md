@@ -785,6 +785,19 @@
     (vitest `css.include: /hud\.css/` agar `?raw` berisi). Terukur: semua layar tanpa elemen meluber di 800×500 / 1280×720 /
     1366×768 / 1920×1080.
 
+- Bintang kill (permintaan pengguna 2026-11-27; desain usulan Claude disetujui "setuju semua saran"): di kanan bar HP (`.hp` →
+  `.kstars`, `src/ui/KillStars.ts`) satu bintang emas per kill dalam NYAWA INI; kill headshot = bintang BOLONG di tengah (lubang peluru:
+  mask radial + cincin gelap). Jumlah = `Entity.streak` (hitungan medali streak & papan "Streak Terpanjang", host & klien) → mati,
+  respawn, ronde Eliminasi baru = kosong (bintang memudar berurutan); match baru = kosong seketika (`Game.startMatch`; lanjut match
+  setelah pindah host TIDAK direset → pola headshot tetap, streak dari cadangan → bintang biasa). Pola headshot dari event 'kill'
+  (`killEarnsStar`: kill sendiri atas musuh selagi hidup — kill yang dikreditkan setelah mati tidak memunculkan bintang).
+  Maks `XCFG.hud.killStars.max` 10 bintang, sisanya "+N"; jarak tiap `group` 5 (selaras KILLING SPREE 5 / RAMPAGE 10). Bentuk =
+  clip-path dari `starGeometry` (prosedural), sisi timbul conic-gradient, animasi muncul/pudar (ms di XCFG; `prefers-reduced-motion`).
+  Layar ≤ 1100 px bintang 20 px; ≤ 860 px naik ke atas bar HP (16 px) agar tidak menabrak panel amunisi. Setelan `killStars`
+  (Pengaturan → HUD, bawaan ON). Terukur (browser): Latihan/TDM/Eliminasi + online 2 jendela (kill teman dihitung host → bintang &
+  bolong di layar teman, kill host hanya di layar host), 1920…800 px tanpa tabrakan amunisi/bar/chat, 0 error konsol. Skrip lokal
+  (scratchpad, bisa hilang): pw/kstars.js, kstars_online.js, kstars_menu.js. Dijaga tests/killStars.test.ts.
+
 - Map Boston (permintaan pengguna 2026-11-26; dokumen pengguna "IDE MAP BARU/Stud Warfare — Blueprint Map Boston.pdf" + 4 gambar Gemini,
   lokal saja, jangan di-commit; adaptasi lantai 3 & 4 kantor pengguna sendiri — layout orisinal, bukan replika map game lain):
   - `src/world/maps/boston/`: `layout.ts` (data ditulis dalam koordinat DOKUMEN — Utara = +Z, Biru L4 di Utara — lalu DIPUTAR 180°
@@ -823,7 +836,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 495 test Vitest / 32 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 506 test Vitest / 33 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -841,7 +854,8 @@
   lintasan = body Rapier (lantai/dinding/grup tabrakan/sumbu habis/jarak lempar/rumus balistik bot), flash pelempar × 0.5, setelan nadeArc
   (tests/throw.test.ts), akun & leaderboard: aturan murni + cermin SQL (tests/accounts.test.ts) & keamanan SQL di Postgres asli PGlite
   (tests/accountsSql.test.ts), kehalusan lari: lantai datar tanpa macet, tangga Boston naik/turun konstan, batas udara saat lepas
-  tanah, rekan setim tembus / musuh menahan (tests/runSmooth.test.ts), tipografi: CSS = TS, font sistem saja (tests/fonts.test.ts)) hijau;
+  tanah, rekan setim tembus / musuh menahan (tests/runSmooth.test.ts), tipografi: CSS = TS, font sistem saja (tests/fonts.test.ts), bintang kill: nyawa/mati/ronde/lanjut match, aturan event kill,
+  maks 10 + "+N", bentuk bintang, setelan (tests/killStars.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

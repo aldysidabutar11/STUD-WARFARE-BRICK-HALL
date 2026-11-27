@@ -803,6 +803,7 @@ export class Menus {
         ${onOff('killcam', 'Killcam (replay dari mata pembunuh)')}
         ${onOff('dmgNumbers', 'Angka damage melayang')}
         ${onOff('nadeArc', 'Garis lintasan & titik jatuh granat / flashbang')}
+        ${onOff('killStars', 'Bintang kill di samping HP (bolong = headshot)')}
         ${onOff('chatBots', 'Laporan musuh dari bot di chat tim')}
         ${sel('fullPause', 'Jeda penuh saat pause', [['false', 'Off (bot tetap jalan)'], ['true', 'On']])}
       </div>

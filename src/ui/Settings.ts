@@ -52,6 +52,8 @@ export interface Settings {
   minimap: boolean; nameplates: boolean; killcam: boolean; dmgNumbers: boolean;
   /** Garis lintasan + titik jatuh saat memegang granat / flashbang (vfx/ThrowArcView). */
   nadeArc: boolean;
+  /** Bintang kill beruntun nyawa ini di kanan bar HP, bolong = headshot (ui/KillStars). */
+  killStars: boolean;
   /** Callout bot (laporan musuh) ikut tampil di chat tim. */
   chatBots: boolean;
   /** Voice chat (dengar & bicara) + volumenya (0–100). */
@@ -71,7 +73,7 @@ export const DEFAULTS: Settings = {
   xhOutline: true, xhOutlineThick: 1, xhOutlineAlpha: 0.75, xhDynMult: 1,
   brightness: 1.0, shake: 100, renderScale: 0, fpsCap: 1,
   gfxBloom: true, gfxSsao: true, gfxReflect: true, gfxFog: true, gfxDust: true,
-  minimap: true, nameplates: true, killcam: true, dmgNumbers: false, nadeArc: true, chatBots: true, voice: true, volVoice: 90,
+  minimap: true, nameplates: true, killcam: true, dmgNumbers: false, nadeArc: true, killStars: true, chatBots: true, voice: true, volVoice: 90,
 };
 
 const clamp = (v: unknown, a: number, b: number, d: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(b, Math.max(a, v)) : d);
@@ -116,7 +118,7 @@ export function validate(raw: Partial<Settings> | null): Settings {
     renderScale: pick(r.renderScale, RENDER_SCALES, 0), fpsCap: pick(r.fpsCap, FPS_CAPS, 1),
     minimap: bool(r.minimap, D.minimap), nameplates: bool(r.nameplates, D.nameplates), killcam: bool(r.killcam, D.killcam),
     chatBots: bool(r.chatBots, D.chatBots), voice: bool(r.voice, D.voice), volVoice: clamp(r.volVoice, 0, 100, D.volVoice),
-    dmgNumbers: bool(r.dmgNumbers, D.dmgNumbers), nadeArc: bool(r.nadeArc, D.nadeArc),
+    dmgNumbers: bool(r.dmgNumbers, D.dmgNumbers), nadeArc: bool(r.nadeArc, D.nadeArc), killStars: bool(r.killStars, D.killStars),
   };
 }
 

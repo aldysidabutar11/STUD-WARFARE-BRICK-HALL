@@ -237,7 +237,11 @@ export const XCFG = {
   // crosshair kustom (pasca-MVP): mekar tembakan per peluru / maks (px) & pulih (px/s), jarak garis luar mode Hybrid
   hud: { crosshairLen: 8, crosshairWidth: 2, crosshairBaseGap: 3, xhFireKick: 5, xhFireMax: 16, xhFireRecover: 32, xhSplitGap: 3,
     hpBar: [220, 10], killFeedMax: 5, killFeedTime: 5,
-    lensDiameter: 0.84 },
+    lensDiameter: 0.84,
+    // bintang kill di kanan bar HP (permintaan pengguna 2026-11-27; ui/KillStars.ts): maks bintang (sisanya angka "+N"), kelompok per
+    // `group` (selaras medali KILLING SPREE 5 / RAMPAGE 10), jari-jari dalam bintang ÷ luar, durasi animasi muncul / pudar (+ jeda
+    // berurutan per bintang) dalam ms
+    killStars: { max: 10, group: 5, inner: 0.46, popMs: 380, outMs: 320, outStaggerMs: 35 } },
   menu: { orbitRadius: 48, orbitHeight: 26, orbitSpeed: 0.06 },
 
   // ── fitur pasca-MVP / pembanding game FPS lain (BUKAN dari GDD; angka desain baru, mudah disetel di sini)

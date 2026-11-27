@@ -713,6 +713,7 @@ export class Game {
     this.menus.hide();
     ctx.hud.clearFeed(); ctx.hud.showBanner('', '#fff');
     this.killcam.reset(); this.minimap.reset(); this.announcer.reset(true);
+    if (!net?.resume) ctx.hud.killStars.reset();   // lanjut match (pindah host): bintang + pola headshot nyawa ini tetap
     this.botChat.reset(); this.chat.close(false); this.chat.closeQuick();
     this.stopSpectate();
     this.stress = null;

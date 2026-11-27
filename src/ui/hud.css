@@ -119,6 +119,43 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #120b06; col
 .hp .bar { width: 220px; height: 10px; background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(255, 255, 255, 0.3); margin-bottom: 6px; }
 .hp .bar i { display: block; height: 100%; background: #f4efe6; transition: width 0.15s; }
 .hp.low .num { color: #ff4a3d; } .hp.low .bar i { background: #ff4a3d; }
+/* ── bintang kill (ui/KillStars.ts; permintaan pengguna 2026-11-27): kill beruntun nyawa ini di kanan bar HP. Bentuk = clip-path dari
+   starGeometry (--ks-clip, pusat bintang --ks-cy), sisi timbul = conic-gradient bersudut 36° dari pusat bintang, bolong headshot = mask
+   radial + cincin gelap (lubang peluru), garis tepi gelap & bayangan = drop-shadow. Mati / ronde baru → memudar berurutan (.out). */
+.kstars { --ks-size: 26px; --ks-hole: max(1.6px, calc(var(--ks-size) * 0.12)); --ks-rim: calc(var(--ks-hole) + max(0.8px, calc(var(--ks-size) * 0.045)));
+  display: flex; align-items: center; height: var(--ks-size); margin-bottom: -2px; }
+.kstars.off { display: none; }
+.ks-list { display: flex; align-items: center; gap: 2px; }
+.ks { position: relative; flex: none; width: var(--ks-size); height: var(--ks-size);
+  filter: drop-shadow(0 0 0.6px #2b1800) drop-shadow(0 0 0.6px #2b1800) drop-shadow(0 2px 2px rgba(0, 0, 0, 0.75)); }
+.ks.gs { margin-left: calc(var(--ks-size) * 0.3); }
+.ks b { position: absolute; inset: 0; clip-path: var(--ks-clip);
+  background: repeating-conic-gradient(at 50% var(--ks-cy), rgba(0, 0, 0, 0.13) 0deg 36deg, rgba(255, 255, 255, 0.32) 36deg 72deg),
+    linear-gradient(180deg, #fff3ad 0%, #f5cd30 48%, #cf8b0b 100%); }
+.ks.hs b {
+  background: radial-gradient(circle at 50% var(--ks-cy), #2b1800 0 var(--ks-rim), transparent calc(var(--ks-rim) + 0.6px)),
+    repeating-conic-gradient(at 50% var(--ks-cy), rgba(0, 0, 0, 0.13) 0deg 36deg, rgba(255, 255, 255, 0.32) 36deg 72deg),
+    linear-gradient(180deg, #fff3ad 0%, #f5cd30 48%, #cf8b0b 100%);
+  -webkit-mask: radial-gradient(circle at 50% var(--ks-cy), transparent 0 var(--ks-hole), #000 calc(var(--ks-hole) + 0.6px));
+  mask: radial-gradient(circle at 50% var(--ks-cy), transparent 0 var(--ks-hole), #000 calc(var(--ks-hole) + 0.6px)); }
+.ks.pop { animation: ks-pop var(--ks-pop) cubic-bezier(0.2, 0.9, 0.3, 1.25) both; }
+.ks-more { margin-left: calc(var(--ks-size) * 0.3); font-family: var(--font-display); font-stretch: condensed; font-weight: 800;
+  font-size: calc(var(--ks-size) * 0.85); line-height: 1; color: var(--gold); font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 2px #2b1800, 0 2px 3px #000; }
+.ks-more:empty { display: none; }
+.ks-more.pop { animation: ks-pop var(--ks-pop) cubic-bezier(0.2, 0.9, 0.3, 1.25) both; }
+.kstars.out .ks, .kstars.out .ks-more { animation: ks-out var(--ks-out) ease-in both; }
+.kstars.out .ks { animation-delay: calc(var(--i) * var(--ks-stagger)); }
+@keyframes ks-pop { 0% { opacity: 0; transform: scale(0.15) rotate(-70deg); } 55% { opacity: 1; transform: scale(1.4) rotate(8deg); }
+  100% { opacity: 1; transform: none; } }
+@keyframes ks-out { 0% { opacity: 1; transform: none; } 30% { opacity: 1; transform: scale(1.18); }
+  100% { opacity: 0; transform: translateY(35%) scale(0.2) rotate(40deg); } }
+@media (max-width: 1100px) { .kstars { --ks-size: 20px; } }
+/* layar sempit: bintang naik ke atas bar HP (kanan angka HP) agar tidak menabrak panel amunisi */
+@media (max-width: 860px) { .hp .kstars { --ks-size: 16px; position: absolute; left: 88px; bottom: 20px; } }
+@media (prefers-reduced-motion: reduce) {
+  .ks.pop, .ks-more.pop, .kstars.out .ks, .kstars.out .ks-more { animation-duration: 1ms; animation-delay: 0ms; }
+}
 
 .ammo { position: absolute; right: 24px; bottom: 24px; text-align: right; text-shadow: 0 2px 4px #000; }
 .ammo .cnt { font-size: 40px; font-weight: 800; line-height: 1; }

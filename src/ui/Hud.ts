@@ -1,6 +1,6 @@
 // src/ui/Hud.ts — HUD overlay DOM (GDD §13, §7.4, §6.1). Teks hanya diperbarui saat nilainya berubah.
 // Tambahan pasca-MVP: crosshair kustom, prompt reload/amunisi, kilat luka, indikator granat, kartu pembunuh & killcam,
-// status menonton, pip pemain hidup (Eliminasi), bar progres reload.
+// status menonton, pip pemain hidup (Eliminasi), bar progres reload, bintang kill nyawa ini di kanan bar HP (ui/KillStars).
 import * as THREE from 'three';
 import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
@@ -14,6 +14,7 @@ import type { Entity } from '../entities/Entity';
 import type { Settings } from './Settings';
 import type { DroppedWeapon } from '../combat/WeaponDrops';
 import { Crosshair } from './Crosshair';
+import { KillStars, killEarnsStar } from './KillStars';
 
 /** Nama pemain dari jaringan → teks aman di innerHTML (nama juga sudah dibersihkan cleanName). */
 const escHtml = (t: string) => t.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -81,6 +82,8 @@ export class Hud {
   private dmgWrap = h('div', 'dmg-ind');
   private dmgArcs: { el: SVGPathElement; t: number; x: number; z: number }[] = [];
   private hp = h('div', 'hp', '<div class="num">100</div><div class="bar"><i style="width:100%"></i></div>');
+  /** Bintang kill beruntun nyawa ini (bolong = headshot), di kanan bar HP. */
+  readonly killStars = new KillStars();
   private ammo = h('div', 'ammo', '<div class="wname"></div><div class="cnt">30 <small>| 120</small></div><div class="meta"><span class="badge mode">AUTO</span><span class="optic"></span><span class="gren"><i></i>×1</span></div>');
   private score = h('div', 'score', '<span class="b">BIRU 0</span><span class="sep">—</span><span class="r">0 MERAH</span><span class="sep">·</span><span class="t">10:00</span>');
   private pips = h('div', 'pips', '<span class="pb"></span><span class="pr"></span>');
@@ -126,6 +129,7 @@ export class Hud {
       this.dmgArcs.push({ el: p, t: 0, x: 0, z: 0 });
     }
     for (let i = 0; i < 4; i++) { const g = h('div', 'gw', '<i></i><b>!</b>'); g.style.display = 'none'; this.gw.push(g); }
+    this.hp.appendChild(this.killStars.el);
     this.flashImg.className = 'flash-img';
     this.root.append(this.flashImg, this.flashEl);   // paling bawah di HUD: widget HUD tetap terlihat di atas layar putih
     this.root.append(this.lens, this.dot, this.hurt, this.vign, this.xh, this.hm, this.ring, this.rbar, this.dmgWrap, this.hp, this.ammo, this.slots,
@@ -145,7 +149,9 @@ export class Hud {
     bus.on('kill', (e) => {
       const k = ctx.byId.get(e.killerId), v = ctx.byId.get(e.victimId);
       if (!v) return;
-      if (ctx.player && e.killerId === ctx.player.id && e.victimId !== ctx.player.id) this.hitmarker('kill');
+      const p = ctx.player;
+      if (p && e.killerId === p.id && e.victimId !== p.id) this.hitmarker('kill');
+      if (killEarnsStar(e, p, v.team)) this.killStars.onKill(e.headshot);
       this.killfeed(k ?? v, v, e.weaponId, e.headshot);
     });
   }
@@ -269,6 +275,8 @@ export class Hud {
       this.hp.classList.toggle('low', hpv < XCFG.vfx.lowHpVignette);
     });
     this.vign.style.opacity = p.alive && p.hp < XCFG.vfx.lowHpVignette ? '1' : '0';
+    // bintang kill = streak PEMAIN (bukan rekan yang ditonton): mati → kosong
+    this.killStars.update(ctx.settings.killStars, p.alive, p.streak);
     // amunisi, mode, optik, granat (pisau: tanpa angka amunisi)
     const grenadeHeld = w.slot === 'grenade', flashHeld = w.slot === 'flash', knifeHeld = w.slot === 'knife', gunHeld = w.holdingGun;
     const lowAmmo = gunHeld && w.ammo <= Math.ceil(w.def.magSize * 0.3);
