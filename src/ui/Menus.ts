@@ -23,7 +23,7 @@ import { XCFG } from '../config/extraConfig';
 import { ctx } from '../game/ctx';
 import { cleanName, formatRoomCode, parseRoomCode, type Lobby, type MapChoice, type RoomSettings, type SlotView } from '../game/Lobby';
 import { MAPS } from '../world/maps/registry';
-import { MAP_IDS, type MapId } from '../world/maps/types';
+import { BOMB_MAP_IDS, MAP_IDS, isBombMap, type MapId } from '../world/maps/types';
 import { mapFacts, paintThumbs, thumbHTML } from './MapThumb';
 import type { Team } from '../entities/BlockyCharacter';
 import type { JoinFail } from '../net/Session';
@@ -410,7 +410,7 @@ export class Menus {
       <div class="modes">
         <div class="mode" data-m="tdm" tabindex="0"><b>Team Deathmatch</b><span>Respawn 4 s. Tim pertama mencapai target kill, atau skor tertinggi saat waktu habis, menang.</span></div>
         <div class="mode" data-m="elim" tabindex="0"><b>Eliminasi</b><span>Tanpa respawn dalam ronde (2:00). Habisi tim lawan; yang mati menonton rekan. Menang ronde terbanyak.</span></div>
-        <div class="mode" data-m="bomb" tabindex="0"><b>Bomb Mission</b><span>Meridian Vault, 1 nyawa per ronde. Penyerang menanam C4 di zona A/B (tahan E), bertahan menjinakkan. First to 5, tukar sisi setelah ronde 4.</span></div>
+        <div class="mode" data-m="bomb" tabindex="0"><b>Bomb Mission</b><span>Meridian Vault / Candi Arunika, 1 nyawa per ronde. Penyerang menanam C4 di zona A/B (tahan E), bertahan menjinakkan. First to 5, tukar sisi setelah ronde 4.</span></div>
       </div>
       <div class="set-row bomb-only"><span>Aturan</span><span class="bsub">Ronde 2:00 · sumbu C4 0:40 · tanam 4 s · jinak 5 s · tombol 6 pegang C4</span><span></span></div>
       <div class="set-row tdm-only"><span>Target kill</span>${opt('scoreLimit', SCORE_LIMITS, v => `${v} kill`)}<span></span></div>
@@ -427,11 +427,12 @@ export class Menus {
       m.querySelectorAll<HTMLElement>('.tdm-only').forEach(x => (x.style.display = mode === 'tdm' ? '' : 'none'));
       m.querySelectorAll<HTMLElement>('.elim-only').forEach(x => (x.style.display = mode === 'elim' ? '' : 'none'));
       m.querySelectorAll<HTMLElement>('.bomb-only').forEach(x => (x.style.display = mode === 'bomb' ? '' : 'none'));
-      // Bomb Mission hanya di Meridian Vault → map otomatis dipilih
-      if (mode === 'bomb' && s.map !== 'meridian') {
-        s.map = 'meridian';
-        m.querySelectorAll<HTMLElement>('[data-map]').forEach(x => x.classList.toggle('sel', x.dataset.map === 'meridian'));
-        this.api.selectMap('meridian');
+      // Bomb Mission hanya di map berzona bom → map lain otomatis diganti map bom pertama ("Acak" tetap: diundi di antara map bom)
+      if (mode === 'bomb' && s.map !== 'random' && !isBombMap(s.map)) {
+        const bm = BOMB_MAP_IDS[0];
+        s.map = bm;
+        m.querySelectorAll<HTMLElement>('[data-map]').forEach(x => x.classList.toggle('sel', x.dataset.map === bm));
+        this.api.selectMap(bm);
       }
     };
     m.querySelectorAll<HTMLElement>('.mode').forEach(x => x.addEventListener('click', () => { this.api.click(); setMode(x.dataset.m as 'tdm' | 'elim' | 'bomb'); }));
@@ -443,7 +444,7 @@ export class Menus {
       s.map = c;
       m.querySelectorAll<HTMLElement>('[data-map]').forEach(x => x.classList.toggle('sel', x.dataset.map === c));
       this.api.selectMap(c);
-      if (s.mode === 'bomb' && c !== 'meridian') setMode('tdm');      // map lain tidak punya zona bom
+      if (s.mode === 'bomb' && c !== 'random' && !isBombMap(c)) setMode('tdm');      // map lain tidak punya zona bom
     }));
     this.bindInputs(m, s);
     this.on(m, 'start', () => { this.api.applySettings(s); this.api.play(false); });
@@ -551,7 +552,7 @@ export class Menus {
         <div class="modes">
           <div class="mode ${st.mode === 'tdm' ? 'sel' : ''}" data-m="tdm" tabindex="0"><b>Team Deathmatch</b><span>Respawn 4 s, target kill / skor tertinggi.</span></div>
           <div class="mode ${st.mode === 'elim' ? 'sel' : ''}" data-m="elim" tabindex="0"><b>Eliminasi</b><span>Tanpa respawn dalam ronde, menang ronde terbanyak.</span></div>
-          <div class="mode ${st.mode === 'bomb' ? 'sel' : ''}" data-m="bomb" tabindex="0"><b>Bomb Mission</b><span>Meridian Vault: tanam / jinakkan C4, first to 5.</span></div>
+          <div class="mode ${st.mode === 'bomb' ? 'sel' : ''}" data-m="bomb" tabindex="0"><b>Bomb Mission</b><span>Meridian Vault / Candi Arunika: tanam / jinakkan C4, first to 5.</span></div>
         </div>
         <div class="hs-grid">
           ${st.mode === 'tdm'
@@ -580,12 +581,13 @@ export class Menus {
     m.querySelectorAll<HTMLElement>('.mode').forEach(x => x.addEventListener('click', () => {
       if (!host) return;
       const mode = x.dataset.m as RoomSettings['mode'];
-      this.api.click(); act({ type: 'settings', patch: mode === 'bomb' ? { mode, map: 'meridian' } : { mode } });
+      const keep = st.map === 'random' || isBombMap(st.map);
+      this.api.click(); act({ type: 'settings', patch: mode === 'bomb' && !keep ? { mode, map: BOMB_MAP_IDS[0] } : { mode } });
     }));
     paintThumbs(m);
     m.querySelectorAll<HTMLButtonElement>('[data-rmap]').forEach(b => b.addEventListener('click', () => {
       const c = b.dataset.rmap as MapChoice;
-      if (host && c !== st.map) act({ type: 'settings', patch: st.mode === 'bomb' && c !== 'meridian' ? { map: c, mode: 'tdm' } : { map: c } });
+      if (host && c !== st.map) act({ type: 'settings', patch: st.mode === 'bomb' && c !== 'random' && !isBombMap(c) ? { map: c, mode: 'tdm' } : { map: c } });
     }));
     m.querySelectorAll<HTMLSelectElement>('select[data-rk]').forEach(se => se.addEventListener('change', () => {
       const k = se.dataset.rk as keyof RoomSettings, v = se.value;

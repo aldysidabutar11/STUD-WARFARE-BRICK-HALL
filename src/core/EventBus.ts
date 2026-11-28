@@ -4,8 +4,9 @@ import type { WeaponId } from '../config/weaponsData';
 import type { MeleeId } from '../config/weaponsExtra';
 
 export type HitPart = 'head' | 'upper' | 'lower' | 'limb';
-/** Material permukaan (langkah kaki, tumbukan peluru, pantulan granat). sand/metal: map luar ruang (Steel Yard); glass: Boston. */
-export type SurfaceMaterial = 'wood' | 'tile' | 'carpet' | 'sand' | 'metal' | 'glass';
+/** Material permukaan (langkah kaki, tumbukan peluru, pantulan granat). sand/metal: map luar ruang (Steel Yard); glass: Boston;
+ *  water: air dangkal Candi Arunika (kolam bisa diseberangi). */
+export type SurfaceMaterial = 'wood' | 'tile' | 'carpet' | 'sand' | 'metal' | 'glass' | 'water';
 export type MatchStateName = 'MENU' | 'LOADOUT' | 'COUNTDOWN' | 'PLAYING' | 'ROUND_END' | 'ENDED' | 'RESULTS';
 export type KillWeapon = WeaponId | 'k400' | 'fall' | 'melee' | MeleeId | 'c4';
 /** Jenis serangan jarak dekat: pukul popor (F) atau pisau (tebas/tusuk). */

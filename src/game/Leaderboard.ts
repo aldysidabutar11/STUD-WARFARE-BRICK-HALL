@@ -57,7 +57,7 @@ export function maskEmail(e: string): string {
 
 // ───────────────────────── papan peringkat
 export type BoardId = 'points' | 'kills' | 'kd' | 'wins' | 'mvp' | 'knife' | 'nade' | 'flash' | 'streak' | 'longest'
-  | 'wins_brickhall' | 'wins_steelyard' | 'wins_boston' | 'wins_meridian';
+  | 'wins_brickhall' | 'wins_steelyard' | 'wins_boston' | 'wins_meridian' | 'wins_arunika';
 export type Period = 'week' | 'all';
 export interface BoardDef { id: BoardId; name: string; desc: string }
 /** Urutan menu. SAMA dengan daftar yang diterima public.get_leaderboard (dicek test). */
@@ -76,6 +76,7 @@ export const BOARDS: readonly BoardDef[] = [
   { id: 'wins_steelyard', name: 'Raja Steel Yard', desc: 'Menang di Steel Yard.' },
   { id: 'wins_boston', name: 'Raja Boston', desc: 'Menang di Boston.' },
   { id: 'wins_meridian', name: 'Raja Meridian Vault', desc: 'Menang di Meridian Vault (TDM, Eliminasi, Bomb Mission).' },
+  { id: 'wins_arunika', name: 'Raja Candi Arunika', desc: 'Menang di Candi Arunika (TDM, Eliminasi, Bomb Mission).' },
 ];
 export const isBoard = (v: unknown): v is BoardId => typeof v === 'string' && BOARDS.some(b => b.id === v);
 

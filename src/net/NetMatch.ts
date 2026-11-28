@@ -19,7 +19,7 @@ import { TacticalBot } from '../entities/TacticalBot';
 import type { TriggerInput } from '../combat/WeaponSystem';
 import type { GrenadeInput } from '../combat/GrenadeK400';
 import type { Slot } from '../combat/Slots';
-import { castShot } from '../combat/Ballistics';
+import { castShot, waterSplash } from '../combat/Ballistics';
 import { sameLoadout, type Loadout } from '../combat/Loadout';
 import type { Variant } from '../entities/CharacterArt';
 import { CommandHistory, CommandQueue, HitLedger, HostClock, InterpBuffer, SnapStats } from './sync';
@@ -575,7 +575,8 @@ export class ClientRep {
       bus.emit('impact', { position: _b.clone(), normal: _n.clone(), material: 'body' });
     } else if (kind === 1) {
       const mat = surfaceOf(f.mat);
-      ctx.vfx.decal(_b, _n); ctx.vfx.chips(_b, _n, SURFACE_COLOR[mat], 4); ctx.vfx.puff(_b, _n, SURFACE_COLOR[mat]);
+      if (mat === 'water') waterSplash(_b);
+      else { ctx.vfx.decal(_b, _n); ctx.vfx.chips(_b, _n, SURFACE_COLOR[mat], 4); ctx.vfx.puff(_b, _n, SURFACE_COLOR[mat]); }
       bus.emit('impact', { position: _b.clone(), normal: _n.clone(), material: mat });
     }
   }

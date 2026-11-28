@@ -20,7 +20,13 @@ export type OfficeStyle = 'o_ground' | 'o_slab' | 'o_roof' | 'o_ext' | 'o_beam' 
   | MeridianStyle;
 export type MeridianStyle = 'm_ground' | 'm_ext' | 'm_ceil' | 'm_mass' | 'm_wall' | 'm_lintel' | 'm_sill' | 'm_barr' | 'm_barrB'
   | 'm_crateR' | 'm_crateG' | 'm_crateB' | 'm_desk' | 'm_kiosk' | 'm_vault' | 'm_vdoor' | 'm_deposit' | 'm_plat' | 'm_case' | 'm_cctv'
-  | 'm_slab' | 'm_stage' | 'm_rail' | 'm_col';
+  | 'm_slab' | 'm_stage' | 'm_rail' | 'm_col'
+  // kompleks candi luar ruang (Candi Arunika)
+  | ArunikaStyle;
+export type ArunikaStyle = 'a_ground' | 'a_cliff' | 'a_embank' | 'a_wall' | 'a_house' | 'a_tower' | 'a_temple' | 'a_shrine' | 'a_stupa'
+  | 'a_stupaS' | 'a_terrace' | 'a_balus' | 'a_plinth' | 'a_column' | 'a_roof' | 'a_stall' | 'a_crate' | 'a_basket' | 'a_cart'
+  | 'a_lantern' | 'a_statue' | 'a_pond' | 'a_trunk' | 'a_rock' | 'a_ruin' | 'a_cave' | 'a_well' | 'a_altar' | 'a_bell'
+  | 'a_pillar' | 'a_lintel' | 'a_planter' | 'a_aling' | 'a_bentar' | 'a_ruinT' | 'a_urn';
 
 /** rotY (opsional, radian): putaran balok di PUSATNYA terhadap sumbu Y (konvensi three.js). x/z = rentang LOKAL sebelum diputar. */
 export interface Row { id: string; cat: Cat; x: [number, number]; y: [number, number]; z: [number, number]; m: Mirror; style: Style; rotY?: number }

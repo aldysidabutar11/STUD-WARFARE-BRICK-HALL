@@ -5,12 +5,13 @@ import { BRICKHALL } from './brickhall';
 import { STEELYARD } from './steelyard/index';
 import { BOSTON } from './boston/index';
 import { MERIDIAN } from './meridian/index';
+import { ARUNIKA } from './arunika/index';
 import { currentMap, setActiveMap } from './current';
 
 export { currentMap };
 export type { MapDef, MapId };
 
-export const MAPS: Readonly<Record<MapId, MapDef>> = { brickhall: BRICKHALL, steelyard: STEELYARD, boston: BOSTON, meridian: MERIDIAN };
+export const MAPS: Readonly<Record<MapId, MapDef>> = { brickhall: BRICKHALL, steelyard: STEELYARD, boston: BOSTON, meridian: MERIDIAN, arunika: ARUNIKA };
 
 /** Map bawaan (setelan baru / nilai tidak dikenal). */
 export const DEFAULT_MAP: MapId = 'brickhall';

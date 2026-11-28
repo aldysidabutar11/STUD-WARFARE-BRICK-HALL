@@ -7,7 +7,7 @@ import { CFG } from '../config/gameConfig';
 import { XCFG } from '../config/extraConfig';
 import type { Difficulty } from '../config/extraConfig';
 import type { Team } from '../entities/BlockyCharacter';
-import { MAP_IDS, type MapId } from '../world/maps/types';
+import { BOMB_MAP_IDS, MAP_IDS, type MapId } from '../world/maps/types';
 
 const LB = XCFG.lobby;
 export type RoomMode = 'tdm' | 'elim' | 'bomb';
@@ -20,10 +20,12 @@ export const BASE_MAP: MapId = 'brickhall';
 /** Id map yang dikenal build ini (data jaringan / localStorage divalidasi dengan ini). */
 export const isKnownMap = (v: unknown): v is MapId => typeof v === 'string' && (MAP_IDS as readonly string[]).includes(v);
 export const isMapChoice = (v: unknown): v is MapChoice => v === 'random' || isKnownMap(v);
-/** Pilihan → map konkret: 'random' diundi seragam dari semua map (rng ∈ [0, 1)); map tertentu → dirinya. */
-export function pickMap(choice: MapChoice, rng: () => number): MapId {
+/** Pilihan → map konkret: 'random' diundi seragam dari semua map (rng ∈ [0, 1)) — mode Bomb Mission hanya dari map berzona bom;
+ *  map tertentu → dirinya. */
+export function pickMap(choice: MapChoice, rng: () => number, mode?: string): MapId {
   if (choice !== 'random') return choice;
-  return MAP_IDS[Math.min(MAP_IDS.length - 1, Math.max(0, Math.floor(rng() * MAP_IDS.length)))];
+  const pool = mode === 'bomb' ? BOMB_MAP_IDS : MAP_IDS;
+  return pool[Math.min(pool.length - 1, Math.max(0, Math.floor(rng() * pool.length)))];
 }
 
 export interface LobbyPlayer {

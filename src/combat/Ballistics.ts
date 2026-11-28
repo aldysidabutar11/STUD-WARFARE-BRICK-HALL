@@ -15,7 +15,7 @@ import { ctx } from '../game/ctx';
 import type { Entity } from '../entities/Entity';
 import { PART_KEYS as PART_ORDER } from '../entities/BlockyCharacter';
 import { currentMap } from '../world/maps/registry';
-import { SURFACE_COLOR, surfaceCode } from '../world/surfaces';
+import { SURFACE_COLOR, WATER_LIFT, surfaceCode } from '../world/surfaces';
 import { makeRng } from '../core/Rng';
 
 const S = CFG.combat.spread;
@@ -128,10 +128,21 @@ function netShot(e: Entity, hit: ShotHit | null, end: THREE.Vector3, flag: numbe
 /** Bekas kena dunia: decal, serpihan & kepulan sesuai permukaan, suara. */
 function worldImpact(hit: ShotHit) {
   const mat = currentMap().surfaceAt(hit.point.x, hit.point.y, hit.point.z);
-  ctx.vfx.decal(hit.point, hit.normal);
-  ctx.vfx.chips(hit.point, hit.normal, SURFACE_COLOR[mat], 4);
-  ctx.vfx.puff(hit.point, hit.normal, SURFACE_COLOR[mat]);
+  if (mat === 'water') waterSplash(hit.point);
+  else {
+    ctx.vfx.decal(hit.point, hit.normal);
+    ctx.vfx.chips(hit.point, hit.normal, SURFACE_COLOR[mat], 4);
+    ctx.vfx.puff(hit.point, hit.normal, SURFACE_COLOR[mat]);
+  }
   bus.emit('impact', { position: hit.point, normal: hit.normal, material: mat });
+}
+
+const _splash = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
+/** Percikan peluru di air dangkal: di permukaan air (bukan di dasar kolam), butir lebih banyak, tanpa bekas peluru. */
+export function waterSplash(p: THREE.Vector3) {
+  _splash.set(p.x, p.y + WATER_LIFT, p.z);
+  ctx.vfx.chips(_splash, _up, SURFACE_COLOR.water, 7);
+  ctx.vfx.puff(_splash, _up, SURFACE_COLOR.water);
 }
 
 /** Acak tembakan deterministik (seed match × entitas × tembakan ke-n per nyawa) → prediksi klien = hasil host. */

@@ -44,7 +44,7 @@ create table if not exists public.match_results (
   plants        int not null default 0,
   defuses       int not null default 0,
   constraint match_results_once unique (user_id, match_key),
-  constraint mr_map   check (map in ('brickhall', 'steelyard', 'boston', 'meridian')),
+  constraint mr_map   check (map in ('brickhall', 'steelyard', 'boston', 'meridian', 'arunika')),
   constraint mr_mode  check (mode in ('tdm', 'elim', 'bomb')),
   constraint mr_range check (match_key between 0 and 2147483647 and humans between 2 and 10 and duration between 30 and 7200
     and kills between 0 and 300 and deaths between 0 and 300 and assists between 0 and 300 and longest_kill between 0 and 500),
@@ -53,11 +53,11 @@ create table if not exists public.match_results (
     and score between 0 and 125 * kills + 50 * assists + 200 * (plants + defuses) and kills * 2 <= duration and deaths * 2 <= duration),
   constraint mr_bomb  check (plants between 0 and 9 and defuses between 0 and 9 and (mode = 'bomb' or (plants = 0 and defuses = 0)))
 );
--- migrasi tabel lama (aman diulang): map Meridian Vault, mode Bomb Mission, kolom tanam/jinak bom & aturan skornya
+-- migrasi tabel lama (aman diulang): map Meridian Vault & Candi Arunika, mode Bomb Mission, kolom tanam/jinak bom & aturan skornya
 alter table public.match_results add column if not exists plants int not null default 0;
 alter table public.match_results add column if not exists defuses int not null default 0;
 alter table public.match_results drop constraint if exists mr_map;
-alter table public.match_results add constraint mr_map check (map in ('brickhall', 'steelyard', 'boston', 'meridian'));
+alter table public.match_results add constraint mr_map check (map in ('brickhall', 'steelyard', 'boston', 'meridian', 'arunika'));
 alter table public.match_results drop constraint if exists mr_mode;
 alter table public.match_results add constraint mr_mode check (mode in ('tdm', 'elim', 'bomb'));
 alter table public.match_results drop constraint if exists mr_consistent;
@@ -182,7 +182,7 @@ declare
   min_matches int;
 begin
   if p_board is null or p_board not in ('points', 'kills', 'kd', 'wins', 'mvp', 'knife', 'nade', 'flash', 'streak', 'longest',
-      'wins_brickhall', 'wins_steelyard', 'wins_boston', 'wins_meridian') then
+      'wins_brickhall', 'wins_steelyard', 'wins_boston', 'wins_meridian', 'wins_arunika') then
     raise exception 'bad_board' using errcode = '22023';
   end if;
   if p_period = 'week' then since := date_trunc('week', now() at time zone 'Asia/Jakarta') at time zone 'Asia/Jakarta';
@@ -215,7 +215,8 @@ begin
         when 'wins_brickhall' then count(*) filter (where c.won and c.map = 'brickhall')::real
         when 'wins_steelyard' then count(*) filter (where c.won and c.map = 'steelyard')::real
         when 'wins_boston' then count(*) filter (where c.won and c.map = 'boston')::real
-        else count(*) filter (where c.won and c.map = 'meridian')::real
+        when 'wins_meridian' then count(*) filter (where c.won and c.map = 'meridian')::real
+        else count(*) filter (where c.won and c.map = 'arunika')::real
       end)::real as v
     from conf c group by c.user_id
   ), ranked as (

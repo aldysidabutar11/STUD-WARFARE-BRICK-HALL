@@ -25,7 +25,7 @@ describe('Registry & ganti map (murni)', () => {
     expect(Object.keys(MAPS).sort()).toEqual([...MAP_IDS].sort());
     for (const id of MAP_IDS) expect(MAPS[id].id).toBe(id);
     expect(mapInfo().map(m => m.id)).toEqual([...MAP_IDS]);
-    expect(mapInfo().map(m => m.name)).toEqual(['Brick Hall', 'Steel Yard', 'Boston', 'Meridian Vault']);
+    expect(mapInfo().map(m => m.name)).toEqual(['Brick Hall', 'Steel Yard', 'Boston', 'Meridian Vault', 'Candi Arunika']);
     for (const m of mapInfo()) expect(m.desc.length).toBeGreaterThan(10);
   });
   it('bawaan Brick Hall; setCurrentMap mengganti map aktif; id tak dikenal ditolak', () => {
@@ -52,7 +52,7 @@ describe('Registry & ganti map (murni)', () => {
       for (const team of ['blue', 'red'] as const) {
         const all = [...d.spawnSlots[team].upper, ...d.spawnSlots[team].ground];
         // Meridian Vault: map Bomb Mission 5v5 → 5 slot per kelompok (dokumen §5); map TDM lain 10
-        expect(all.length, `${d.id} ${team}`).toBe(d.id === 'meridian' ? 5 : 10);
+        expect(all.length, `${d.id} ${team}`).toBe(d.bombSites ? 5 : 10);          // map Bomb Mission: 5 slot (5v5)
         for (const [x, , z] of all) { expect(inB(x, z)).toBe(true); expect(Math.sign(z)).toBe(team === 'blue' ? -1 : 1); }
       }
       expect(d.practice.length).toBe(12);
@@ -235,9 +235,9 @@ describe('LightBake mode luar ruang + OBB', () => {
 });
 
 describe('Material permukaan baru di jaringan (sand, metal)', () => {
-  it('kode lama tidak bergeser (tile 0, carpet 1, wood 2) + sand/metal/glass di akhir; warna efek lengkap', () => {
+  it('kode lama tidak bergeser (tile 0, carpet 1, wood 2) + sand/metal/glass/water di akhir; warna efek lengkap', () => {
     expect(SURFACES.slice(0, 3)).toEqual(['tile', 'carpet', 'wood']);
-    expect(SURFACES).toEqual(['tile', 'carpet', 'wood', 'sand', 'metal', 'glass']);
+    expect(SURFACES).toEqual(['tile', 'carpet', 'wood', 'sand', 'metal', 'glass', 'water']);
     expect(SURFACES.length).toBeLessThanOrEqual(8);       // 3 bit di paket pantulan granat
     for (const m of SURFACES) { expect(surfaceOf(surfaceCode(m))).toBe(m); expect(SURFACE_COLOR[m]).toBeTypeOf('number'); }
     expect(surfaceOf(99)).toBe('tile');

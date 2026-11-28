@@ -129,6 +129,16 @@ export function footstep(mat: SurfaceMaterial, land = false): Recipe {
       osc(s, 'sine', 130 * p, 100 * p, t0, 0.03).connect(env(s, out, t0, 0.14 * g, 0.002, 0.03));
       return 0.06;
     }
+    if (mat === 'water') {
+      // air dangkal (kolam Candi Arunika): cipratan — desir bandpass lebar + kecipak rendah + 3 tetes berdenting turun
+      noiseSrc(s, t0, 0.13).connect(filt(s, 'bandpass', 1100 * p, 0.7)).connect(env(s, out, t0, 0.55 * g, 0.004, 0.12));
+      noiseSrc(s, t0 + 0.01, 0.1).connect(filt(s, 'lowpass', 420 * p)).connect(env(s, out, t0 + 0.01, 0.4 * g, 0.006, 0.09));
+      for (let i = 0; i < 3; i++) {
+        const t = t0 + 0.03 + Math.random() * 0.08, f = (1300 + Math.random() * 1300) * p;
+        osc(s, 'sine', f, f * 0.55, t, 0.03).connect(env(s, out, t, 0.12 * g, 0.001, 0.03));
+      }
+      return 0.16;
+    }
     if (mat === 'metal') {
       // lantai/atap kontainer baja: dentang berongga (parsial tak harmonis berdengung) + transien + dentum lantai
       for (const [f, a, d] of [[210, 0.3, 0.22], [537, 0.16, 0.16], [913, 0.09, 0.11]] as const)
@@ -179,6 +189,11 @@ export const bounce = (mat: SurfaceMaterial, speed: number): Recipe => (s, out, 
     osc(s, 'sine', 260, 170, t0, 0.04).connect(env(s, out, t0, a * 0.8, 0.002, 0.04));
     noiseSrc(s, t0, 0.05).connect(filt(s, 'lowpass', 900)).connect(env(s, out, t0, a * 0.4, 0.002, 0.05));
     return 0.07;
+  }
+  if (mat === 'water') {        // jatuh ke kolam dangkal: "plung" + kecipak
+    osc(s, 'sine', 210, 90, t0, 0.07).connect(env(s, out, t0, a * 0.7, 0.002, 0.07));
+    noiseSrc(s, t0, 0.12).connect(filt(s, 'lowpass', 1500)).connect(env(s, out, t0, a * 0.5, 0.003, 0.11));
+    return 0.13;
   }
   if (mat === 'glass') {        // di kaca: denting tinggi bening
     for (const [f, k] of [[3900, 1], [5200, 0.5]] as const) osc(s, 'sine', f, f * 0.99, t0, 0.08).connect(env(s, out, t0, a * 0.45 * k, 0.0008, 0.08));
@@ -246,6 +261,11 @@ export const impactTick = (mat: SurfaceMaterial | 'book' | 'body'): Recipe => (s
     osc(s, 'sine', 3300, 3150, t0, 0.07).connect(env(s, out, t0, 0.22, 0.0008, 0.07));
     noiseSrc(s, t0, 0.025).connect(filt(s, 'bandpass', 4200, 2)).connect(env(s, out, t0, 0.3, 0.001, 0.025));
     return 0.09;
+  }
+  if (mat === 'water') {        // peluru masuk air: "plip" tinggi + desis semburan
+    osc(s, 'sine', 1700, 800, t0, 0.04).connect(env(s, out, t0, 0.2, 0.001, 0.04));
+    noiseSrc(s, t0, 0.07).connect(filt(s, 'bandpass', 2600, 1)).connect(env(s, out, t0, 0.3, 0.002, 0.06));
+    return 0.08;
   }
   if (mat === 'glass') {        // peluru kena kaca anti-peluru: "tik" keras + gemerincing halus
     noiseSrc(s, t0, 0.02).connect(filt(s, 'highpass', 4500, 1)).connect(env(s, out, t0, 0.35, 0.0006, 0.02));

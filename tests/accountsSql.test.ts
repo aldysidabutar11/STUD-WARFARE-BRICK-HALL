@@ -139,7 +139,7 @@ describe('leaderboard', () => {
     const lim = await board('points', 'week', B, 1);
     expect(lim.rows?.map(r => [r.rank, r.is_me])).toEqual([[1, false], [2, true]]);
     for (const b of ['kills', 'kd', 'mvp', 'knife', 'nade', 'flash', 'streak', 'longest', 'wins_boston', 'wins_steelyard', 'wins_brickhall',
-      'wins_meridian'])
+      'wins_meridian', 'wins_arunika'])
       expect((await board(b, 'all')).err, b).toBeUndefined();
     expect(errIs(await board("points'; drop table public.profiles;--", 'all'), 'bad_board')).toBe(true);
     expect(errIs(await board('points', 'year'), 'bad_period')).toBe(true);
@@ -192,6 +192,8 @@ describe('Bomb Mission & Meridian Vault', () => {
     expect(await count(`select count(*)::int n from public.match_results where user_id = '${D}' and mode = 'bomb' and plants = 1 and defuses = 1`)).toBe(1);
     await backdate(D, 20);
     expect((await submit(D, report(7005, { map: 'meridian', duration: 300 }))).rows?.[0].r).toBe('ok');      // TDM 17 argumen (klien lama)
+    await backdate(D, 20);
+    expect((await submit(D, report(7006, { map: 'arunika', duration: 300 }))).rows?.[0].r).toBe('ok');       // map Candi Arunika
     await sql(`delete from public.match_results where user_id = '${D}'`);
   });
 });

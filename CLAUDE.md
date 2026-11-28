@@ -73,7 +73,7 @@
   model realistis ber-skin (src/entities/venny/). Semua 100% prosedural (lihat "Fitur pasca-MVP").
   + 10 karakter OPERATOR (desain pengguna Karakter/<NAMA>.png, 2026-11-27): warna desain sama di kedua tim → identitas tim lewat BAN
   LENGAN warna tim di kedua lengan atas (keputusan pengguna; menyimpang dari "pakaian = warna tim"); bot tetap pakaian tim klasik.
-- Multi-map (Brick Hall + Steel Yard + Boston + Meridian Vault, lihat "Multi-map & Steel Yard" & "Boston"): modul game membaca data map HANYA lewat `currentMap()`
+- Multi-map (Brick Hall + Steel Yard + Boston + Meridian Vault + Candi Arunika, lihat "Multi-map & Steel Yard" & "Boston"): modul game membaca data map HANYA lewat `currentMap()`
   (src/world/maps/registry.ts; Physics lewat maps/current.ts agar tidak impor melingkar) — jangan impor data Brick Hall langsung.
   Steel Yard = layout ORISINAL (gaya "halaman kontainer gurun" hanya inspirasi, bukan replika map game lain); peti 2.8 u, bukan 3.0
   dari brief (3.0 jatuh di pita cover terlarang GDD §4.4 2.95–3.75; tumpukan 2 = 5.6).
@@ -919,6 +919,51 @@
     menjinakkan, banner & timer klien benar; 0 error konsol. Skrip lokal (scratchpad, bisa hilang): pw/mv_look.js, mv_stuck.js,
     bomb_bots.js, bomb_player.js, bomb_online.js, bomb_menu.js.
 
+- Map Candi Arunika + Bomb Mission di 2 map (permintaan pengguna 2026-11-28: "buatin 1 map lagi untuk bomb mission dengan ukuran yang
+  cukup ... desain gue serahin ke lo, sekreatif mungkin"; desain & layout orisinal Claude, gaya candi Jawa / bata Majapahit):
+  - `src/world/maps/arunika/` (layout, nav, colliders, build, index, visual/{textures, materials, sky, emit, nature}); MapId 'arunika' (map ke-5),
+    papan "Raja Candi Arunika". Area main 120 × 160 u (43 × 58 m), luar ruang 1 lantai + teras A Y 3 & panggung B 1.5. Utara = dermaga
+    sungai (slot 'red' = penyerang babak 1), Selatan = wihara (slot 'blue' = bertahan). Kompleks candi di hutan saat FAJAR.
+  - Alur: Pasar Desa (beringin kurung memotong garis pandang tengah) → Gapura candi bentar (lorong tengah + 2 pintu samping) → Pelataran
+    Candi Induk (memotong garis pandang gapura ↔ Lorong Biksu) → A-pendek / Lorong Biksu / B-pendek; Jalan Beringin (Barat, gapura runtuh)
+    → teras A dari Utara; Gua Air Terjun (Timur, atap batu berlubang) → pendopo B dari Utara; Balai Genta di tengah Lorong Biksu dengan pintu
+    samping ke A-pendek & B-pendek (rotasi bertahan / jalur tengah penyerang). Zona A = teras stupa Y 3 (stupa induk + 4 stupa kecil berkisi,
+    3 tangga N/E/S, hanya didaki lewat tangga), zona B = pendopo joglo di panggung 1.5 (4 tangga) + 2 kolam teratai. Jarak nav: penyerang → A
+    172 u / B 170 u (±15 s lari), bertahan → A 71 / B 65 u. Lane bot TDM `XCFG.bots.lanesArunika` (west .25 / mid .20 / short .25 / east .30),
+    graf 128 node / 166 edge (asimetris Utara–Selatan, `levelTol` 1).
+  - Spawn: tiap gerbang dibentengi ALING-ALING (tembok penghalang di dalam gerbang); gerbang samping dermaga = candi bentar menjorok 4 u
+    (lorong 4 × 6, sekat 3 u di dalam). Garis pandang ke 10 slot dari luar ruang spawn = 0 (test: node nav + grid pijakan 2 u termasuk teras;
+    skrip lokal ar/tool.py grid 0.5 u).
+  - Collider = visual: bangunan bertingkat = balok menyempit per tingkat (`tiers()`: Candi Induk 6 tingkat sampai ratna 18.5, candi perwara,
+    menara gapura (bidang dalam rata), cetiya, reruntuhan); bentuk bulat/miring = `AR_HULLS` convexHull (genta stupa induk & kecil dari profil
+    yang SAMA dengan lathe visual, atap pelana rumah, atap joglo 2 lapis) + `bakeOccluders()` untuk bake. Tanggul sungai 1.2 + pembatas
+    BARRIER di atasnya (peluru & garis pandang tembus → sungai & jukung terlihat, tanpa bekas peluru melayang).
+  - Permukaan baru 'water' (SURFACES[6]; kode pantulan granat 3 bit masih cukup): kolam pantul, 2 kolam teratai & kolam air terjun bisa
+    diseberangi (bibir ≤ 0.5 dilangkahi KCC) → langkah cipratan, peluru = percikan di permukaan air (`WATER_LIFT`, tanpa decal — `waterSplash`
+    di Ballistics & NetMatch), granat "plung" (Recipes footstep/bounce/impactTick).
+  - Bomb Mission di beberapa map: `BOMB_MAP_IDS` / `isBombMap` (maps/types.ts, = map ber-bombSites di registry, dicek test), `pickMap(choice,
+    rng, mode)` ("Acak" saat bomb hanya mengundi map bom), Game.play/startRoom: map tanpa zona → map bom pertama (Meridian); Menus Atur Match &
+    room: Arunika / Acak tetap saat memilih Bomb Mission, memilih map non-bom → TDM.
+  - Visual: tekstur kanvas (andesit berlumut lapis 0.67 u, bata Majapahit, relief sulur & teratai (pita ±1.1 u), genteng, paving berumput,
+    tanah hutan, batu tebing berlapis, kulit kayu, daun/rumput alpha (bayangan belang), kisi stupa, air, air terjun, prasasti "CANDI ARUNIKA");
+    langit fajar 1 draw call (gradien jingga-lembayung, matahari Timur, awan, 2 gunung api + asap tipis, kabut lembah, burung); matahari TEPAT
+    di Timur elevasi ±37° (z = 0 → tidak ada tim yang menghadap matahari di sumbu serang; tembok kompleks 9 u agar jalur samping tidak tenggelam
+    bayangan); tebing dipahat MASUK ke collider + semak di lis; beringin (akar napas di dalam collider, tajuk kartu alpha, akar gantung ≥ 5.8),
+    kamboja berbunga, kelapa; sungai + jukung + tepi seberang; air terjun jatuh lewat sumur cahaya atap gua; penjor, sesaji, lentera menyala,
+    genta perunggu, dwarapala, Buddha; debu pagi + asap dupa & kabut air terjun (visual/smoke.ts, 1 Points, MEDIUM+).
+  - Leaderboard: `wins_arunika` + `supabase/accounts.sql` (mr_map, get_leaderboard) — pengguna perlu menjalankan ulang accounts.sql.
+  - Kedip hitam (laporan pengguna 2026-11-28 saat main): `pow(basis negatif, 2.0)` di shader langit fajar (asap gunung & kabut lembah)
+    = NaN (tak terdefinisi di GLSL) → bloom HIGH menyebar NaN → frame 100% HITAM setiap kamera melewati arah itu. Kini kuadrat = perkalian
+    (q·q) & basis pow dijepit ≥ 0. ATURAN shader: jangan pernah pow() dengan basis yang bisa negatif. Uji pw/ar_flicker.js (baca piksel
+    tepat setelah render tiap frame ke-3, kamera berputar di 9 titik × 3 pitch): HIGH sebelum 100% hitam di ±18 frame → sesudah 0.
+  - Terukur (Playwright, Iris Xe): muat bake ±750 ms (medan ±520), ±80k segitiga statis; MEDIUM TDM 11.1 ms (p95 12.4), draw call rata 133 /
+    maks 150, segitiga maks 163k; HIGH 11.1 ms (resolusi dinamis 0.8, draw ±226); LOW 11.1 ms; TDM bot 120 s 24 kill, 0 macet; Bomb Mission bot
+    4 lawan 4 (9 ronde, Biru 5–4): C4 ditanam di 8 dari 9 ronde (A 5×, B 3×), kontak pertama median ±12.5 s, tanam
+    median ±30 s, ronde 30–58 s (catatan: penyerang bot menang semua ronde — bot bertahan dibagi per zona, penyerang menumpuk);
+    online 2 jendela 8/8 (map & mode sama di kedua sisi, teman menanam di A lewat bit USE dengan 0 koreksi, host menjinakkan, banner
+    klien); menu & room 8/8; 0 error konsol. Skrip lokal (scratchpad, bisa hilang): pw/ar_look.js,
+    ar_stuck.js, ar_bomb_bots.js, ar_bomb_fair.js, ar_online.js, ar_menu.js, ar/tool.py (denah + nav + garis pandang → PNG).
+
 - Map Boston (permintaan pengguna 2026-11-26; dokumen pengguna "IDE MAP BARU/Stud Warfare — Blueprint Map Boston.pdf" + 4 gambar Gemini,
   lokal saja, jangan di-commit; adaptasi lantai 3 & 4 kantor pengguna sendiri — layout orisinal, bukan replika map game lain):
   - `src/world/maps/boston/`: `layout.ts` (data ditulis dalam koordinat DOKUMEN — Utara = +Z, Biru L4 di Utara — lalu DIPUTAR 180°
@@ -957,7 +1002,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 559 test Vitest / 36 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 584 test Vitest / 37 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -981,7 +1026,9 @@
   (tests/meridian.test.ts), Bomb Mission: test vector dokumen §8.3, matriks menang, giliran pembawa, syarat jinak, BombNet, cadangan,
   mode/setelan/tombol 6 (tests/bombMission.test.ts), kamera menonton mengitari rekan / tampilan mata / badan disembunyikan saat
   lengan TPS pendek, collider Rapier Meridian (tests/specCam.test.ts), 10 karakter operator: id/nama, benih atlas, warna lengan FPS,
-  settings/room/pesan mulai/cadangan, bot tanpa operator (tests/variants.test.ts)) hijau;
+  settings/room/pesan mulai/cadangan, bot tanpa operator (tests/variants.test.ts), Candi Arunika: balok tanpa tumpang-tindih, pita cover
+  (+ genta hull), tangga, teras hanya lewat tangga, kolam bisa diseberangi, pembatas sungai, spawn & zona, jarak tempuh, nav, garis pandang
+  spawn = 0 (node + grid 2 u), permukaan air (tests/arunika.test.ts), Bomb Mission di 2 map + "Acak" bom (tests/bombMission.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

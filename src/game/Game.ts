@@ -16,6 +16,7 @@ import { PAD, keyLabel } from '../core/Bindings';
 import { bus, type GameEvents } from '../core/EventBus';
 import { isHigh } from '../config/presets';
 import { MAPS, currentMap, isMapId, setCurrentMap, type MapDef, type MapId } from '../world/maps/registry';
+import { BOMB_MAP_IDS } from '../world/maps/types';
 import { Breakables } from '../world/Breakables';
 import type { LightSample } from '../world/LightBake';
 import { Props } from '../world/Props';
@@ -608,7 +609,7 @@ export class Game {
   get mapId(): MapId | null { return this.loadedId; }
 
   /** Map untuk main solo / Latihan bila tidak disebut: ?map= (uji) atau setelan; setelan 'Acak' diundi setiap panggilan. */
-  defaultMapId(): MapId { return this.urlMap ?? pickMap(this.settings.map, Math.random); }
+  defaultMapId(mode?: GameMode): MapId { return this.urlMap ?? pickMap(this.settings.map, Math.random, mode); }
 
   /** Pilihan map pemain (menu Atur Match): simpan ke setelan; preload = muat sekarang di menu (dengan layar "Memuat map…")
    *  agar tombol Mulai tidak menunggu ('Acak' tidak dimuat — diundi saat Mulai). Diabaikan saat match berjalan. */
@@ -691,9 +692,9 @@ export class Game {
    * Map berbeda: offline → layar "Memuat map…" lalu mulai; online → dimuat sinkron (urutan pesan host tetap terjaga).
    */
   play(mode: GameMode = this.settings.mode, roster: MatchRoster | null = null, net: NetStart | null = null, mapId?: MapId) {
-    const want0 = mapId ?? (net ? this.loadedId ?? currentMap().id : this.defaultMapId());
-    // Bomb Mission hanya di map yang punya zona bom (Meridian Vault)
-    const want: MapId = mode === 'bomb' && !MAPS[want0].bombSites ? 'meridian' : want0;
+    const want0 = mapId ?? (net ? this.loadedId ?? currentMap().id : this.defaultMapId(mode));
+    // Bomb Mission hanya di map yang punya zona bom (Meridian Vault, Candi Arunika); map lain → map bom pertama
+    const want: MapId = mode === 'bomb' && !MAPS[want0].bombSites ? BOMB_MAP_IDS[0] : want0;
     if (want !== this.loadedId) {
       if (!net) { this.playAfterLoad(mode, roster, want); return; }
       if (this.inMatch) this.endMatch();
@@ -1016,9 +1017,9 @@ export class Game {
     if (!chk.ok) { if (fromResults) this.menus.showRoom(chk.reason); return; }
     const L = r.settings;
     const cur = this.mapId;
-    // Bomb Mission hanya di map berzona bom (Meridian Vault)
-    const map0 = L.map === 'random' && fromResults && cur ? cur : pickMap(L.map, Math.random);
-    const map: MapId = L.mode === 'bomb' && !MAPS[map0].bombSites ? 'meridian' : map0;
+    // Bomb Mission hanya di map berzona bom (Meridian Vault, Candi Arunika) — "Acak" mengundi di antara keduanya
+    const map0 = L.map === 'random' && fromResults && cur ? cur : pickMap(L.map, Math.random, L.mode);
+    const map: MapId = L.mode === 'bomb' && !MAPS[map0].bombSites ? BOMB_MAP_IDS[0] : map0;
     Object.assign(this.settings, { mode: L.mode, scoreLimit: L.scoreLimit, timeLimit: L.timeLimit, roundsToWin: L.roundsToWin,
       difficulty: L.difficulty, map: L.map });
     saveSettings(this.settings);

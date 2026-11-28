@@ -7,9 +7,13 @@ import type { SurfaceMaterial } from '../../core/EventBus';
 import type { Box, SpawnFloor, Stair } from '../MapData';
 import type { EdgeKind } from '../NavGraph';
 
-export type MapId = 'brickhall' | 'steelyard' | 'boston' | 'meridian';
+export type MapId = 'brickhall' | 'steelyard' | 'boston' | 'meridian' | 'arunika';
 /** Urutan tampil di menu. */
-export const MAP_IDS: readonly MapId[] = ['brickhall', 'steelyard', 'boston', 'meridian'];
+export const MAP_IDS: readonly MapId[] = ['brickhall', 'steelyard', 'boston', 'meridian', 'arunika'];
+/** Map berzona bom (mode Bomb Mission dimainkan di sini; urutan menu, yang pertama = cadangan). SAMA dengan map yang punya
+ *  MapDef.bombSites di registry (dicek tests/maps.test.ts) — modul murni (Lobby) memakai daftar ini tanpa mengimpor registry. */
+export const BOMB_MAP_IDS: readonly MapId[] = ['meridian', 'arunika'];
+export const isBombMap = (id: string): boolean => (BOMB_MAP_IDS as readonly string[]).includes(id);
 
 /** Template graf navigasi (gaya GDD §11.6). {H} = S (Biru, Z negatif) / N (Merah, Z positif); {X} = W (X negatif) / E;
  *  awalan C_ = garis tengah Z = 0. Koordinat ditulis untuk H=S, X=W lalu dicerminkan otomatis (N: z → −z, E: x → −x). */

@@ -104,6 +104,9 @@ describe('Bomb Mission — data jaringan, cadangan, setelan', async () => {
   const { validate } = await import('../src/ui/Settings');
   const { DEFAULT_BINDS, validateBinds } = await import('../src/core/Bindings');
   const { MAPS } = await import('../src/world/maps/registry');
+  const { BOMB_MAP_IDS, MAP_IDS, isBombMap } = await import('../src/world/maps/types');
+  const { pickMap } = await import('../src/game/Lobby');
+  const { makeRng } = await import('../src/core/Rng');
   const net = { s: 'planted', c: -1, x: -14.5, y: 0, z: -20.5, site: 'A', f: 31.5, p: -1, pt: 0, d: 7, dt: 2.5, a: 'red' };
   it('parseBombNet: keadaan sah lolos; rusak → null; nilai dijepit', () => {
     expect(parseBombNet(net)).toEqual(net);
@@ -146,9 +149,22 @@ describe('Bomb Mission — data jaringan, cadangan, setelan', async () => {
     delete old.bomb;
     expect(validateBinds(old).bomb).toBe('Digit6');
   });
-  it('hanya Meridian Vault punya zona bom; arah hadap kelompok slot (Tenggara +Z, Barat Laut −Z)', () => {
-    expect(MAPS.meridian.bombSites?.map(s => s.id)).toEqual(['A', 'B']);
+  it('zona bom hanya di Meridian Vault & Candi Arunika (= BOMB_MAP_IDS); arah hadap kelompok slot (Biru +Z, Merah −Z)', () => {
+    for (const id of ['meridian', 'arunika'] as const) {
+      expect(MAPS[id].bombSites?.map(s => s.id)).toEqual(['A', 'B']);
+      expect(MAPS[id].spawnYaw).toEqual({ blue: Math.PI, red: 0 });
+    }
     for (const id of ['brickhall', 'steelyard', 'boston'] as const) expect(MAPS[id].bombSites).toBeUndefined();
-    expect(MAPS.meridian.spawnYaw).toEqual({ blue: Math.PI, red: 0 });
+    expect(MAP_IDS.filter(id => MAPS[id].bombSites)).toEqual([...BOMB_MAP_IDS]);
+    expect([isBombMap('arunika'), isBombMap('meridian'), isBombMap('boston'), isBombMap('random')]).toEqual([true, true, false, false]);
+  });
+  it('"Acak" di mode Bomb Mission hanya mengundi map berzona bom; mode lain dari semua map', () => {
+    const rng = makeRng(23), seen = new Set<string>();
+    for (let i = 0; i < 200; i++) seen.add(pickMap('random', rng, 'bomb'));
+    expect([...seen].sort()).toEqual([...BOMB_MAP_IDS].sort());
+    expect(pickMap('arunika', rng, 'bomb')).toBe('arunika');
+    const all = new Set<string>();
+    for (let i = 0; i < 300; i++) all.add(pickMap('random', rng, 'tdm'));
+    expect(all.size).toBe(MAP_IDS.length);
   });
 });

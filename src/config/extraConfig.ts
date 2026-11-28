@@ -170,6 +170,9 @@ export const XCFG = {
     // Meridian Vault (TDM/Eliminasi; Bomb Mission memakai rencana ronde sendiri): West Long → A, Mid bertingkat, North Upper → balkon
     // B, jalur bawah B lewat terowongan
     lanesMeridian: { west: 0.30, mid: 0.25, north: 0.25, b: 0.20 },
+    // Candi Arunika (Bomb Mission ke-2, desain Claude): Jalan Beringin → teras A, tengah (pasar → gapura → pelataran → Lorong Biksu),
+    // pendek (pintu samping gapura → A-pendek / B-pendek), gua air terjun → Taman Air B (maps/arunika/nav.ts)
+    lanesArunika: { west: 0.25, mid: 0.20, short: 0.25, east: 0.30 },
     // granat bot (§11.8). Lempar 34 u/s (2026-11-26, GDD 24): jarak maks 24 → 32 u; batas masak rumus §11.8 2.0 → 2.8 s — di 34 u/s
     // granat tiba lebih cepat & menggelinding jauh melewati sasaran sebelum meledak (terukur 3 map, 8–24 u: kena 77–81% → 40–60%,
     // damage rata 62–72 → 37–55); 2.8 = "meledak sesaat (0.4 s) setelah tiba" seperti maksud GDD → kena 91–98%, damage rata 71–82
