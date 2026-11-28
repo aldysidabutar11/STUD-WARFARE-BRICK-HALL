@@ -1,7 +1,13 @@
 // src/ui/Menus.ts — menu utama, atur match, loadout, pengaturan (tab), kontrol + ubah tombol, pause, hasil (GDD §13.1–13.2, §14)
 // + navigasi gamepad (D-pad/A/B) untuk semua menu. + multi-map: kartu pilihan map (denah prosedural, ui/MapThumb) di Atur Match
 // & setelan host room (Acak = diundi saat match dimulai); nama map di menu utama, layar hasil (dan banner awal match di Game).
-import { cleanVariant, type Variant } from '../entities/variants';
+import { SKIN_IDS, SKIN_NAME, cleanVariant, type SkinId, type Variant } from '../entities/variants';
+
+/** Warna titik tombol karakter operator di Loadout (warna khas desainnya). */
+const SKIN_DOT: Record<SkinId, string> = {
+  pharaoh: '#e0b04a', frost: '#cfe6f6', ignis: '#ff8a3a', ghost09: '#3fe6ff', nova: '#9a5cff', spectre: '#6dff6a', titan: '#e8b92c',
+  valkyrie: '#d8323c', valiant: '#4f7bff', reaper: '#5dff4a',
+};
 import { SCOPES, SCOPE_ORDER, WEAPONS, WEAPON_ORDER, classOf, fitScope, scopeAllowed, type ScopeId, type WeaponClass, type WeaponDef,
   type WeaponId } from '../config/weaponsData';
 import { MELEES, MELEE_ORDER, X_ORDER, type MeleeId } from '../config/weaponsExtra';
@@ -648,9 +654,10 @@ export class Menus {
       <div class="lo-cols">
         <div class="lo-char">
           <div class="lo-prev" data-prev><span class="lo-fail">Pratinjau 3D tidak tersedia di perangkat ini</span></div>
-          <div class="charsel"><span>Karakter</span><button data-v="m">Pria</button><button data-v="f">Wanita</button><button data-v="v" class="special" title="Karakter khusus">Venny ★</button></div>
+          <div class="charsel"><span>Karakter</span><button data-v="m">Pria</button><button data-v="f">Wanita</button><button data-v="v" class="special" title="Karakter khusus">Venny ★</button>${
+            SKIN_IDS.map(id => `<button data-v="${id}" class="op" style="--op:${SKIN_DOT[id]}" title="Karakter operator — ban lengan mengikuti warna timmu">${SKIN_NAME[id]}</button>`).join('')}</div>
           <div class="lo-team"><span>Lihat pakaian</span><button data-tm="blue">Biru</button><button data-tm="red">Merah</button></div>
-          <small>Biru: pasukan taktis · Merah: gerilyawan — pakaian di match mengikuti timmu. Venny = karakter khusus (dua kostum). Seret untuk memutar · gulir / klik dua kali untuk melihat wajah.</small>
+          <small>Pria/Wanita: Biru pasukan taktis · Merah gerilyawan — pakaian mengikuti timmu. Venny = karakter khusus (dua kostum). 10 karakter operator: tampilan sama di kedua tim, ban lengan berwarna timmu. Seret untuk memutar · gulir / klik dua kali untuk melihat wajah.</small>
         </div>
         <div class="lo-weap">
           <div class="lo-sec">Senjata utama <i>slot 1</i></div>

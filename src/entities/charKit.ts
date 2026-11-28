@@ -16,6 +16,8 @@ export const RIG = XCFG.rig, COL = RIG.colors;
 export const PX = 80;          // piksel atlas per unit dunia
 export const ATLAS = 1024;
 export const FACE_ORDER: FaceKey[] = ['px', 'nx', 'py', 'ny', 'pz', 'nz']; // urutan grup BoxGeometry (nz = DEPAN karakter, −Z)
+/** Skala kanvas topeng menyala terhadap atlas (setengah resolusi: hemat memori, UV sama). */
+export const GLOW_SCALE = 0.5;
 
 export const css = (c: number) => '#' + c.toString(16).padStart(6, '0');
 /** Warna dikali faktor terang (f < 1 lebih gelap). */
@@ -37,6 +39,33 @@ export class Atlas {
   }
   /** Region seukuran (wu × hu) unit dunia. */
   region(wu: number, hu: number, paint: Painter): Rect { return this.px(Math.round(wu * PX), Math.round(hu * PX), paint); }
+
+  /** Topeng MENYALA (karakter operator): kanvas setengah resolusi, hitam = tidak menyala, putih = menyala penuh (warna = warna atlas);
+   *  dibaca shader karakter (BlockyCharacter, uGlow) sebagai emisi — tidak terpengaruh cahaya/bayangan. Dibuat saat pertama dipakai. */
+  glowCanvas: HTMLCanvasElement | null = null;
+  private gg: G | null = null;
+  /** Region w×h piksel + lapisan menyala: `glow` melukis intensitas di koordinat lokal yang sama dengan `paint`. */
+  pxGlow(w: number, h: number, paint: Painter, glow: Painter): Rect {
+    const r = this.px(w, h, paint), g = this.glowCtx();
+    g.save(); g.setTransform(GLOW_SCALE, 0, 0, GLOW_SCALE, r.x * GLOW_SCALE, r.y * GLOW_SCALE);
+    g.beginPath(); g.rect(0, 0, r.w, r.h); g.clip();
+    glow(g, r.w, r.h, this.rng);
+    g.restore();
+    return r;
+  }
+  /** Seperti region(), dengan lapisan menyala. */
+  regionGlow(wu: number, hu: number, paint: Painter, glow: Painter): Rect {
+    return this.pxGlow(Math.round(wu * PX), Math.round(hu * PX), paint, glow);
+  }
+  private glowCtx(): G {
+    if (!this.gg) {
+      const c = this.glowCanvas = document.createElement('canvas');
+      c.width = c.height = ATLAS * GLOW_SCALE;
+      this.gg = c.getContext('2d')!;
+      this.gg.fillStyle = '#000'; this.gg.fillRect(0, 0, c.width, c.height);
+    }
+    return this.gg;
+  }
   /** Region w×h piksel, digambar painter di koordinat lokal; tepi di-bleed 1 px (aman untuk mipmap). */
   px(w: number, h: number, paint: Painter): Rect {
     w = Math.max(6, w); h = Math.max(6, h);

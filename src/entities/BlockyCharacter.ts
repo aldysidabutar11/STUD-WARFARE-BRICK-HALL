@@ -40,6 +40,10 @@ export function strideYaw(lr: number, lf: number, back: boolean): { yaw: number;
 let GEO: Record<PartKey, THREE.BoxGeometry> | null = null;
 /** Material hitbox: tidak digambar (renderer melewatinya, anak tetap dirender); Mesh.raycast tetap menguji geometrinya. */
 const HITBOX_MAT = new THREE.MeshBasicMaterial({ visible: false });
+/** Topeng menyala bawaan (pakaian klasik / Venny): hitam 1×1 → semua karakter memakai SATU program shader. */
+const NO_GLOW = (() => { const t = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); t.needsUpdate = true; return t; })();
+/** Kekuatan emisi bagian menyala karakter operator (XCFG.skins.glow), satu uniform bersama. */
+const GLOW_K = { value: XCFG.skins.glow };
 const geos = () => GEO ??= {
   head: new THREE.BoxGeometry(...RIG.head.size), upper: new THREE.BoxGeometry(...RIG.upper.size),
   lower: new THREE.BoxGeometry(...RIG.lower.size), armR: new THREE.BoxGeometry(...RIG.arm.size),
@@ -101,6 +105,8 @@ export class BlockyCharacter {
   private heldKind: Held = 'ar';
   /** Probe cahaya (medan bake): x = pengali cahaya lingkungan, y = cahaya pantul hangat (lihat setProbe). */
   private readonly probeU = { value: new THREE.Vector2(1, 0) };
+  /** Topeng menyala atlas aktif (karakter operator) — emisi = warna atlas × topeng × GLOW_K. */
+  private readonly glowU: { value: THREE.Texture } = { value: NO_GLOW };
   /** Venny (varian 'v'): model realistis ber-skin menggantikan balok tampilan; hitbox balok GDD tetap (venny/rig.ts). */
   venny: VennyRig | null = null;
   private readonly castShadow: boolean;
@@ -109,6 +115,7 @@ export class BlockyCharacter {
   constructor(readonly entityId: number, readonly team: Team, castShadow: boolean, variant: Variant = 'm') {
     const g = geos(), art = characterArt(team, variant);
     this.variant = variant;
+    this.glowU.value = art.glow ?? NO_GLOW;
     this.castShadow = castShadow;
     for (const k of PART_KEYS) {
       const hb = new THREE.Mesh(g[k], HITBOX_MAT);
@@ -119,10 +126,15 @@ export class BlockyCharacter {
       this.mats[k] = new THREE.MeshLambertMaterial({ map: art.texture, alphaTest: 0.5, emissive: 0x000000 });
       this.mats[k].onBeforeCompile = (sh) => {
         sh.uniforms.uProbe = this.probeU; sh.uniforms.uBounce = BAKE_UNIFORMS.uBounce;
+        sh.uniforms.uGlow = this.glowU; sh.uniforms.uGlowK = GLOW_K;
         sh.fragmentShader = sh.fragmentShader
           .replace('#include <common>', `#include <common>
 uniform vec2 uProbe;
-uniform vec3 uBounce;`)
+uniform vec3 uBounce;
+uniform sampler2D uGlow;
+uniform float uGlowK;`)
+          .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+	totalEmissiveRadiance += diffuseColor.rgb * texture2D( uGlow, vMapUv ).r * uGlowK;`)
           .replace('#include <aomap_fragment>', `#include <aomap_fragment>
 	reflectedLight.indirectDiffuse *= uProbe.x;
 	reflectedLight.indirectDiffuse += diffuseColor.rgb * uBounce * uProbe.y;`);
@@ -229,6 +241,7 @@ uniform vec3 uBounce;`)
     if (v === this.variant) return;
     this.variant = v;
     const art = characterArt(this.team, v);
+    this.glowU.value = art.glow ?? NO_GLOW;
     for (const k of PART_KEYS) {
       this.visuals[k].geometry = art.parts[k];
       this.mats[k].map = art.texture; this.mats[k].needsUpdate = true;

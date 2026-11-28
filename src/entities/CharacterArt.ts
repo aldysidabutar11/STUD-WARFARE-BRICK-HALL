@@ -16,12 +16,15 @@ import {
   Atlas, COL, RIG, S, blobPts, box, camo, commonSwatches, css, edge, fill, fillSmooth, fingers, grain, merge, rrect, shade,
   smoothBlob, stitch, tone, type Common, type FaceKey, type Faces, type G, type Painter,
 } from './charKit';
-import type { Variant } from './variants';
+import { isSkin, type Variant } from './variants';
+import { skinArt } from './skins';
 
 export type { Variant } from './variants';
 
 export interface CharArt {
   texture: THREE.CanvasTexture;
+  /** Topeng menyala (karakter operator; null = pakaian klasik tanpa bagian menyala). */
+  glow: THREE.Texture | null;
   /** Geometri tampilan per bagian, di bingkai lokal hitbox (pusat balok). */
   parts: Record<PartKey, THREE.BufferGeometry>;
   /** Warna serpihan saat bagian ini terkena (§7.4). */
@@ -938,6 +941,8 @@ const CACHE = new Map<string, CharArt>();
 
 /** Tampilan (atlas + geometri per bagian) untuk tim & varian — dibuat sekali, dipakai bersama semua karakter. */
 export function characterArt(team: Team, variant: Variant): CharArt {
+  // karakter operator (desain pengguna Karakter/<NAMA>.png): atlas sendiri + ban lengan warna tim (entities/skins/)
+  if (isSkin(variant)) return skinArt(variant, team);
   // Venny: tampilan = model realistis (venny/rig.ts); balok tersembunyi & serpihan memakai atlas wanita
   if (variant === 'v') return characterArt(team, 'f');
   const key = team + variant;
@@ -953,7 +958,7 @@ export function characterArt(team: Team, variant: Variant): CharArt {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.magFilter = THREE.LinearFilter; texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.anisotropy = 4;
-  art = { texture, parts, chip, debrisMat: new THREE.MeshLambertMaterial({ map: texture, alphaTest: 0.5 }) };
+  art = { texture, glow: null, parts, chip, debrisMat: new THREE.MeshLambertMaterial({ map: texture, alphaTest: 0.5 }) };
   CACHE.set(key, art);
   return art;
 }

@@ -71,6 +71,8 @@
 - Tampilan karakter = desain pengguna (Karakter/*.png, HANYA acuan; tidak dimuat game): Biru = pasukan taktis, Merah = gerilyawan,
   masing-masing pria/wanita (balok R6, src/entities/CharacterArt.ts + perkakas charKit.ts), + karakter khusus Venny (dua kostum) =
   model realistis ber-skin (src/entities/venny/). Semua 100% prosedural (lihat "Fitur pasca-MVP").
+  + 10 karakter OPERATOR (desain pengguna Karakter/<NAMA>.png, 2026-11-27): warna desain sama di kedua tim → identitas tim lewat BAN
+  LENGAN warna tim di kedua lengan atas (keputusan pengguna; menyimpang dari "pakaian = warna tim"); bot tetap pakaian tim klasik.
 - Multi-map (Brick Hall + Steel Yard + Boston + Meridian Vault, lihat "Multi-map & Steel Yard" & "Boston"): modul game membaca data map HANYA lewat `currentMap()`
   (src/world/maps/registry.ts; Physics lewat maps/current.ts agar tidak impor melingkar) — jangan impor data Brick Hall langsung.
   Steel Yard = layout ORISINAL (gaya "halaman kontainer gurun" hanya inspirasi, bukan replika map game lain); peti 2.8 u, bukan 3.0
@@ -789,6 +791,44 @@
     (vitest `css.include: /hud\.css/` agar `?raw` berisi). Terukur: semua layar tanpa elemen meluber di 800×500 / 1280×720 /
     1366×768 / 1920×1080.
 
+- Karakter operator (permintaan pengguna 2026-11-27: 10 desain baru Karakter/PHARAOH, FROST, IGNIS, GHOST-09, NOVA, SPECTRE, TITAN,
+  VALKYRIE, VALIANT, REAPER .png — hanya acuan, folder Karakter/ di-.gitignore; usulan Claude disetujui "setuju bro, gas semua"):
+  - Varian (`entities/variants.ts`): `SKIN_IDS` (pharaoh, frost, ignis, ghost09, nova, spectre, titan, valkyrie, valiant, reaper), `SkinId`,
+    `SKIN_NAME`, `isSkin`; `Variant` = 'm' | 'f' | 'v' | SkinId → semua jalur data (settings, room, hello, 'start', 'spawn', cadangan
+    pindah host) memakai cleanVariant/isVariant yang sama (versi lama/nilai asing → pria). Pilih di Loadout (grid 13 tombol: Pria · Wanita
+    · Venny ★ · 10 operator bertitik warna). Bot tetap `botVariant` pria/wanita berpakaian tim (keputusan pengguna).
+  - Tampilan `src/entities/skins/` (100% prosedural, gaya balok R6 seperti CharacterArt): `kit.ts` (pelukis bersama: kain, pelat zirah
+    berpaku/bergores, MOLLE, kantong, gesper, lutut segi delapan ber-potongan alpha, sepatu bot, loreng poligon, serat karbon, kain robek,
+    jaring ghillie, peluru, kisi, chevron hazard, lensa MENYALA, tangan blocky), satu file per karakter (head/upper/lower/legR/legL + `arm(o,
+    band)` + warna serpihan + warna lengan FPS), `index.ts` (registri `skinArt(id, team)`: 1 atlas 1024² + topeng menyala 512² per
+    karakter, dibuat saat pertama dipakai 12–31 ms, dipakai kedua tim; per tim hanya geometri lengan yang beda). 7 draw call per karakter.
+  - BAGIAN MENYALA (visor, mata, NVG, reaktor, tabung, garis gauntlet, layar holo): `Atlas.pxGlow/regionGlow` melukis topeng di kanvas
+    setengah resolusi; shader karakter (BlockyCharacter, onBeforeCompile yang sama dengan probe) menambah
+    `totalEmissiveRadiance += warna atlas × topeng × XCFG.skins.glow` — tidak terpengaruh cahaya/bayangan/probe, ikut bloom HIGH+, kilat
+    kena tembak & denyut perlindungan (emissive) tetap jalan; pakaian klasik/Venny memakai topeng hitam 1×1 → SATU program shader.
+  - BAN LENGAN TIM (`XCFG.skins.band` biru 0x2f7dff / merah 0xf23a2e, sedikit menyala bandGlow/bandStripeGlow): region dilukis 2× per
+    atlas, dipasang di lengan atas tiap karakter (tinggi menyesuaikan bahu/pauldron).
+  - Detail per karakter: Pharaoh (topeng serigala hitam-emas bersegi, telinga runcing miring, moncong, mata emas menyala, mantel panjang
+    berlapis merah, bahu emas 2 tingkat, sarung tangan berbuku emas), Frost (helm FAST putih, goggles biru menyala, kerah bulu, jaket salju
+    loreng poligon menggembung, rompi abu + radio, bot salju), Ignis (helm gunmetal, goggles oranye, masker gas + filter berlingkar
+    menyala, jaket oranye bergaris, rompi olive + 2 tabung menyala, alat ukur, granat bergaris menyala, ransel tangki + 2 pipa knalpot),
+    Ghost-09 (tudung karbon, visor cyan, respirator, zirah dada bergaris cyan, jubah bahu kiri, layar holo lengan kiri), Nova (helm hitam-
+    ungu, visor detak jantung ungu, headphone kuning, hoodie, rompi kuning, granat ungu, sneakers), Spectre (tudung loreng, NVG 3 lensa
+    hijau, selendang & jubah ghillie berlubang robek, sabuk peluru, lengan berbalut perban), Titan (helm berat bercelah visor amber,
+    bahu raksasa chevron hazard, zirah olive berpaku, sabuk peluru, ransel, gauntlet & bot zirah), Valkyrie (wajah perempuan bermata,
+    topeng oni merah bertaring emas, rambut berponi + kuncir tinggi, jaket kulit merah-hitam, bahu emas, perut terbuka, harness paha
+    merah, KATANA bersarung di punggung — hiasan, senjata tetap Loadout), Valiant (zirah putih-biru, visor V oranye, reaktor dada
+    menyala, unit pendorong bercincin menyala, piston lengan & kaki), Reaper (tudung robek, topeng paruh batu retak, goggles hijau,
+    respirator, 3 botol hijau di selempang, gauntlet bergaris hijau, mantel compang-camping).
+  - Lengan FPS (`Viewmodel.setOutfit`): warna lengan/manset/sarung tangan/jari per karakter (`skinFps`). Pratinjau Loadout, killcam
+    (ghost), serpihan mati (`debrisMaterial`) memakai atlas yang sama. Hitbox tetap balok GDD (telinga, bahu besar, jubah, mantel = tampilan).
+    Mantel/jubah menempel badan bawah/atas → kaki bisa menembus saat langkah lebar (gaya Roblox, diterima).
+  - Pemanasan: atlas karakter pilihan pemain disiapkan saat menu idle (Game warm list); karakter lain dibangun saat entitasnya dibuat.
+  - Terukur (browser): 10 karakter di pratinjau (depan/samping/belakang/tim Merah + wajah dekat) 0 error; Latihan: 10 dummy berkostum operator
+    + lengan FPS Valkyrie, TPS, mati/serpihan; online 2 jendela: host Nova (Biru) & teman Titan (Merah) tampil sama di kedua sisi, bot tetap
+    klasik, respawn tetap Titan; draw call 54 pada pandangan 10 operator. Skrip lokal: pw/skin_look.js, skin_face.js, skin_game.js,
+    skin_online.js (+ mv2/montage.py lembar foto). Dijaga tests/variants.test.ts.
+
 - Bintang kill (permintaan pengguna 2026-11-27; desain usulan Claude disetujui "setuju semua saran"): di kanan bar HP (`.hp` →
   `.kstars`, `src/ui/KillStars.ts`) satu bintang emas per kill dalam NYAWA INI; kill headshot = bintang BOLONG di tengah (lubang peluru:
   mask radial + cincin gelap). Jumlah = `Entity.streak` (hitungan medali streak & papan "Streak Terpanjang", host & klien) → mati,
@@ -917,7 +957,7 @@
 
 ## Status
 - Fase selesai: 0–8 (MVP lengkap) + fitur pasca-MVP di atas.
-- Verifikasi otomatis: 556 test Vitest / 36 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
+- Verifikasi otomatis: 559 test Vitest / 36 file (test vector §16.1, validator map/nav v2 + spawn 2 lantai + atap ruang bawah, rebind/settings/
   Eliminasi/medali, garis bidik ADS, tempo gerak/pegas/arah langkah, slot senjata/migrasi tombol/pisau/buang-ambil, keyframe pisau, kunci mouse/alt-tab/controller, crosshair kustom, bake cahaya,
   kehalusan frame/interpolasi fisika/material viewmodel, resolusi dinamis sadar refresh/batas FPS, room/lobby, codec jaringan/antrean
   perintah/interpolasi/validasi pesan host, multi-map (tests/maps.test.ts: tiap MapDef), Steel Yard (tests/steelyard.test.ts, Rapier:
@@ -940,7 +980,8 @@
   lubang tertutup, spawn & zona bom, nav (node bebas, pijakan, edge, validate, nearest per lantai, lane), garis pandang spawn = 0
   (tests/meridian.test.ts), Bomb Mission: test vector dokumen §8.3, matriks menang, giliran pembawa, syarat jinak, BombNet, cadangan,
   mode/setelan/tombol 6 (tests/bombMission.test.ts), kamera menonton mengitari rekan / tampilan mata / badan disembunyikan saat
-  lengan TPS pendek, collider Rapier Meridian (tests/specCam.test.ts)) hijau;
+  lengan TPS pendek, collider Rapier Meridian (tests/specCam.test.ts), 10 karakter operator: id/nama, benih atlas, warna lengan FPS,
+  settings/room/pesan mulai/cadangan, bot tanpa operator (tests/variants.test.ts)) hijau;
   typecheck & build hijau;
   di browser (slot senjata): 1/2/3/Q/scroll, tebas 45 & tusuk belakang membunuh dummy, lari pisau 8.91/12.62 u/s (×1.10), buang → jatuh &
   diam di lantai, ambil/tukar menjaga isi magazine, musuh tidak bisa mengambil, respawn kembali ke loadout pilihan, bot granat tetap normal;

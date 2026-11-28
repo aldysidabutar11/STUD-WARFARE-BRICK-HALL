@@ -530,6 +530,13 @@ body.dead #game { filter: grayscale(0.85) brightness(0.8); }
 .lo-char .charsel { margin: 0; gap: 6px; }
 .lo-char .charsel > span { flex-basis: 100%; margin: 0; }   /* label di baris sendiri → Pria · Wanita · Venny satu baris */
 .lo-char .charsel button { padding: 6px 11px; }
+/* 13 karakter: grid 3 kolom (Pria · Wanita · Venny lalu 10 operator bertitik warna) */
+.lo-char .charsel { display: grid; grid-template-columns: repeat(3, 1fr); }
+.lo-char .charsel > span { grid-column: 1 / -1; }
+.lo-char .charsel button { padding: 5px 4px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.charsel button.op::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--op);
+  box-shadow: 0 0 5px var(--op); margin-right: 5px; vertical-align: 1px; }
+.charsel button.op.sel { border-color: var(--op); background: linear-gradient(135deg, #2a2632, #5a3a1f); }
 .lo-team { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
 .lo-team > span { opacity: 0.8; margin-right: 2px; }
 .menu .lo-team button { padding: 4px 10px; font-size: 12px; }

@@ -12,6 +12,8 @@ import { CFG } from '../config/gameConfig';
 import { Spring, damp, moveFeel } from './moveFeel';
 import type { Team } from './BlockyCharacter';
 import { sleeveTexture, type Variant } from './CharacterArt';
+import { isSkin } from './variants';
+import { skinFps } from './skins';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
 /** UV balok diskalakan ke ukuran sisinya (1 ulangan tiap `tile` unit) → tekstur lengan tidak melar di balok panjang.
@@ -206,6 +208,13 @@ export class Viewmodel {
    *  manset rajut navy, Merah kulit + balutan; Venny lengan bawah kulit (kaus lengan pendek) + sarung tangan tanpa jari, manset =
    *  tali pergelangan hitam (Biru) / perban kasa (Merah), jari warna kulitnya. */
   setOutfit(team: Team, variant: Variant = 'm') {
+    if (isSkin(variant)) {                     // karakter operator: warna lengan/manset/sarung tangan/jari dari desainnya
+      const f = skinFps(variant);
+      this.sleeveMat.map = sleeveTexture(false); this.sleeveMat.color.setHex(f.sleeve);
+      this.cuffMat.color.setHex(f.cuff); this.gloveMat.color.setHex(f.glove); this.fingerMat.color.setHex(f.finger);
+      this.applyRound(false);
+      return;
+    }
     const C = XCFG.rig.colors, camoOn = team === 'blue' && variant === 'f', venny = variant === 'v';
     this.sleeveMat.map = sleeveTexture(camoOn);
     this.sleeveMat.color.setHex(camoOn ? 0xffffff : venny ? C.venny.skin : team === 'blue' ? C.blue.shirt : C.skin);

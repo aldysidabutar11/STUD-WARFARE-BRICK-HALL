@@ -271,6 +271,10 @@ export const XCFG = {
   elim: { roundTime: 120, roundEnd: 3.5, roundsToWin: 5 },
   practice: { dummyRespawn: 2.0, moverRange: 5.0 },
   killcam: { hz: 30, history: 6, deathCam: 0.9, preDeath: 2.8, postDeath: 0.3, noReplayHold: 2.2, unitToMeter: 0.36 },
+  // Karakter operator (10 desain pengguna Karakter/<NAMA>.png, 2026-11-27; entities/skins/): bagian menyala (visor, mata, NVG,
+  // reaktor, tabung) = warna atlas × topeng × glow sebagai emisi (tidak terpengaruh cahaya/bayangan, tanpa draw call tambahan, ikut
+  // bloom HIGH+); warna desain sama di kedua tim → BAN LENGAN warna tim di kedua lengan atas (keputusan pengguna), sedikit menyala.
+  skins: { glow: 1.7, band: { blue: 0x2f7dff, red: 0xf23a2e }, bandGlow: 0.35, bandStripeGlow: 0.85 },
   // Kamera TPS (bukan GDD; disetujui pengguna 2026-11-27). Spring arm §9.2 memendek sampai 0.6 u — di DALAM kapsul berjari-jari 0.8 —
   // saat ada dinding/pilar di belakang: badan yang diikuti disembunyikan bila lengan < hideBodyDist (pemain sendiri di TPS & rekan
   // yang ditonton). Menonton rekan (mode ronde): kamera mengitari rekan mencari sudut bebas (src/entities/specCam.ts): sudut sekarang

@@ -28,6 +28,7 @@ import type { AnimState } from '../entities/BlockyCharacter';
 import { mapTempo, moveFeel } from '../entities/moveFeel';
 import { newSpecCam, resetSpecCam, stepSpecCam } from '../entities/specCam';
 import { botVariant, characterArt, type Variant } from '../entities/CharacterArt';
+import { isSkin } from '../entities/variants';
 import { vennyTemplate } from '../entities/venny/rig';
 import type { Team } from '../entities/BlockyCharacter';
 import { ScopeSystem } from '../combat/ScopeSystem';
@@ -435,6 +436,8 @@ export class Game {
     this.loop.start();
     // siapkan atlas karakter (±40 ms/varian) saat menu idle → tanpa jeda saat klik Mulai
     const warm: [Team, Variant][] = [['blue', 'm'], ['red', 'm'], ['blue', 'f'], ['red', 'f'], ['blue', 'v'], ['red', 'v']];
+    // karakter operator pilihan pemain (atlas dibuat sekali, ±50 ms) — karakter operator lain dibuat saat pertama dipakai
+    if (isSkin(this.settings.charVariant)) warm.push(['blue', this.settings.charVariant], ['red', this.settings.charVariant]);
     const warmNext = () => { const w = warm.shift(); if (!w) return; if (w[1] === 'v') vennyTemplate(w[0]); else characterArt(w[0], w[1]); setTimeout(warmNext, 120); };
     setTimeout(warmNext, 400);
     // ?autostart=1|tdm|elim|practice untuk uji otomatis (tanpa pointer lock)
